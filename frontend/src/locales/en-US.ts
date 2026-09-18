@@ -244,6 +244,7 @@ const messages: Record<string, string> = {
   "config.editorHint": "Tab inserts 4 spaces",
   "config.hint": "After saving, the service is validated and reloaded; failure auto-rolls back.",
   "config.saved": "✓ {kind} {version} config saved ({count} files)",
+  "config.restartHint": "Config written. Restart {kind} {version} to take effect.",
   "danger.uninstall.title": "Uninstall {name} {version}",
   "danger.uninstall.desc": "This stops and removes the service container and config.",
   "danger.uninstall.warn1": "Remove container phpo-{kind}-{version}",

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 服务配置弹窗：忠实迁移原型 openConfigModal（3015–3052）
-// 多文件切换 + 每文件脏标记 + 重置/批量应用；应用走 preflight('service-config')
-import { computed, reactive, ref } from 'vue'
+// 多文件切换 + 每文件脏标记 + 重置/批量保存；T505 接真：读后端回显、写走三段式（备份→写→失败回滚），mock 保留本地 demo
+import { computed, onMounted, reactive, ref } from 'vue'
 import ModalShell from '@/components/common/ModalShell.vue'
 import MountList from '@/components/common/MountList.vue'
 import { useI18n } from '@/composables/useI18n'
@@ -10,7 +10,9 @@ import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
 import { useAppState } from '@/stores/appState'
 import { SVC_META } from '@/constants/service'
-import { getDefaultFiles } from '@/constants/configs'
+import { hasBackend } from '@/api/site'
+import { getConfigFiles, saveConfigFiles } from '@/api/config'
+import type { ConfigFile } from '@/constants/configs'
 
 const props = defineProps<{ kind: string; version: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -19,26 +21,43 @@ const { preflight } = usePreflight()
 const app = useAppState()
 
 const meta = SVC_META[props.kind as keyof typeof SVC_META]
-const files = getDefaultFiles(props.kind, props.version)
+const files = ref<ConfigFile[]>([])
+const loading = ref(true)
 
 function key(name: string): string {
   return `${props.kind}:${props.version}:${name}`
 }
 const originals = reactive<Record<string, string>>({})
 const drafts = reactive<Record<string, string>>({})
-files.forEach((f) => {
-  const saved = app.configs[key(f.name)]
-  const c = saved != null ? saved : f.content
-  originals[f.name] = c
-  drafts[f.name] = c
+const activeFile = ref('')
+
+// seed：以后端回显（或模板默认）填充基准与草稿；app.configs 里的本地覆盖仅在 mock 下参与
+function seed(list: ConfigFile[]): void {
+  files.value = list
+  list.forEach((f) => {
+    const saved = app.configs[key(f.name)]
+    const c = saved != null ? saved : f.content
+    originals[f.name] = c
+    drafts[f.name] = c
+  })
+  activeFile.value = list[0]?.name || ''
+}
+
+onMounted(async () => {
+  try {
+    seed(await getConfigFiles(props.kind, props.version))
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  } finally {
+    loading.value = false
+  }
 })
 
-const activeFile = ref(files[0]?.name || '')
 function isModified(name: string): boolean {
   return drafts[name] !== originals[name]
 }
-const changed = computed(() => files.filter((f) => isModified(f.name)))
-const currentFile = computed(() => files.find((f) => f.name === activeFile.value))
+const changed = computed(() => files.value.filter((f) => isModified(f.name)))
+const currentFile = computed(() => files.value.find((f) => f.name === activeFile.value))
 function fullPath(): string {
   const f = currentFile.value
   return f ? `${app.env.PHPO_HOME}/${f.path}` : ''
@@ -59,16 +78,31 @@ function selectFile(name: string): void {
 function resetActive(): void {
   drafts[activeFile.value] = originals[activeFile.value]
 }
-function apply(): void {
+async function apply(): Promise<void> {
   const list = changed.value
   if (!list.length) { toast(t('config.noChanges'), 'info', 1400); return }
   const names = list.map((f) => f.name)
   const check = preflight('service-config', { kind: props.kind, version: props.version, files: names })
   if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-  list.forEach((f) => { app.configs[key(f.name)] = drafts[f.name] })
-  emit('close')
-  runTask([props.kind, 'config', 'save', props.version, '--files', names.join(',')], `${props.kind} ${props.version} · ${t('config.title')} (${names.length})`, { type: 'service-config', kind: props.kind, version: props.version, files: names })
-  toast(t('config.saved', { kind: props.kind, version: props.version, count: names.length }), 'ok', 2600)
+
+  // 纯 Vite demo：本地覆盖 + mock 任务
+  if (!hasBackend()) {
+    list.forEach((f) => { app.configs[key(f.name)] = drafts[f.name] })
+    emit('close')
+    runTask([props.kind, 'config', 'save', props.version, '--files', names.join(',')], `${props.kind} ${props.version} · ${t('config.title')} (${names.length})`, { type: 'service-config', kind: props.kind, version: props.version, files: names })
+    toast(t('config.saved', { kind: props.kind, version: props.version, count: names.length }), 'ok', 2600)
+    return
+  }
+
+  // 真实链路：后端原子写盘（备份→写→失败回滚）；重启建议为提示性
+  try {
+    await saveConfigFiles(props.kind, props.version, list.map((f) => ({ name: f.name, path: f.path, content: drafts[f.name] })))
+    emit('close')
+    toast(t('config.saved', { kind: props.kind, version: props.version, count: names.length }), 'ok', 2600)
+    toast(t('config.restartHint', { kind: props.kind, version: props.version }), 'info', 3600)
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  }
 }
 </script>
 
@@ -100,7 +134,7 @@ function apply(): void {
             <span class="path-text" :title="fullPath()">{{ fullPath() }}</span>
             <span style="font-size: 11.5px; color: var(--text-mute); flex-shrink: 0">{{ t('config.editorHint') }}</span>
           </div>
-          <textarea v-model="drafts[activeFile]" class="config-editor" spellcheck="false" @keydown="onTab" />
+          <textarea v-model="drafts[activeFile]" class="config-editor" spellcheck="false" :disabled="loading" @keydown="onTab" />
         </div>
       </div>
       <div style="padding: 12px 22px; border-top: 1px solid var(--border-2); background: var(--surface-2)">

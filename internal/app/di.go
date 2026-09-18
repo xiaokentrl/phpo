@@ -32,6 +32,9 @@ type Container struct {
 	AppService  *service.AppService  // 前端绑定的写/读门面；启动后非 nil
 	SiteService *service.SiteService // 站点生命周期门面（T403+）；启动后非 nil
 	EnvService  *service.EnvService  // 服务密码/端口 env 读写门面（T504）；启动后非 nil
+
+	// M5 配置门面：服务配置文件读写（T505）；启动后非 nil
+	ConfigService *service.ConfigService
 }
 
 func NewContainer() *Container {
@@ -72,6 +75,7 @@ func (c *Container) Build() *Assembly {
 		cacheMgr := steps.NewCacheManager(env, c.Emitter, cli)
 		c.AppService = service.NewAppService(lc, tm, cacheMgr, cli, env)
 		c.EnvService = service.NewEnvService(st, c.Emitter)
+		c.ConfigService = service.NewConfigService(env, tm)
 
 		// M4 站点对象图：vhost 管理器 + hosts + 回收站 + 真实 nginx -t/ reload（走 phpo-nginx 容器）
 		trashRoot, err := config.TrashRoot()

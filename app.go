@@ -10,6 +10,7 @@ import (
 	phpapp "phpo/internal/app"
 	"phpo/internal/model"
 	"phpo/internal/service"
+	"phpo/internal/template"
 	"phpo/internal/ui"
 )
 
@@ -215,4 +216,22 @@ func (a *App) SetServicePort(kind model.ServiceKind, version string, port int) e
 		return errNotReady
 	}
 	return a.container.EnvService.SetPort(kind, version, port)
+}
+
+// ---- M5 服务配置绑定：读回显 / 三段式原子保存（硬红线 3/5）----
+
+// ConfigGetFiles 返回该服务版本配置：宿主已存在则回显内容，否则回落模板默认
+func (a *App) ConfigGetFiles(kind model.ServiceKind, version string) ([]template.File, error) {
+	if a.container.ConfigService == nil {
+		return nil, errNotReady
+	}
+	return a.container.ConfigService.GetFiles(kind, version)
+}
+
+// ConfigSaveFiles 原子保存勾选的配置：备份原文件 → 写入 → 失败自动回滚
+func (a *App) ConfigSaveFiles(ctx context.Context, kind model.ServiceKind, version string, files []service.ConfigFile) error {
+	if a.container.ConfigService == nil {
+		return errNotReady
+	}
+	return a.container.ConfigService.Save(ctx, kind, version, files)
 }

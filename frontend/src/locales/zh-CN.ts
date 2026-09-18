@@ -244,6 +244,7 @@ const messages: Record<string, string> = {
   "config.editorHint": "Tab 键缩进 4 空格",
   "config.hint": "修改保存后会执行服务校验并 reload，失败自动回滚。",
   "config.saved": "✓ {kind} {version} 配置已保存（{count} 个文件）",
+  "config.restartHint": "配置已写入，重启 {kind} {version} 服务后生效。",
   "danger.uninstall.title": "卸载 {name} {version}",
   "danger.uninstall.desc": "会停止并移除该版本的服务容器与配置。",
   "danger.uninstall.warn1": "移除容器 phpo-{kind}-{version}",
