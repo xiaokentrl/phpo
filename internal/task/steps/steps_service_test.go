@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -20,13 +21,19 @@ type fakeBE struct {
 	mu                        sync.Mutex
 	pulled, loaded, saved     []string
 	loadErr, pullErr, saveErr error
+	pullBlocks                bool // true：PullImage 阻塞至 ctx 取消并返回 ctx.Err()（模拟 pull 中途取消）
 }
 
-func (f *fakeBE) PullImage(_ context.Context, ref string) error {
+func (f *fakeBE) PullImage(ctx context.Context, ref string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.pulled = append(f.pulled, ref)
-	return f.pullErr
+	blocks, err := f.pullBlocks, f.pullErr
+	f.mu.Unlock()
+	if blocks {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return err
 }
 func (f *fakeBE) SaveImage(_ context.Context, ref, dst string) error {
 	f.mu.Lock()
@@ -44,6 +51,13 @@ func (f *fakeBE) LoadImage(_ context.Context, tar string) error {
 	return f.loadErr
 }
 func (f *fakeBE) Download(_ context.Context, url, dst string) error { return nil }
+
+// pulledSnapshot 返回当前已发起 pull 的引用快照（用于测试同步点）
+func (f *fakeBE) pulledSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.pulled...)
+}
 
 // —— capture emitter（cache.Emitter 与断言共用）——
 type ev struct {
@@ -176,6 +190,57 @@ func eqNames(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// tempdirReasons 收集所有 cache:tempdir-cleared 事件的 reason
+func (c *capEm) tempdirReasons() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, e := range c.es {
+		if e.name == "cache:tempdir-cleared" {
+			if ev, ok := e.p.(model.CacheTempdirClearedEvent); ok {
+				out = append(out, ev.Reason)
+			}
+		}
+	}
+	return out
+}
+
+// pull 中途取消：返回 ctx.Canceled、不提升任何缓存、临时目录以 reason=cancelled 清空（无残留）
+func TestInstallCancelDuringPull(t *testing.T) {
+	fb := &fakeBE{pullBlocks: true}
+	s, _, em, env := newStep(t, fp{ver: "28.3.2"}, fb)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Execute(ctx, &recLog{}) }()
+
+	// 等 pull 已进入阻塞，再发起取消
+	for len(fb.pulledSnapshot()) == 0 {
+		runtime.Gosched()
+	}
+	cancel()
+	err := <-done
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("取消应返回 context.Canceled，得 %v", err)
+	}
+
+	// 无半截镜像：未 save、未提升缓存
+	if len(fb.saved) != 0 {
+		t.Errorf("取消后不应发生 save, got %v", fb.saved)
+	}
+	if _, err := os.Stat(env.OfflineImageTar("php", "8.4")); !os.IsNotExist(err) {
+		t.Errorf("取消不得提升缓存, stat err=%v", err)
+	}
+	// 无临时目录残留，且 reason = cancelled（必清时机 3）
+	if _, err := os.Stat(env.TempExtDir("php", "8.4")); !os.IsNotExist(err) {
+		t.Errorf("取消后临时目录应被清空, stat err=%v", err)
+	}
+	reasons := em.tempdirReasons()
+	if len(reasons) != 1 || reasons[0] != cache.ReasonCancelled {
+		t.Errorf("应恰有一次 tempdir-cleared 且 reason=cancelled，得 %v", reasons)
+	}
 }
 
 // 未命中且无网络：pull 失败 → 明确报错、不提升任何缓存、临时目录必清（无残留）

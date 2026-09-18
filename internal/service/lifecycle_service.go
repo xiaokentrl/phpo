@@ -60,6 +60,11 @@ func NewLifecycle(docker DockerOps, store StateStore, emitter Emitter, env confi
 
 // ---- 校准 ----
 
+// Snapshot 读当前权威视图（后端唯一权威，前端经 state:changed 或直接拉取）
+func (l *LifecycleService) Snapshot() (*model.Snapshot, error) {
+	return l.store.BuildSnapshot()
+}
+
 // Calibrate 读 SQLite 期望态与 Docker 实际态比对：
 //   - 有运行态修正 → 写回 SetRunning，并依次发 docker:state-drift（漂移详情）与 state:changed（新快照）；
 //   - 无变化则静默返回。

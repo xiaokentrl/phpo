@@ -76,6 +76,17 @@ func TestVersionSubstitution(t *testing.T) {
 	}
 }
 
+// 含非法标识符字符的版本应规整为合法环境变量名（去点 + 非 [A-Za-z0-9_] → _）
+func TestEnvVarNameSanitized(t *testing.T) {
+	files, err := FilesFor("redis", "8-custom.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(files[0].Content, "requirepass ${REDIS_8_custom1_ROOT_PASSWORD}") {
+		t.Errorf("requirepass 未规整非法字符:\n%s", files[0].Content)
+	}
+}
+
 func TestRenderVhost(t *testing.T) {
 	got, err := RenderVhost(VhostInput{
 		Domain:        "demo.test",

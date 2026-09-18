@@ -31,7 +31,14 @@ func (m *Manager) EnsureImage(ctx context.Context, kind, version, ref string) er
 	// 未命中（含损坏回退）：走网络下载 + 提升 + 必清临时目录
 	m.emitMiss(kind, version, "pull")
 	reason := ReasonCompileFailed
-	defer func() { _ = m.ClearTempDir(ctx, kind, version, reason) }()
+	// 取消优先于失败：ctx 被取消时按必清时机 3（cancelled）上报
+	defer func() {
+		r := reason
+		if ctx.Err() != nil {
+			r = ReasonCancelled
+		}
+		_ = m.ClearTempDir(ctx, kind, version, r)
+	}()
 
 	tmpDir, err := m.EnsureTempDir(kind, version)
 	if err != nil {

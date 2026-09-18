@@ -17,6 +17,9 @@ type File struct {
 }
 
 // kindFiles 记录每种服务的配置文件名与顺序（与原型一致：5 服务共 7 文件）
+// 已知限制（继承自 SSOT）：php.ini 的 session.save_path 逐字硬编码为 "tcp://phpo-redis-8:6379"，
+// 隐含依赖版本 8 的 redis 容器；若安装其它版本 redis 会话将连不上。真实修复需在服务层按实际
+// redis 容器注入该主机（并同步更新原型/总纲），不属本层「逐字对齐」范围，故保留原样。
 var kindFiles = map[string][]string{
 	"php":   {"php.ini", "php-fpm.conf"},
 	"mysql": {"my.cnf"},
@@ -31,11 +34,26 @@ func Kinds() []string { return []string{"php", "mysql", "pgsql", "redis", "nginx
 // configData 配置模板渲染变量
 type configData struct {
 	Version    string // 版本号原样（含点）
-	VersionEnv string // 版本号去点，供 redis requirepass 环境变量名
+	VersionEnv string // 版本号规整为合法环境变量名片段，供 redis requirepass
 }
 
 func dataFor(version string) configData {
-	return configData{Version: version, VersionEnv: strings.ReplaceAll(version, ".", "")}
+	return configData{Version: version, VersionEnv: envVarName(version)}
+}
+
+// envVarName 生成合法 POSIX 环境变量名片段：先按原型语义去点，再把剩余非法字符（如 '-'）转下划线。
+// 常规版本（如 8 / 8.4 / 17）逐字与原型一致；仅对含非标识符字符的版本做兼容。
+func envVarName(version string) string {
+	var b strings.Builder
+	for _, r := range strings.ReplaceAll(version, ".", "") {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // FilesFor 渲染某服务版本的全部默认配置文件（getDefaultFiles 直译）；未知种类返回空。

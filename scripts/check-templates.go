@@ -157,7 +157,6 @@ http {
 
 func main() {
 	var diffs []string
-	checked := 0
 	for key, files := range golden {
 		kind, version := splitKey(key)
 		rendered, err := template.FilesFor(kind, version)
@@ -174,14 +173,13 @@ func main() {
 				diffs = append(diffs, fmt.Sprintf("%s: 多出文件 %s", key, f.Name))
 				continue
 			}
-			checked++
 			if d := lineDiff(want, f.Content); d != "" {
 				diffs = append(diffs, fmt.Sprintf("%s/%s: 内容不一致\n%s", key, f.Name, d))
 			}
 		}
 	}
 
-	// vhost 抽样校验（defaultVhost 直译）
+	// vhost 逐行 diff（defaultVhost 直译）
 	vh, err := template.RenderVhost(template.VhostInput{
 		Domain: "demo.test", Port: 80, ContainerRoot: "/var/www/demo.test",
 		Upstream: "php-8.4-fpm",
@@ -189,10 +187,8 @@ func main() {
 	})
 	if err != nil {
 		diffs = append(diffs, fmt.Sprintf("vhost: 渲染报错 %v", err))
-	} else if !strings.Contains(vh, "set $php_upstream php-8.4-fpm:9000;") {
-		diffs = append(diffs, "vhost: 未含精确 PHP 上游 php-8.4-fpm:9000")
-	} else {
-		checked++
+	} else if d := lineDiff(vhostGolden, vh); d != "" {
+		diffs = append(diffs, "vhost: 内容不一致\n"+d)
 	}
 
 	if len(diffs) > 0 {
@@ -202,8 +198,28 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	fmt.Printf("✓ 模板一致性校验通过：%d 个服务配置 + vhost 抽样，diff 为空\n", len(golden))
+	fmt.Printf("✓ 模板一致性校验通过：%d 个服务配置 + vhost，diff 为空\n", len(golden))
 }
+
+// vhostGolden 为原型 defaultVhost(demo.test, 80, 8.4, /var/www/demo.test, laravel) 的输出。
+const vhostGolden = `server {
+    listen 80;
+    server_name demo.test;
+    root /var/www/demo.test;
+    index index.php index.html;
+    # Laravel 5+ / Lumen
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+    location ~ \.php$ {
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $php_upstream php-8.4-fpm:9000;
+        fastcgi_pass $php_upstream;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+}`
 
 func splitKey(key string) (string, string) {
 	for i := 0; i < len(key); i++ {

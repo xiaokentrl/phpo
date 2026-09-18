@@ -62,6 +62,12 @@ func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger) (mod
 		}
 		Logf(m.em, t.ID, model.LogDim, "步骤 "+s.Name())
 		if err := s.Execute(ctx, logger); err != nil {
+			// 步骤执行中被取消（如 pull 阻塞时收到取消）：按取消处理，回滚含当前步
+			if ctx.Err() != nil {
+				Logf(m.em, t.ID, model.LogMeta, "⏹ 已取消: "+s.Name())
+				m.rollback(append(completed, s))
+				return model.TaskCancelled, ctx.Err()
+			}
 			Logf(m.em, t.ID, model.LogErr, s.Name()+" 失败: "+err.Error())
 			m.rollback(append(completed, s))
 			return model.TaskFailed, err

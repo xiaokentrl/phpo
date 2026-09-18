@@ -8,6 +8,11 @@ import (
 
 	"phpo/internal/cache"
 	"phpo/internal/config"
+	"phpo/internal/engine"
+	"phpo/internal/service"
+	"phpo/internal/store"
+	"phpo/internal/task"
+	"phpo/internal/task/steps"
 	"phpo/internal/updater"
 )
 
@@ -18,6 +23,9 @@ type Container struct {
 	Env            config.Env
 	CurrentVersion string // 应用当前版本（升级比较基准）
 	UpdateURL      string // 发布清单地址；为空则不启用自动检查
+
+	// M3 真实对象图：于启动钩子内构造（避免 Build 期产生文件/连接，保持单测纯净）
+	AppService *service.AppService // 前端绑定的写/读门面；启动后非 nil
 }
 
 func NewContainer() *Container {
@@ -35,6 +43,38 @@ func (c *Container) Build() *Assembly {
 		// 读取当前发射器（Attach 已替换为 Wails 实现），保证事件可达前端
 		mgr := cache.NewManager(c.Env, c.Emitter, nil)
 		return mgr.ScanAndClearResidue(ctx)
+	})
+	// M3 真实对象图：store + engine + cache + task.Manager + LifecycleService + AppService
+	// 于启动钩子内构造——Build 期不产生文件/连接，保持无 Docker 单测纯净；此处失败即中断启动。
+	c.Lifecycle.AddStartupHook("object-graph", func(ctx context.Context) error {
+		env := config.ExpandEnvHomes(c.Env) // `~/phpo` → 绝对路径供真实 IO
+		dbPath, err := config.DBPath()
+		if err != nil {
+			return err
+		}
+		st, err := store.Open(dbPath)
+		if err != nil {
+			return err
+		}
+		cli, err := engine.New() // 惰性：不拨号，Docker 缺席亦不报错
+		if err != nil {
+			st.Close()
+			return err
+		}
+		tm := task.NewManager(c.Emitter)
+		lc := service.NewLifecycle(cli, st, c.Emitter, env)
+		cacheMgr := steps.NewCacheManager(env, c.Emitter, cli)
+		c.AppService = service.NewAppService(lc, tm, cacheMgr, cli, env)
+
+		// §5.13.9 启动时校准：Docker 缺席/未运行时容忍失败，不阻断 GUI 启动
+		if _, cerr := lc.Calibrate(ctx); cerr != nil {
+			c.Emitter.Emit(EventDockerStateDrift, map[string]any{"error": cerr.Error()})
+		}
+		c.Lifecycle.AddShutdownHook("close-object-graph", func(context.Context) error {
+			_ = cli.Close()
+			return st.Close()
+		})
+		return nil
 	})
 	// §5.9 升级检查：启动时 + 每 24 小时（仅当配置了发布清单地址）
 	if c.UpdateURL != "" {

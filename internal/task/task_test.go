@@ -8,9 +8,33 @@ import (
 	"testing"
 	"time"
 
-	"phpo/internal/app"
 	"phpo/internal/model"
 )
+
+// capturingEmitter 本包测试用的事件捕获器（不依赖上层 app 包，避免测试期 import 环）
+type capturingEmitter struct {
+	mu     sync.Mutex
+	events []capturedEvent
+}
+
+type capturedEvent struct {
+	Name    string
+	Payload any
+}
+
+func (c *capturingEmitter) Emit(name string, p any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, capturedEvent{name, p})
+}
+
+func (c *capturingEmitter) Capture() []capturedEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]capturedEvent, len(c.events))
+	copy(out, c.events)
+	return out
+}
 
 // —— 测试替身步骤 ——
 
@@ -29,9 +53,11 @@ func (r *recorder) add(list *[]string, s string) {
 
 type testStep struct {
 	BaseStep
-	rec   *recorder
-	err   error
-	onRun func(ctx context.Context)
+	rec        *recorder
+	err        error
+	onRun      func(ctx context.Context)
+	retCtxErr  bool // 模拟 pull 中途被取消：Execute 观测 ctx 取消即返回 ctx.Err()
+	cancelable bool
 }
 
 func (s *testStep) Execute(ctx context.Context, _ StepLog) error {
@@ -39,6 +65,9 @@ func (s *testStep) Execute(ctx context.Context, _ StepLog) error {
 		s.onRun(ctx)
 	}
 	s.rec.add(&s.rec.events, s.StepName)
+	if s.retCtxErr {
+		return ctx.Err()
+	}
 	return s.err
 }
 
@@ -47,7 +76,8 @@ func (s *testStep) Rollback(context.Context) error {
 	return nil
 }
 
-func (s *testStep) Cleanup() { s.rec.add(&s.rec.cleanups, s.StepName) }
+func (s *testStep) Cleanup()         { s.rec.add(&s.rec.cleanups, s.StepName) }
+func (s *testStep) Cancelable() bool { return s.cancelable }
 
 func newStep(rec *recorder, name string) *testStep {
 	return &testStep{BaseStep: BaseStep{StepName: name}, rec: rec}
@@ -55,7 +85,7 @@ func newStep(rec *recorder, name string) *testStep {
 
 // —— 事件辅助：从捕获事件流取 task:done 载荷 ——
 
-func doneOf(t *testing.T, cap *app.CapturingEmitter) model.TaskDoneEvent {
+func doneOf(t *testing.T, cap *capturingEmitter) model.TaskDoneEvent {
 	t.Helper()
 	var last model.TaskDoneEvent
 	found := false
@@ -74,7 +104,7 @@ func doneOf(t *testing.T, cap *app.CapturingEmitter) model.TaskDoneEvent {
 // —— 成功路径 ——
 
 func TestRunSuccess(t *testing.T) {
-	cap := &app.CapturingEmitter{}
+	cap := &capturingEmitter{}
 	m := NewManager(cap)
 	rec := &recorder{}
 	applyCalled := 0
@@ -112,7 +142,7 @@ func TestRunSuccess(t *testing.T) {
 // —— 失败回滚（逆序，含失败步）——
 
 func TestRunFailureRollsBackReverse(t *testing.T) {
-	cap := &app.CapturingEmitter{}
+	cap := &capturingEmitter{}
 	m := NewManager(cap)
 	rec := &recorder{}
 	boom := errors.New("boom")
@@ -147,7 +177,7 @@ func TestRunFailureRollsBackReverse(t *testing.T) {
 // —— Pre-Clean 失败：步骤不执行 ——
 
 func TestPreCleanFailureSkipsSteps(t *testing.T) {
-	m := NewManager(&app.CapturingEmitter{})
+	m := NewManager(&capturingEmitter{})
 	rec := &recorder{}
 	preErr := errors.New("pre")
 	task := &Task{
@@ -167,7 +197,7 @@ func TestPreCleanFailureSkipsSteps(t *testing.T) {
 // —— Post-Verify 失败触发回滚 ——
 
 func TestVerifyFailureRollsBack(t *testing.T) {
-	m := NewManager(&app.CapturingEmitter{})
+	m := NewManager(&capturingEmitter{})
 	rec := &recorder{}
 	verr := errors.New("verify")
 	task := &Task{
@@ -187,14 +217,14 @@ func TestVerifyFailureRollsBack(t *testing.T) {
 // —— 取消：可取消步骤执行中请求取消 ——
 
 func TestCancelDuringRun(t *testing.T) {
-	cap := &app.CapturingEmitter{}
+	cap := &capturingEmitter{}
 	m := NewManager(cap)
 	rec := &recorder{}
 	s1 := newStep(rec, "a")
 	s2 := newStep(rec, "b")
 	// 第一步执行时请求取消
 	s1.onRun = func(context.Context) { m.Cancel() }
-	s2.Cancelable() // 语义占位（本步会因 ctx.Done 在循环入口被拦下）
+	s2.cancelable = true // 本步会因 ctx.Done 在循环入口被拦下
 	task := &Task{ID: "t5", Steps: []Step{s1, s2}}
 	status, _ := m.Run(context.Background(), task)
 	if status != model.TaskCancelled {
@@ -209,10 +239,48 @@ func TestCancelDuringRun(t *testing.T) {
 	}
 }
 
+// 步骤执行中途被取消（如 pull 阻塞时收到取消）：应判为 cancelled 而非 failed，
+// 且回滚包含当前步（状态回原点），Cleanup 仍执行（清空临时目录）。
+func TestCancelMidStepSurfacesCancelled(t *testing.T) {
+	cap := &capturingEmitter{}
+	m := NewManager(cap)
+	rec := &recorder{}
+	s1 := newStep(rec, "a")
+	s2 := newStep(rec, "pull")
+	s2.cancelable = true
+	// pull 执行中请求取消，并像真实 pull 那样返回 ctx.Err()
+	s2.onRun = func(context.Context) { m.Cancel() }
+	s2.retCtxErr = true
+	applyCalled := 0
+	task := &Task{
+		ID:    "t6",
+		Steps: []Step{s1, s2},
+		Apply: func() error { applyCalled++; return nil },
+	}
+	status, err := m.Run(context.Background(), task)
+	if status != model.TaskCancelled {
+		t.Fatalf("中途取消应得 cancelled，得 %v (err=%v)", status, err)
+	}
+	if applyCalled != 0 {
+		t.Fatal("取消时 Apply 不应落地（状态回原点）")
+	}
+	// 回滚应包含已完成 + 当前步，逆序：[pull a]
+	if len(rec.rollacks) != 2 || rec.rollacks[0] != "pull" || rec.rollacks[1] != "a" {
+		t.Fatalf("取消应逆序回滚 [pull a]，得 %v", rec.rollacks)
+	}
+	// 无论取消，两步 Cleanup 均执行
+	if len(rec.cleanups) != 2 {
+		t.Fatalf("取消也应清理两步，得 %v", rec.cleanups)
+	}
+	if doneOf(t, cap).Status != model.TaskCancelled {
+		t.Fatal("done 事件应为 cancelled")
+	}
+}
+
 // —— 单飞：并发提交第二个返回 ErrBusy ——
 
 func TestSingleFlightBusy(t *testing.T) {
-	m := NewManager(&app.CapturingEmitter{})
+	m := NewManager(&capturingEmitter{})
 	release := make(chan struct{})
 	blocker := &testStep{BaseStep: BaseStep{StepName: "blk"}, rec: &recorder{},
 		onRun: func(context.Context) { <-release }}
