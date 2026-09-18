@@ -1,7 +1,9 @@
 <script setup lang="ts">
 // 根布局壳：侧栏导航（对齐原型 NAV 三段分组）+ 视图出口
-// T102 10 路由；T103 i18n；T104 主题应用+持久化
+// T102 10 路由；T103 i18n；T104 主题应用+持久化；T110 事件订阅启动
+import { onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from '@/composables/useI18n'
+import { startStateSync, stopStateSync } from '@/composables/useStateSync'
 import { usePrefsStore } from '@/stores/prefsStore'
 import { useLayoutStore } from '@/stores/layoutStore'
 import ModalRoot from '@/components/common/ModalRoot.vue'
@@ -12,6 +14,12 @@ import TaskDrawer from '@/components/business/TaskDrawer.vue'
 const { locale, t, setLocale } = useI18n()
 const prefs = usePrefsStore()
 useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
+
+onMounted(async () => {
+  startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
+  if (import.meta.env.DEV) await import('@/api/mockEvents') // 开发期 mock 发射驱动（构建产物不含）
+})
+onBeforeUnmount(() => stopStateSync())
 
 const sections: { titleKey: string; items: { id: string; labelKey: string; icon: string }[] }[] = [
   { titleKey: 'nav.business', items: [{ id: 'sites', labelKey: 'nav.sites', icon: '🔗' }] },

@@ -1,8 +1,8 @@
-// appState：M1 阶段 mock 状态仓，形状对齐原型 DEFAULT_STATE（1209–1250 行）
-// 硬红线 4：生产版由后端事件驱动更新；M1 仅用静态 mock 渲染。
+// appState：状态仓，形状对齐原型 DEFAULT_STATE（1209–1250 行）与后端 model.Snapshot
+// 硬红线 4：本仓只由后端 state:changed / service:changed 事件落地（见 composables/useStateSync.ts），无本地乐观更新。
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
-import type { Backup, Env, OfflineTree, ServiceKind, Site, TrayPrefs } from '@/types'
+import type { Backup, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TrayPrefs } from '@/types'
 import { derivePaths } from '@/utils/path'
 
 function defaultEnv(): Env {
@@ -72,7 +72,32 @@ export const useAppState = defineStore('appState', () => {
     return !stopped[kind].includes(version)
   }
 
+  // applySnapshot：后端 state:changed 全量快照落地。运行态由 running 反向推导为 stopped（§6）。
+  function applySnapshot(s: StateSnapshot): void {
+    for (const kind of Object.keys(installed) as ServiceKind[]) {
+      installed[kind].splice(0, installed[kind].length, ...(s.installed[kind] ?? []))
+    }
+    for (const kind of Object.keys(stopped) as ServiceKind[]) {
+      const running = new Set(s.running[kind] ?? [])
+      stopped[kind].splice(0, stopped[kind].length, ...installed[kind].filter((v) => !running.has(v)))
+    }
+    sites.splice(0, sites.length, ...s.sites)
+    for (const k of Object.keys(env)) delete env[k]
+    Object.assign(env, s.env)
+    for (const k of Object.keys(phpExtensions)) delete phpExtensions[k]
+    for (const [k, v] of Object.entries(s.phpExtensions)) phpExtensions[k] = [...v]
+    Object.assign(dirReady, s.dirReady)
+  }
+
+  // setServiceRunning：后端 service:changed 单服务增量落地。
+  function setServiceRunning(kind: ServiceKind, version: string, running: boolean): void {
+    const arr = stopped[kind]
+    const idx = arr.indexOf(version)
+    if (running && idx >= 0) arr.splice(idx, 1)
+    else if (!running && idx < 0) arr.push(version)
+  }
+
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, isServiceRunning, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, isServiceRunning, applySnapshot, setServiceRunning, phpVersions }
 })

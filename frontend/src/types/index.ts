@@ -45,3 +45,14 @@ export interface SvcMeta {
   suggested: string[]
   single?: boolean
 }
+
+// StateSnapshot 与后端 model.Snapshot（internal/model/snapshot.go）JSON 逐字对齐；
+// 是 state:changed 事件载荷，前端只按其落地、绝不本地乐观更新（硬红线 4）。
+export interface StateSnapshot {
+  installed: Partial<Record<ServiceKind, string[]>>
+  running: Partial<Record<ServiceKind, string[]>>
+  sites: Site[]
+  env: Record<string, string>
+  phpExtensions: Record<string, string[]>
+  dirReady: Record<string, boolean>
+}

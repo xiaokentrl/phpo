@@ -3,6 +3,8 @@ package app
 
 import (
 	"context"
+	"os"
+	"time"
 
 	"phpo/internal/cache"
 	"phpo/internal/config"
@@ -40,6 +42,13 @@ func (c *Container) Build() *Assembly {
 			src := updater.HTTPSource{URL: c.UpdateURL}
 			chk := updater.NewChecker(c.CurrentVersion, src, c.Emitter)
 			updater.NewScheduler(chk, updater.DefaultInterval).Start(ctx)
+			return nil
+		})
+	}
+	// M1 开发期事件联调：显式开启时以 mock 定时器全量发射 §5.6 事件，前端只订阅
+	if os.Getenv("PHPO_MOCK_EVENTS") == "1" {
+		c.Lifecycle.AddStartupHook("mock-events", func(ctx context.Context) error {
+			StartMockTicker(ctx, c.Emitter, 5*time.Second)
 			return nil
 		})
 	}
