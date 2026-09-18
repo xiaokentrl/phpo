@@ -1,0 +1,24 @@
+/* 极夜黑（OLED 纯黑）— 逐字迁移自原型 [data-theme="oled"] */
+[data-theme="oled"] {
+  --bg: #000;
+  --surface: #08090b;
+  --surface-2: #0f1115;
+  --surface-3: #15181f;
+  --border: #1a1e26;
+  --border-2: #14171d;
+  --text: #f5f7fa;
+  --text-dim: #98a1b3;
+  --text-mute: #5e6776;
+  --accent: #60a5fa;
+  --accent-2: #7db4fb;
+  --accent-bg: rgba(96, 165, 250, 0.14);
+  --ok: #34d399;
+  --ok-bg: rgba(52, 211, 153, 0.14);
+  --warn: #fbbf24;
+  --warn-bg: rgba(251, 191, 36, 0.14);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.14);
+  --purple: #a78bfa;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+  color-scheme: dark;
+}

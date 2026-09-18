@@ -1,0 +1,25 @@
+/* 午夜蓝（默认深色）— 变量逐字迁移自原型 MESSAGES 头 [data-theme="midnight"] */
+:root,
+[data-theme="midnight"] {
+  --bg: #0a0c10;
+  --surface: #11141b;
+  --surface-2: #171b24;
+  --surface-3: #1c2130;
+  --border: #222835;
+  --border-2: #1a1f2a;
+  --text: #e7ecf5;
+  --text-dim: #8b95ab;
+  --text-mute: #5b6578;
+  --accent: #5b9cff;
+  --accent-2: #74acff;
+  --accent-bg: rgba(91, 156, 255, 0.13);
+  --ok: #3dd68c;
+  --ok-bg: rgba(61, 214, 140, 0.13);
+  --warn: #f5a623;
+  --warn-bg: rgba(245, 166, 35, 0.13);
+  --danger: #ff5c5c;
+  --danger-bg: rgba(255, 92, 92, 0.13);
+  --purple: #8b5cf6;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}

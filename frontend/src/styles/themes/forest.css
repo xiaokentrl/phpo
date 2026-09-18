@@ -1,0 +1,24 @@
+/* 森林绿（自然深绿）— 逐字迁移自原型 [data-theme="forest"] */
+[data-theme="forest"] {
+  --bg: #0b1512;
+  --surface: #101d18;
+  --surface-2: #15241e;
+  --surface-3: #1a2c25;
+  --border: #22392f;
+  --border-2: #1a2c24;
+  --text: #e3efe9;
+  --text-dim: #8aa89a;
+  --text-mute: #5a7267;
+  --accent: #4ade80;
+  --accent-2: #6ee7a0;
+  --accent-bg: rgba(74, 222, 128, 0.14);
+  --ok: #22c55e;
+  --ok-bg: rgba(34, 197, 94, 0.14);
+  --warn: #facc15;
+  --warn-bg: rgba(250, 204, 21, 0.14);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.14);
+  --purple: #a78bfa;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}

@@ -1,0 +1,24 @@
+/* 深海蓝（冷色深海）— 逐字迁移自原型 [data-theme="ocean"] */
+[data-theme="ocean"] {
+  --bg: #080e1a;
+  --surface: #0d1625;
+  --surface-2: #122035;
+  --surface-3: #182a44;
+  --border: #1e3252;
+  --border-2: #16273f;
+  --text: #e0e8f5;
+  --text-dim: #8ba3c7;
+  --text-mute: #5a7194;
+  --accent: #38bdf8;
+  --accent-2: #5ecffa;
+  --accent-bg: rgba(56, 189, 248, 0.14);
+  --ok: #2dd4bf;
+  --ok-bg: rgba(45, 212, 191, 0.14);
+  --warn: #fbbf24;
+  --warn-bg: rgba(251, 191, 36, 0.14);
+  --danger: #fb7185;
+  --danger-bg: rgba(251, 113, 133, 0.14);
+  --purple: #a78bfa;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}

@@ -1,0 +1,24 @@
+/* 樱花粉（柔和浅粉）— 逐字迁移自原型 [data-theme="sakura"] */
+[data-theme="sakura"] {
+  --bg: #fdf7f8;
+  --surface: #fff;
+  --surface-2: #fbeef2;
+  --surface-3: #f7e4eb;
+  --border: #f0d8e0;
+  --border-2: #f7e8ee;
+  --text: #3a2530;
+  --text-dim: #7a5563;
+  --text-mute: #a88793;
+  --accent: #ec4899;
+  --accent-2: #db2777;
+  --accent-bg: rgba(236, 72, 153, 0.1);
+  --ok: #059669;
+  --ok-bg: rgba(5, 150, 105, 0.12);
+  --warn: #d97706;
+  --warn-bg: rgba(217, 119, 6, 0.12);
+  --danger: #e11d48;
+  --danger-bg: rgba(225, 29, 72, 0.1);
+  --purple: #a855f7;
+  --shadow: 0 8px 32px rgba(190, 120, 150, 0.15);
+  color-scheme: light;
+}

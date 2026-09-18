@@ -1,0 +1,174 @@
+<script setup lang="ts">
+// Sites 视图：1:1 迁移原型 renderSites + siteRow（2610–2634）
+// T107：接入站点/伪静态/nginx 配置/删除模态；行操作弹层忠实原型 openRowMenu
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from '@/composables/useI18n'
+import { useAppState } from '@/stores/appState'
+import { useModals } from '@/composables/useModals'
+import { useLayoutStore } from '@/stores/layoutStore'
+import type { Site } from '@/types'
+import { cmpVer, siteUrl } from '@/utils/format'
+import { hostToContainer } from '@/utils/path'
+
+const { t } = useI18n()
+const state = useAppState()
+const modals = useModals()
+const layout = useLayoutStore()
+
+const phpVers = computed(() => state.installed.php)
+const healthy = computed(() => state.sites.filter((s) => s.health === 'up').length)
+
+const menuDomain = ref<string | null>(null)
+const menuPos = ref<{ left: number; top: number }>({ left: 0, top: 0 })
+
+function healthPill(h: Site['health']) {
+  return { up: 'pill-ok', warn: 'pill-warn', down: 'pill-err' }[h]
+}
+function healthLabel(h: Site['health']) {
+  return t('sites.health.' + h)
+}
+function phpOptions(site: Site): string[] {
+  return [...new Set([...phpVers.value, site.php])].sort(cmpVer)
+}
+function isUninstalled(v: string): boolean {
+  return !phpVers.value.includes(v)
+}
+
+function closeRowMenu(): void {
+  menuDomain.value = null
+}
+// 忠实原型 openRowMenu：按缩放把视口像素换算成布局像素，右对齐锚点下方
+function openRowMenu(anchor: HTMLElement, domain: string): void {
+  closeRowMenu()
+  const s = layout.scale || 1
+  const r = anchor.getBoundingClientRect()
+  const gap = 6 * s
+  const edge = 8 * s
+  const menuW = 190
+  const vw = window.innerWidth
+  let left = r.right - menuW
+  let top = r.bottom + gap
+  if (left < edge) left = edge
+  if (left + menuW > vw - edge) left = vw - menuW - edge
+  if (top < edge) top = edge
+  menuPos.value = { left: left / s, top: top / s }
+  menuDomain.value = domain
+}
+function onDocClick(e: MouseEvent): void {
+  if (menuDomain.value && !(e.target as HTMLElement).closest('.row-menu') && !(e.target as HTMLElement).closest('[data-action="row-menu"]')) closeRowMenu()
+}
+function onDocKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape') closeRowMenu()
+}
+onMounted(() => {
+  document.addEventListener('click', onDocClick, true)
+  document.addEventListener('keydown', onDocKey)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick, true)
+  document.removeEventListener('keydown', onDocKey)
+})
+</script>
+
+<template>
+  <div class="view-inner">
+    <header class="view-header">
+      <div>
+        <h1>{{ t('sites.title') }}</h1>
+        <p class="view-sub">{{ t('sites.subtitle') }}</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-primary" data-action="site-add" @click="modals.openSiteAddModal()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          {{ t('sites.actions.add') }}
+        </button>
+      </div>
+    </header>
+
+    <div v-if="state.sites.length === 0" class="empty">
+      <div class="empty-icon">🌍</div>
+      <h2>{{ t('sites.empty.title') }}</h2>
+      <p>{{ t('sites.empty.desc') }}</p>
+      <button class="btn btn-primary" data-action="site-add" @click="modals.openSiteAddModal()">{{ t('sites.empty.action') }}</button>
+    </div>
+
+    <template v-else>
+      <div class="summary">
+        <div class="summary-item"><div class="summary-num">{{ state.sites.length }}</div><div class="summary-label">{{ t('sites.count') }}</div></div>
+        <div class="summary-item"><div class="summary-num">{{ phpVers.length }}</div><div class="summary-label">{{ t('sites.phpVersions') }}</div></div>
+        <div class="summary-item"><div class="summary-num" style="color: var(--ok)">{{ healthy }}</div><div class="summary-label">{{ t('sites.healthy') }}</div></div>
+        <div class="summary-item"><div class="summary-num">{{ state.env.NGINX_PORT }}</div><div class="summary-label">{{ t('sites.nginxPort') }}</div></div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 22%">{{ t('sites.col.domain') }}</th>
+              <th class="col-port" style="width: 9%">{{ t('sites.col.port') }}</th>
+              <th style="width: 11%">{{ t('sites.col.php') }}</th>
+              <th style="width: 22%">{{ t('sites.col.root') }}</th>
+              <th style="width: 10%">{{ t('sites.col.health') }}</th>
+              <th style="width: 10%">{{ t('sites.col.hosts') }}</th>
+              <th class="col-actions" style="width: 16%"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="site in state.sites" :key="site.domain">
+              <td>
+                <a class="site-domain" :href="siteUrl(site)" target="_blank" rel="noopener noreferrer" :title="siteUrl(site)">
+                  <span class="favicon">{{ site.domain.charAt(0).toUpperCase() }}</span>
+                  <span class="domain-text">{{ site.domain }}</span>
+                  <svg class="external-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14 21 3" /></svg>
+                </a>
+              </td>
+              <td class="col-port">
+                <span class="port-edit" :data-domain="site.domain" :data-original="site.port" tabindex="0" :title="t('common.edit')">{{ site.port }}</span>
+              </td>
+              <td>
+                <select class="php-select" :data-domain="site.domain">
+                  <option v-for="v in phpOptions(site)" :key="v" :value="v" :selected="v === site.php">{{ v }}{{ isUninstalled(v) ? ' (uninstalled)' : '' }}</option>
+                </select>
+              </td>
+              <td>
+                <button class="path-btn" data-action="open-path" :data-path="site.root" :title="`${site.root} → ${hostToContainer(state.env, site.root)}`">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                  <span class="path-text">{{ site.root }}</span>
+                </button>
+              </td>
+              <td>
+                <span class="status-pill" :class="healthPill(site.health)"><span class="pill-dot"></span>{{ healthLabel(site.health) }}</span>
+              </td>
+              <td>
+                <span v-if="site.hosts" class="chip chip-accent">{{ t('sites.hosts.resolved') }}</span>
+                <button v-else class="btn btn-sm" data-action="hosts-add" :data-domain="site.domain">{{ t('sites.hosts.add') }}</button>
+              </td>
+              <td class="col-actions">
+                <div class="row-actions">
+                  <button class="icon-btn" :title="t('sites.actions.more')" data-action="row-menu" :data-domain="site.domain" @click="openRowMenu($event.currentTarget as HTMLElement, site.domain)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg>
+                  </button>
+                  <button class="icon-btn" :title="t('sites.actions.delete')" data-action="site-remove" :data-domain="site.domain" @click="modals.openSiteRemoveModal(site.domain)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+  </div>
+
+  <Teleport to="body">
+    <div v-if="menuDomain" class="row-menu" :style="{ left: menuPos.left + 'px', top: menuPos.top + 'px' }">
+      <button class="row-menu-item" type="button" @click="modals.openRewriteModal(menuDomain!); closeRowMenu()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4z" /><path d="M4 14h10v6H4z" /><path d="M18 14l3 3-3 3" /></svg>{{ t('sites.actions.rewrite') }}
+      </button>
+      <div class="row-menu-sep" />
+      <button class="row-menu-item" type="button" @click="modals.openSiteConfigModal(menuDomain!); closeRowMenu()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>{{ t('sites.actions.editConfig') }}
+      </button>
+    </div>
+  </Teleport>
+</template>

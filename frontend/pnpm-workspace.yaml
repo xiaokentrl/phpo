@@ -1,0 +1,4 @@
+allowBuilds:
+  esbuild: true
+  vue-demi: true
+# 允许这些依赖运行安装期构建脚本（esbuild 需下载平台二进制）
