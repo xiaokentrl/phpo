@@ -7,6 +7,7 @@ import { useI18n } from './useI18n'
 import { toast } from './useToast'
 import { runTask, type TaskMeta } from './useTask'
 import { removeSite, hasBackend } from '@/api/site'
+import { startService as svcStart, stopService as svcStop, removeService as svcRemove } from '@/api/lifecycle'
 import { SVC_META } from '@/constants/service'
 import InstallModal from '@/components/business/InstallModal.vue'
 import SiteAddModal from '@/components/business/SiteAddModal.vue'
@@ -73,9 +74,43 @@ export function useModals() {
       onConfirm: () => {
         const check = preflight('uninstall', { kind, version })
         if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-        runTask([kind, 'uninstall', version], `${t('svc.uninstall')} ${t(meta.titleKey)} ${version}`, { type: 'uninstall', kind, version })
+        if (!hasBackend()) {
+          runTask([kind, 'uninstall', version], `${t('svc.uninstall')} ${t(meta.titleKey)} ${version}`, { type: 'uninstall', kind, version })
+          return
+        }
+        svcRemove(kind, version).catch((e: unknown) => toast(String(e), 'err', 4600))
       },
     })
+  }
+
+  // dispatchLifecycle：生命周期写操作统一入口。预检 → 错误阻断 / 警告危险确认 → 有宿主走后端绑定（事件回流），无宿主回落 mock 日志。
+  function dispatchLifecycle(
+    action: 'service-start' | 'service-stop',
+    kind: string,
+    version: string,
+    label: string,
+    real: (k: string, v: string) => Promise<void>,
+    mockArgs: string[],
+  ): void {
+    const check = preflight(action, { kind, version })
+    if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
+    const submit = (): void => {
+      if (!hasBackend()) { runTask(mockArgs, label, { type: action, kind, version }); return }
+      real(kind, version).catch((e: unknown) => toast(String(e), 'err', 4600))
+    }
+    if (check.warnings.length) {
+      modal.open(DangerConfirm, { title: label, warnings: check.warnings.map((w) => ({ text: w })), confirmLabel: t('common.confirm'), onConfirm: submit })
+      return
+    }
+    submit()
+  }
+  function startService(kind: string, version: string): void {
+    const label = `${t('svc.start')} ${t(kindMeta(kind).titleKey)} ${version}`
+    dispatchLifecycle('service-start', kind, version, label, svcStart, [kind, 'start', version])
+  }
+  function stopService(kind: string, version: string): void {
+    const label = `${t('svc.stop')} ${t(kindMeta(kind).titleKey)} ${version}`
+    dispatchLifecycle('service-stop', kind, version, label, svcStop, [kind, 'stop', version])
   }
 
   function openSiteRemoveModal(domain: string): void {
@@ -199,6 +234,7 @@ export function useModals() {
     openInstallModal, openSiteAddModal, openRewriteModal, openSiteConfigModal,
     openConfigModal, openPhpExtensionsModal, openThemePicker, openHomeSetupWizard,
     openUninstallModal, openSiteRemoveModal, openDeleteBackupModal, openOfflinePruneModal, openRestoreModal,
+    startService, stopService,
     runGuardedTask,
   }
 }

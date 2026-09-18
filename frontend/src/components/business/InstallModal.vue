@@ -8,6 +8,9 @@ import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
+import { hasBackend } from '@/api/site'
+import { installService } from '@/api/lifecycle'
+import { setPassword, setPort } from '@/api/env'
 import { useAppState } from '@/stores/appState'
 import { SVC_META } from '@/constants/service'
 import { needsPassword, needsPort, suggestPortFor } from '@/utils/format'
@@ -65,8 +68,17 @@ function onOk(): void {
   if (ctx.port) args.push('--port', ctx.port)
   if (ctx.password !== null && ctx.password !== '') args.push('--password', ctx.password)
   if (ctx.extensions) args.push('--ext', ctx.extensions)
+  const label = `${t('svc.install')} ${t(meta.value.titleKey)} ${v}`
+  const taskMeta = { type: 'install', kind: props.kind, version: v, port: ctx.port, password: ctx.password, extensions: ctx.extensions }
   emit('close')
-  runTask(args, `${t('svc.install')} ${t(meta.value.titleKey)} ${v}`, { type: 'install', kind: props.kind, version: v, port: ctx.port, password: ctx.password, extensions: ctx.extensions })
+  if (!hasBackend()) { runTask(args, label, taskMeta); return }
+  // 真实链路：先落库端口/密码（Install 时容器据此装配），再安装；状态由后端事件回流。
+  const portNum = ctx.port ? parseInt(ctx.port, 10) : 0
+  const chain = Promise.resolve()
+    .then(() => (ctx.port ? setPort(props.kind, v, portNum) : undefined))
+    .then(() => (ctx.password !== null ? setPassword(props.kind, v, ctx.password) : undefined))
+    .then(() => installService(props.kind, v))
+  chain.catch((e: unknown) => toast(String(e), 'err', 4600))
 }
 </script>
 

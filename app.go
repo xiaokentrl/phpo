@@ -182,3 +182,37 @@ func (a *App) SiteSetVhostContent(ctx context.Context, domain, content string) e
 	}
 	return a.container.SiteService.SetVhostContent(ctx, domain, content)
 }
+
+// ---- M5 数据服务 env 绑定：密码/端口明文落库（§1.5 零校验），写入后 state:changed 回流（硬红线 4）----
+
+// GetServicePassword 读某服务版本明文密码供 UI 回显；未设置回落默认 123456
+func (a *App) GetServicePassword(kind model.ServiceKind, version string) (string, error) {
+	if a.container.EnvService == nil {
+		return "", errNotReady
+	}
+	return a.container.EnvService.GetPassword(kind, version)
+}
+
+// SetServicePassword 明文写入密码（空串/任意长度合法，零校验零加密）
+func (a *App) SetServicePassword(kind model.ServiceKind, version, password string) error {
+	if a.container.EnvService == nil {
+		return errNotReady
+	}
+	return a.container.EnvService.SetPassword(kind, version, password)
+}
+
+// GetServicePort 读某服务版本落库的宿主端口；未设置返回 0
+func (a *App) GetServicePort(kind model.ServiceKind, version string) (int, error) {
+	if a.container.EnvService == nil {
+		return 0, errNotReady
+	}
+	return a.container.EnvService.GetPort(kind, version)
+}
+
+// SetServicePort 落库某服务版本的宿主发布端口
+func (a *App) SetServicePort(kind model.ServiceKind, version string, port int) error {
+	if a.container.EnvService == nil {
+		return errNotReady
+	}
+	return a.container.EnvService.SetPort(kind, version, port)
+}

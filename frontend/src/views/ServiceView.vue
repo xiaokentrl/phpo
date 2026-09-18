@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { useModals } from '@/composables/useModals'
+import PasswordField from '@/components/common/PasswordField.vue'
 import { DIR_ROWS, DEFAULT_FILE_COUNT, SVC_META } from '@/constants/service'
 import type { ServiceKind } from '@/types'
 import { needsPassword, needsPort, suggestPortFor } from '@/utils/format'
@@ -68,7 +69,7 @@ function extCount(version: string): number {
           </div>
           <div v-if="needsPassword(kind)" class="kv">
             <span class="k">{{ t('svc.password') }}</span>
-            <span class="inline-edit" data-inline="password" :data-kind="kind" :data-version="version" data-field="password" data-original="••••••••" tabindex="0" :title="t('common.edit')"><span class="pw">••••••••</span></span>
+            <PasswordField :kind="kind" :version="version" />
           </div>
 
           <div v-for="[sub, labelKey] in DIR_ROWS[kind]" :key="sub" class="kv">
@@ -101,8 +102,8 @@ function extCount(version: string): number {
             {{ t('svc.manageConfig') }}
             <span style="opacity: 0.55; font-family: var(--mono); font-size: 11px; margin-left: 2px">{{ DEFAULT_FILE_COUNT[kind] }}</span>
           </button>
-          <button v-if="state.isServiceRunning(kind, version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version">{{ t('svc.stop') }}</button>
-          <button v-else class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version">{{ t('svc.start') }}</button>
+          <button v-if="state.isServiceRunning(kind, version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version" @click="modals.stopService(kind, version)">{{ t('svc.stop') }}</button>
+          <button v-else class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version" @click="modals.startService(kind, version)">{{ t('svc.start') }}</button>
           <button class="btn btn-sm btn-danger" data-action="uninstall" :data-kind="kind" :data-version="version" @click="modals.openUninstallModal(kind, version)">{{ t('svc.uninstall') }}</button>
         </div>
       </article>
