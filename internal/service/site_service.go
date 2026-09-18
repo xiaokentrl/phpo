@@ -29,16 +29,17 @@ type SiteStore interface {
 
 // SiteService 组合 vhost/hosts/回收站/任务引擎，落地站点生命周期
 type SiteService struct {
-	store    SiteStore
-	vhosts   *vhost.Manager
-	hosts    steps.HostsOps
-	trash    *engine.Trash
-	validate vhost.Validator
-	reload   Reloader
-	tasks    *task.Manager
-	emitter  Emitter
-	env      config.Env
-	seq      atomic.Uint64
+	store     SiteStore
+	vhosts    *vhost.Manager
+	hosts     steps.HostsOps
+	trash     *engine.Trash
+	validate  vhost.Validator
+	reload    Reloader
+	tasks     *task.Manager
+	emitter   Emitter
+	env       config.Env
+	publisher NginxPublisher
+	seq       atomic.Uint64
 }
 
 // Reloader 写盘后重载 nginx（真实实现走 docker exec；测试注入 noop）。nil 视为无需重载。
@@ -46,9 +47,18 @@ type Reloader interface {
 	Reload(ctx context.Context) error
 }
 
+// NginxPublisher 重发布站点端口到 nginx 容器（真实实现：LifecycleService.RepublishNginx）。
+// nil 表示不重发布（单测 / 无 nginx 环境），保持既有站点写链路不变。
+type NginxPublisher interface {
+	RepublishNginx(ctx context.Context, ports []int) error
+}
+
 func NewSiteService(st SiteStore, vh *vhost.Manager, hosts steps.HostsOps, trash *engine.Trash, validate vhost.Validator, reload Reloader, tm *task.Manager, emitter Emitter, env config.Env) *SiteService {
 	return &SiteService{store: st, vhosts: vh, hosts: hosts, trash: trash, validate: validate, reload: reload, tasks: tm, emitter: emitter, env: env}
 }
+
+// SetNginxPublisher 注入端口重发布器（di 装配期调用）；未注入则站点写链路不触 nginx 重建。
+func (s *SiteService) SetNginxPublisher(p NginxPublisher) { s.publisher = p }
 
 // AddInput 建站入参；Root 为空时回落 {WWW_ROOT}/{domain}，Port 为 0 时回落 80
 type AddInput struct {
@@ -66,15 +76,19 @@ func (s *SiteService) Add(ctx context.Context, in AddInput) error {
 	content := s.vhostContent(site)
 
 	domain := site.Domain
+	stepsList := []task.Step{
+		steps.NewPrepareSiteDir("创建站点目录", s.env, site.Root),
+		steps.NewWriteVHost("生成 vhost", s.vhosts, s.validate, domain, content),
+		steps.NewAddHosts("写入 hosts", s.hosts, domain),
+	}
+	if rp := s.republishStep(sitePorts(mustSites(s.store), domain, site.Port)); rp != nil {
+		stepsList = append(stepsList, rp)
+	}
 	t := &task.Task{
 		ID:    s.newID("site-add"),
 		Label: "创建站点 " + domain,
 		Meta:  model.TaskMeta{Type: "site-add", Domain: domain},
-		Steps: []task.Step{
-			steps.NewPrepareSiteDir("创建站点目录", s.env, site.Root),
-			steps.NewWriteVHost("生成 vhost", s.vhosts, s.validate, domain, content),
-			steps.NewAddHosts("写入 hosts", s.hosts, domain),
-		},
+		Steps: stepsList,
 		Apply: func() error { return s.commitUpsert(site) },
 	}
 	_, err := s.tasks.Run(ctx, t)
@@ -91,14 +105,18 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 
 	var trashPath string
 	trashStep := steps.NewTrashSiteDir("站点目录入回收站", s.trash, site.Root)
+	stepsList := []task.Step{
+		trashStep,
+		steps.NewDeleteVHostFile("移除 vhost", s.vhosts, domain, prevContent),
+	}
+	if rp := s.republishStep(sitePorts(mustSites(s.store), domain, 0)); rp != nil {
+		stepsList = append(stepsList, rp)
+	}
 	t := &task.Task{
 		ID:    s.newID("site-remove"),
 		Label: "删除站点 " + domain,
 		Meta:  model.TaskMeta{Type: "site-remove", Domain: domain},
-		Steps: []task.Step{
-			trashStep,
-			steps.NewDeleteVHostFile("移除 vhost", s.vhosts, domain, prevContent),
-		},
+		Steps: stepsList,
 		Apply: func() error {
 			trashPath = trashStep.TrashPath()
 			return s.commitRemove(domain, site.Root, trashPath)
@@ -207,6 +225,9 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 			return s.reload.Reload(ctx)
 		}},
 	}
+	if rp := s.republishStep(sitePorts(sites, domain, updated.Port)); rp != nil {
+		stepList = append(stepList, rp)
+	}
 	t := &task.Task{
 		ID:    s.newID(op),
 		Label: label,
@@ -268,4 +289,31 @@ func mustSites(st SiteStore) []model.Site {
 
 func (s *SiteService) newID(op string) string {
 	return fmt.Sprintf("%s-%d", op, s.seq.Add(1))
+}
+
+// republishStep 产出「重发布站点端口到 nginx」步骤；publisher 为 nil 时返回 nil（调用方据此不加入任务）。
+func (s *SiteService) republishStep(ports []int) task.Step {
+	if s.publisher == nil {
+		return nil
+	}
+	return &task.FuncStep{StepName: "发布站点端口到 Nginx", Exec: func(ctx context.Context, _ task.StepLog) error {
+		return s.publisher.RepublishNginx(ctx, ports)
+	}}
+}
+
+// sitePorts 汇总应发布端口并集：取现有站点端口（排除 exceptDomain），再并入 addPort（<=0 忽略）；去重。
+func sitePorts(sites []model.Site, exceptDomain string, addPort int) []int {
+	seen := make(map[int]bool, len(sites)+1)
+	out := make([]int, 0, len(sites)+1)
+	for _, st := range sites {
+		if st.Domain == exceptDomain || st.Port <= 0 || seen[st.Port] {
+			continue
+		}
+		seen[st.Port] = true
+		out = append(out, st.Port)
+	}
+	if addPort > 0 && !seen[addPort] {
+		out = append(out, addPort)
+	}
+	return out
 }

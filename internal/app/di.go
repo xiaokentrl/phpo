@@ -94,6 +94,8 @@ func (c *Container) Build() *Assembly {
 			vhost.NewNginxReloader(nginxContainer),
 			tm, c.Emitter, env,
 		)
+		// 站点端口并集发布到 nginx（增删改站点端口后重建 nginx 容器以重绑宿主端口）
+		c.SiteService.SetNginxPublisher(lc)
 
 		// §5.13.9 启动时校准：Docker 缺席/未运行时容忍失败，不阻断 GUI 启动
 		if _, cerr := lc.Calibrate(ctx); cerr != nil {

@@ -143,6 +143,38 @@ func (l *LifecycleService) Install(ctx context.Context, kind model.ServiceKind, 
 	return l.commit(ctx, kind, version, true, true)
 }
 
+// RepublishNginx 重建 nginx 单例容器以重绑站点端口并集（1:1 host==container）。
+// Docker 端口绑定只能在建容器时确定，改站点端口须重建 nginx；未安装 nginx 则跳过（建站不应强起 nginx）。
+func (l *LifecycleService) RepublishNginx(ctx context.Context, ports []int) error {
+	snap, err := l.store.BuildSnapshot()
+	if err != nil {
+		return err
+	}
+	vers := snap.Installed[string(model.KindNginx)]
+	if len(vers) == 0 {
+		return nil
+	}
+	ver := vers[0]
+	spec, err := nginxSpec(l.env, ver, ports)
+	if err != nil {
+		return err
+	}
+	name := dockerutil.ContainerName(string(model.KindNginx), ver)
+	op := engine.Op{
+		Name:     "重发布 nginx 站点端口 " + name,
+		PreClean: func(ctx context.Context) error { return l.docker.PreCleanContainer(ctx, name) },
+		Execute: func(ctx context.Context) error {
+			if _, err := l.docker.CreateServiceContainer(ctx, l.env, spec); err != nil {
+				return err
+			}
+			return l.docker.StartContainer(ctx, name)
+		},
+		PostVerify: func(ctx context.Context) error { return l.verifyRunning(ctx, model.KindNginx, ver, true) },
+		Rollback:   func(ctx context.Context) error { return l.docker.RemoveContainer(ctx, name) },
+	}
+	return op.Run(ctx)
+}
+
 // Start 启动已安装容器（幂等：已运行则 Post-Verify 直接通过）
 func (l *LifecycleService) Start(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)

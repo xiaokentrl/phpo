@@ -17,11 +17,12 @@ import (
 // fakeDocker 内存容器世界（name -> running）+ 数据卷（卸载不得触碰）
 type fakeDocker struct {
 	containers map[string]bool
-	volumes    map[string]bool // 模拟绑定/命名卷；RemoveContainer 不应删除
+	volumes    map[string]bool           // 模拟绑定/命名卷；RemoveContainer 不应删除
+	lastSpec   map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
 }
 
 func newFakeDocker() *fakeDocker {
-	return &fakeDocker{containers: map[string]bool{}, volumes: map[string]bool{"phpo-mysql-8.4-data": true}}
+	return &fakeDocker{containers: map[string]bool{}, volumes: map[string]bool{"phpo-mysql-8.4-data": true}, lastSpec: map[string]engine.ContainerSpec{}}
 }
 
 func (f *fakeDocker) ManagedContainers(context.Context) ([]engine.ActualState, error) {
@@ -37,7 +38,12 @@ func (f *fakeDocker) ManagedContainers(context.Context) ([]engine.ActualState, e
 }
 
 func (f *fakeDocker) CreateServiceContainer(_ context.Context, _ config.Env, spec engine.ContainerSpec) (string, error) {
-	f.containers[dockerutil.ContainerName(spec.Kind, spec.Version)] = false // 新建即停止
+	name := dockerutil.ContainerName(spec.Kind, spec.Version)
+	f.containers[name] = false // 新建即停止
+	if f.lastSpec == nil {
+		f.lastSpec = map[string]engine.ContainerSpec{}
+	}
+	f.lastSpec[name] = spec
 	return "fake-id", nil
 }
 func (f *fakeDocker) StartContainer(_ context.Context, name string) error {
