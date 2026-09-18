@@ -1,0 +1,16 @@
+{
+  "$schema": "https://wails.io/schemas/config.v3.json",
+  "name": "phpo",
+  "outputmode": "desktop",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm build",
+  "frontend:dev:watcher": "pnpm dev",
+  "frontend:dev:serverUrl": "http://localhost:9245",
+  "info": {
+    "companyName": "phpo",
+    "productName": "phpo",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026 phpo contributors",
+    "comments": "面向 PHP 开发者的本地 Docker 化开发环境管理器（仅 GUI，不提供 CLI）"
+  }
+}

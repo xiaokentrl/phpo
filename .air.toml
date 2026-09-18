@@ -1,0 +1,12 @@
+root = "."
+tmp_dir = ".air"
+
+[build]
+cmd = "go build -race -o .air/phpo . && .air/phpo -dev"
+bin = ".air/phpo"
+include_ext = ["go", "tmpl", "tpl", "html", "css"]
+exclude_dir = ["frontend", "build", "test", ".air"]
+delay = 1000
+
+[log]
+time = true

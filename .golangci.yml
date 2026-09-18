@@ -1,0 +1,24 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+
+linters-settings:
+  errcheck:
+    # 与总纲一致：忽略标记的清理调用需显式 _ =
+    check-blank: false
+
+issues:
+  exclude-dirs:
+    - frontend/bindings
+    - test/fixtures

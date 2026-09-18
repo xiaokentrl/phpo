@@ -1,0 +1,69 @@
+version: '3'
+
+vars:
+  BINARY: phpo
+
+tasks:
+  default:
+    desc: 列出全部任务
+    cmds:
+      - task --list
+
+  dev:
+    desc: 开发模式（Wails + Vite 热重载）
+    cmds:
+      - wails3 dev -devserver "http://localhost:9245"
+
+  bindings:
+    desc: 重新生成前端 TS 绑定（禁止手改 frontend/bindings/）
+    cmds:
+      - wails3 generate bindings -ts -clean
+
+  frontend:install:
+    desc: 安装前端依赖
+    cmds:
+      - pnpm -C frontend install --frozen-lockfile
+
+  frontend:build:
+    desc: 构建前端产物到 frontend/dist
+    cmds:
+      - pnpm -C frontend build
+
+  build:
+    desc: 构建当前平台桌面程序
+    deps: [frontend:build]
+    cmds:
+      - wails3 package -platform current -o build/bin/{{.BINARY}}
+
+  build:windows:
+    desc: 交叉打包 Windows
+    cmds:
+      - wails3 package -platform windows -o build/bin/{{.BINARY}}-windows-x64.exe
+
+  build:darwin:
+    desc: 交叉打包 macOS
+    cmds:
+      - wails3 package -platform darwin -o build/bin/{{.BINARY}}-darwin
+
+  build:linux:
+    desc: 打包 Linux
+    cmds:
+      - wails3 package -platform linux -o build/bin/{{.BINARY}}-linux
+
+  test:
+    desc: 全量 Go 测试（无 Docker 环境必须可跑，M2 门禁）
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: 静态检查
+    cmds:
+      - go vet ./...
+
+  check:
+    desc: 工程规范校验脚本全量（i18n/模板/命名/缓存清单）
+    cmds:
+      - go run ./scripts/check-i18n-keys.go
+      - go run ./scripts/check-templates.go
+      - go run ./scripts/check-docker-naming.go
+      - go run ./scripts/check-cache-manifest.go
