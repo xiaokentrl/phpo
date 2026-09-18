@@ -1,13 +1,19 @@
 <script setup lang="ts">
 // Backup 视图：1:1 迁移原型 renderBackup（2694–2696）
+// T602：列表/创建/下载/恢复/删除接后端三段式（硬红线 4/5）；无宿主回落本地 mock 演示。
+import { onMounted } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { useModals } from '@/composables/useModals'
+import { hasBackend } from '@/api/site'
 import PathInfoBar from '@/components/common/PathInfoBar.vue'
 
 const { t } = useI18n()
 const state = useAppState()
 const modals = useModals()
+
+// 有宿主时以 BackupList 权威列表覆盖 mock（列表不在 Snapshot 内，进入视图即拉取）
+onMounted(() => { if (hasBackend()) void modals.refreshBackups() })
 </script>
 
 <template>
@@ -18,7 +24,7 @@ const modals = useModals()
         <p class="view-sub">{{ t('backup.subtitle') }}</p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-primary" data-action="run-task" data-args="backup" :data-label="t('backup.nowTask')" data-pf-action="backup" @click="modals.runGuardedTask('backup', {}, ['backup'], t('backup.nowTask'))">{{ t('backup.now') }}</button>
+        <button class="btn btn-primary" data-action="run-task" data-args="backup" :data-label="t('backup.nowTask')" data-pf-action="backup" @click="modals.runBackup()">{{ t('backup.now') }}</button>
       </div>
     </header>
 
@@ -44,7 +50,7 @@ const modals = useModals()
             <td><span class="chip">{{ b.items }} {{ t('backup.col.items') }}</span></td>
             <td>
               <div class="row-actions">
-                <button class="btn btn-sm" data-action="download-backup" :data-file="b.file">
+                <button class="btn btn-sm" data-action="download-backup" :data-file="b.file" @click="modals.downloadBackupFile(b.file)">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5M12 15V3" /></svg>
                   {{ t('backup.download') }}
                 </button>

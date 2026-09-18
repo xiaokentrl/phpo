@@ -35,3 +35,7 @@ func ImageRefFor(kind, version string) (string, error) {
 	}
 	return repo + ":" + ImageTagFor(kind, version), nil
 }
+
+// CommittedPHPRef 扩展经内置工具编译安装后，用 docker commit 固化出的 phpo 专用镜像引用（phpo/php:{version}）。
+// 与官方基座 php:{version}-fpm 区分：启用扩展的 php 版本运行此镜像，重装同配置时零网络加载。
+func CommittedPHPRef(version string) string { return "phpo/php:" + version }

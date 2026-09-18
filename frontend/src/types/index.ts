@@ -20,6 +20,24 @@ export interface Backup {
   items: number
 }
 
+export type DoctorStatus = 'ok' | 'warn' | 'err'
+
+export interface DoctorCheck {
+  id: string
+  title: string
+  status: DoctorStatus
+  detail: string
+  hint: string
+  fix: string // '' 无 / 'calibrate' 状态校准 / 'clear_temp' 清空临时目录残留
+}
+
+export interface DoctorReport {
+  checks: DoctorCheck[]
+  ok: number
+  warnings: number
+  errors: number
+}
+
 export interface OfflineTree {
   svc: string
   ver: string

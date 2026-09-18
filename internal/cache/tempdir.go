@@ -78,3 +78,25 @@ func (m *Manager) ScanAndClearResidue(ctx context.Context) error {
 	}
 	return nil
 }
+
+// ScanResidue 只读扫描残留临时目录（不清空），供 doctor「临时目录残留」项计数
+func (m *Manager) ScanResidue() ([]string, error) {
+	var out []string
+	for _, kind := range []string{"php", "nginx", "mysql", "pgsql", "redis"} {
+		root := m.env.Get(strings.ToUpper(kind) + "_ROOT")
+		versions, err := os.ReadDir(root)
+		if err != nil {
+			continue // 目录尚未创建，无残留
+		}
+		for _, v := range versions {
+			if !v.IsDir() {
+				continue
+			}
+			ext := filepath.Join(root, v.Name(), "ext")
+			if st, err := os.Stat(ext); err == nil && st.IsDir() {
+				out = append(out, ext)
+			}
+		}
+	}
+	return out, nil
+}

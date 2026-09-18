@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // PHP 扩展管理弹窗：忠实迁移原型 openPhpExtensionsModal（3054–3099）
 // 已启用药丸（开关/删除）+ 推荐开关 + 自定义新增；脏态应用；preflight('extensions')
+// T601 接真：有宿主时经后端三段式（编译→固化→重建→重载），状态由 state:changed 回流；无宿主回落本地 mock
 import { computed, ref } from 'vue'
 import ModalShell from '@/components/common/ModalShell.vue'
 import { useI18n } from '@/composables/useI18n'
@@ -9,6 +10,8 @@ import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
 import { useAppState } from '@/stores/appState'
 import { EXT_LIB } from '@/constants/ext'
+import { hasBackend } from '@/api/site'
+import { applyExtensions } from '@/api/extension'
 
 const props = defineProps<{ version: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -55,19 +58,33 @@ function addExt(): void {
   addName.value = ''
 }
 
-function apply(): void {
+async function apply(): Promise<void> {
   if (!dirty.value) { emit('close'); return }
   const finalExts = [...selected.value]
   const added = finalExts.filter((x) => !originalExts.includes(x))
   const removed = originalExts.filter((x) => !finalExts.includes(x))
   const check = preflight('extensions', { version: props.version, finalExts })
   if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-  app.phpExtensions[props.version] = finalExts
-  emit('close')
-  const parts: string[] = []
-  if (added.length) parts.push(`+${added.join(',')}`)
-  if (removed.length) parts.push(`-${removed.join(',')}`)
-  runTask(['php', 'extension', 'sync', props.version, '--ext', finalExts.join(',')], `PHP ${props.version} ext (${parts.join(' ') || 'no change'})`, { type: 'extensions', version: props.version, added, removed })
+
+  // 纯 Vite demo：本地覆盖 + mock 任务
+  if (!hasBackend()) {
+    app.phpExtensions[props.version] = finalExts
+    emit('close')
+    const parts: string[] = []
+    if (added.length) parts.push(`+${added.join(',')}`)
+    if (removed.length) parts.push(`-${removed.join(',')}`)
+    runTask(['php', 'extension', 'sync', props.version, '--ext', finalExts.join(',')], `PHP ${props.version} ext (${parts.join(' ') || 'no change'})`, { type: 'extensions', version: props.version, added, removed })
+    return
+  }
+
+  // 真实链路：后端编译→固化→重建→重载；勿本地乐观更新，扩展列表由 state:changed 回流
+  try {
+    await applyExtensions(props.version, finalExts)
+    emit('close')
+    toast(t('ext.applied', { version: props.version }), 'ok', 2600)
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  }
 }
 </script>
 

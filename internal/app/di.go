@@ -35,6 +35,15 @@ type Container struct {
 
 	// M5 配置门面：服务配置文件读写（T505）；启动后非 nil
 	ConfigService *service.ConfigService
+
+	// M6 扩展门面：PHP 扩展启停 + 固化镜像重建（T601）；启动后非 nil
+	ExtensionService *service.ExtensionService
+
+	// M6 备份门面：打包/恢复/删除备份（T602）；启动后非 nil
+	BackupService *service.BackupService
+
+	// M6 诊断门面：§5.7 环境诊断 15 项 + 一键修复（T603）；启动后非 nil
+	DoctorService *service.DoctorService
 }
 
 func NewContainer() *Container {
@@ -96,6 +105,21 @@ func (c *Container) Build() *Assembly {
 		)
 		// 站点端口并集发布到 nginx（增删改站点端口后重建 nginx 容器以重绑宿主端口）
 		c.SiteService.SetNginxPublisher(lc)
+
+		// M6 扩展门面（T601）：容器内内置工具编译 → commit 固化 phpo/php:{version} → save 提升离线缓存 → 重建
+		c.ExtensionService = service.NewExtensionService(
+			cli, cacheMgr, st, vhost.NewNginxReloader(nginxContainer), c.Emitter, env, tm,
+		)
+
+		// M6 备份门面（T602）：打包配置/数据/站点/缓存 + SQLite 快照 → tar.gz；恢复走应用内逻辑重放 + 重建容器
+		c.BackupService = service.NewBackupService(
+			st, lc, cacheMgr, cli,
+			func(path string) (service.SnapshotReader, error) { return store.Open(path) },
+			c.Emitter, env, tm,
+		)
+
+		// M6 诊断门面（T603）：§5.7 十五项纯读诊断 + 状态校准/清临时目录两类一键修复
+		c.DoctorService = service.NewDoctor(cli, cli, st, cacheMgr, lc, env)
 
 		// §5.13.9 启动时校准：Docker 缺席/未运行时容忍失败，不阻断 GUI 启动
 		if _, cerr := lc.Calibrate(ctx); cerr != nil {

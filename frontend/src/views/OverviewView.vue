@@ -1,16 +1,52 @@
 <script setup lang="ts">
-// Overview 视图：1:1 迁移原型 renderOverview（2714–2727）
-import { computed } from 'vue'
+// Overview 视图：1:1 迁移原型 renderOverview（2714–2727）；doctor 接真（T603 §5.7）
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
-import { runTask } from '@/composables/useTask'
+import { toast } from '@/composables/useToast'
+import { runDoctor, fixDoctor } from '@/api/doctor'
 import { SVC_META } from '@/constants/service'
-import type { ServiceKind } from '@/types'
+import type { DoctorReport, DoctorStatus, ServiceKind } from '@/types'
 
 const { t } = useI18n()
 const state = useAppState()
 const router = useRouter()
+
+const report = ref<DoctorReport | null>(null)
+const diagnosing = ref(false)
+const fixing = ref('')
+
+async function runDiagnose() {
+  if (diagnosing.value) return
+  diagnosing.value = true
+  try {
+    const r = await runDoctor()
+    report.value = r
+    if (!r) toast(t('doctor.demoHint'), 'info', 3200)
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  } finally {
+    diagnosing.value = false
+  }
+}
+
+async function onFix(id: string) {
+  if (fixing.value) return
+  fixing.value = id
+  try {
+    await fixDoctor(id)
+    const r = await runDoctor()
+    report.value = r
+    toast(t('doctor.fix') + ' ✓', 'ok', 2200)
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  } finally {
+    fixing.value = ''
+  }
+}
+
+const pillOf: Record<DoctorStatus, string> = { ok: 'pill-ok', warn: 'pill-warn', err: 'pill-err' }
 
 interface Row {
   kind: ServiceKind
@@ -41,10 +77,25 @@ function jump(kind: ServiceKind) {
         <h1>{{ t('overview.title') }}</h1>
         <p class="view-sub">{{ t('overview.subtitle') }}</p>
       </div>
-      <div v-if="all.length > 0" class="header-actions">
-        <button class="btn" data-action="run-task" data-args="doctor" :data-label="t('overview.doctorTask')" @click="runTask(['doctor'], t('overview.doctorTask'))">{{ t('overview.doctor') }}</button>
+      <div class="header-actions">
+        <button class="btn" :disabled="diagnosing" @click="runDiagnose">{{ diagnosing ? t('doctor.diagnosing') : (report ? t('doctor.recheck') : t('doctor.run')) }}</button>
       </div>
     </header>
+
+    <div v-if="report" class="doctor-card">
+      <div class="doctor-head">
+        <strong>{{ t('doctor.section') }}</strong>
+        <span v-if="report.errors === 0 && report.warnings === 0" class="doctor-good">{{ t('doctor.allGood') }}</span>
+        <span v-else class="doctor-sum">{{ t('doctor.summary', { ok: report.ok, warnings: report.warnings, errors: report.errors }) }}</span>
+      </div>
+      <ul class="doctor-list">
+        <li v-for="c in report.checks" :key="c.id" class="doctor-row">
+          <span class="status-pill" :class="pillOf[c.status]"><span class="pill-dot"></span>{{ c.title }}</span>
+          <span class="doctor-detail">{{ c.detail }}<span v-if="c.hint" class="doctor-hint"> · {{ c.hint }}</span></span>
+          <button v-if="c.fix" class="btn btn-sm" :disabled="fixing === c.fix" @click="onFix(c.fix)">{{ t('doctor.fix.' + c.fix) }}</button>
+        </li>
+      </ul>
+    </div>
 
     <div v-if="all.length === 0" class="empty">
       <div class="empty-icon">🚀</div>
@@ -95,3 +146,48 @@ function jump(kind: ServiceKind) {
     </template>
   </div>
 </template>
+
+<style scoped>
+.doctor-card {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.doctor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.doctor-sum {
+  font-size: 12.5px;
+  color: var(--text-mute);
+}
+.doctor-good {
+  font-size: 12.5px;
+  color: var(--ok);
+}
+.doctor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.doctor-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.doctor-detail {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.doctor-hint {
+  color: var(--text-mute);
+}
+</style>

@@ -97,7 +97,12 @@ export const useAppState = defineStore('appState', () => {
     else if (!running && idx < 0) arr.push(version)
   }
 
+  // setBackups：备份列表不在 Snapshot 内，由后端 BackupList 单独权威拉取后整体替换（硬红线 4，无本地乐观更新）。
+  function setBackups(list: Backup[]): void {
+    backups.splice(0, backups.length, ...list)
+  }
+
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, isServiceRunning, applySnapshot, setServiceRunning, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, isServiceRunning, applySnapshot, setServiceRunning, setBackups, phpVersions }
 })

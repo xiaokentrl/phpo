@@ -235,3 +235,87 @@ func (a *App) ConfigSaveFiles(ctx context.Context, kind model.ServiceKind, versi
 	}
 	return a.container.ConfigService.Save(ctx, kind, version, files)
 }
+
+// ---- M6 扩展绑定：读启用集 / 三段式应用扩展并重建固化镜像（硬红线 4/5/8）----
+
+// ExtList 返回某 PHP 版本当前启用的扩展（后端权威）
+func (a *App) ExtList(version string) ([]string, error) {
+	if a.container.ExtensionService == nil {
+		return nil, errNotReady
+	}
+	return a.container.ExtensionService.List(version)
+}
+
+// ExtApply 应用目标扩展集：容器内编译 → commit 固化 phpo/php:{version} → 提升离线缓存 → 重建容器 → 重载 nginx
+func (a *App) ExtApply(ctx context.Context, version string, enabled []string) error {
+	if a.container.ExtensionService == nil {
+		return errNotReady
+	}
+	return a.container.ExtensionService.Apply(ctx, version, enabled)
+}
+
+// ---- M6 备份绑定：列表/下载路径 + 三段式创建/恢复/删除（硬红线 3/4/5）----
+
+// BackupList 返回 BACKUP_ROOT 下备份归档条目（时间倒序，后端权威）
+func (a *App) BackupList() ([]model.BackupFile, error) {
+	if a.container.BackupService == nil {
+		return nil, errNotReady
+	}
+	return a.container.BackupService.List()
+}
+
+// BackupPath 返回某归档的绝对路径（供前端触发本地下载）；仅接受合法文件名
+func (a *App) BackupPath(file string) (string, error) {
+	if a.container.BackupService == nil {
+		return "", errNotReady
+	}
+	return a.container.BackupService.Path(file)
+}
+
+// BackupSaveAs 把归档导出到用户经原生保存框选定的目标路径（下载）
+func (a *App) BackupSaveAs(file, dst string) error {
+	if a.container.BackupService == nil {
+		return errNotReady
+	}
+	return a.container.BackupService.SaveAs(file, dst)
+}
+
+// BackupCreate 创建备份：暂停数据服务 → 导出 SQLite 快照 → 打包 → 自动重启
+func (a *App) BackupCreate(ctx context.Context) (model.BackupFile, error) {
+	if a.container.BackupService == nil {
+		return model.BackupFile{}, errNotReady
+	}
+	return a.container.BackupService.Create(ctx)
+}
+
+// BackupRestore 恢复备份：清空命名空间 → 解包落盘 → 逻辑重放 SQLite → 重建容器
+func (a *App) BackupRestore(ctx context.Context, file string) error {
+	if a.container.BackupService == nil {
+		return errNotReady
+	}
+	return a.container.BackupService.Restore(ctx, file)
+}
+
+// BackupDelete 删除备份归档（二次确认在前端）
+func (a *App) BackupDelete(ctx context.Context, file string) error {
+	if a.container.BackupService == nil {
+		return errNotReady
+	}
+	return a.container.BackupService.Delete(ctx, file)
+}
+
+// DoctorRun 执行 §5.7 环境诊断，返回 15 项检查结果与汇总计数
+func (a *App) DoctorRun(ctx context.Context) (model.DoctorReport, error) {
+	if a.container.DoctorService == nil {
+		return model.DoctorReport{}, errNotReady
+	}
+	return a.container.DoctorService.Run(ctx), nil
+}
+
+// DoctorFix 执行一项一键修复（calibrate 状态校准 / clear_temp 清空临时目录残留），均幂等可重复
+func (a *App) DoctorFix(ctx context.Context, id string) error {
+	if a.container.DoctorService == nil {
+		return errNotReady
+	}
+	return a.container.DoctorService.Fix(ctx, id)
+}

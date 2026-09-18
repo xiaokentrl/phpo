@@ -8,6 +8,7 @@ import { toast } from './useToast'
 import { runTask, type TaskMeta } from './useTask'
 import { removeSite, hasBackend } from '@/api/site'
 import { startService as svcStart, stopService as svcStop, removeService as svcRemove } from '@/api/lifecycle'
+import { listBackups, createBackup, restoreBackup, deleteBackup, downloadBackup } from '@/api/backup'
 import { SVC_META } from '@/constants/service'
 import InstallModal from '@/components/business/InstallModal.vue'
 import SiteAddModal from '@/components/business/SiteAddModal.vue'
@@ -139,6 +140,12 @@ export function useModals() {
     })
   }
 
+  // refreshBackups：写操作后重新拉取权威备份列表（列表不在 Snapshot 内，硬红线 4）
+  async function refreshBackups(): Promise<void> {
+    const list = await listBackups()
+    if (list) app.setBackups(list)
+  }
+
   function openDeleteBackupModal(file: string): void {
     const b = app.backups.find((x) => x.file === file)
     modal.open(DangerConfirm, {
@@ -155,9 +162,16 @@ export function useModals() {
       onConfirm: () => {
         const check = preflight('backup-delete', { file })
         if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-        const i = app.backups.findIndex((x) => x.file === file)
-        if (i >= 0) app.backups.splice(i, 1)
-        toast(`✓ ${file}`, 'ok', 2200)
+        if (!hasBackend()) {
+          const i = app.backups.findIndex((x) => x.file === file)
+          if (i >= 0) app.backups.splice(i, 1)
+          toast(`✓ ${file}`, 'ok', 2200)
+          return
+        }
+        deleteBackup(file)
+          .then(refreshBackups)
+          .then(() => toast(t('backup.deleted', { file }), 'ok', 2200))
+          .catch((e: unknown) => toast(String(e), 'err', 4600))
       },
     })
   }
@@ -200,9 +214,43 @@ export function useModals() {
       onConfirm: () => {
         const check = preflight('restore', { file })
         if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-        runTask(['restore', `${app.env.BACKUP_ROOT}/${file}`], `Restore ${file}`, { type: 'restore', file })
+        if (!hasBackend()) {
+          runTask(['restore', `${app.env.BACKUP_ROOT}/${file}`], `Restore ${file}`, { type: 'restore', file })
+          return
+        }
+        restoreBackup(file)
+          .then(refreshBackups)
+          .then(() => toast(t('backup.restored', { file }), 'ok', 2600))
+          .catch((e: unknown) => toast(String(e), 'err', 4600))
       },
     })
+  }
+
+  // runBackup：立即备份——预检 → 警告危险确认 → 有宿主走后端三段式（完成后自动重启数据服务），无宿主回落 mock 日志。
+  function runBackup(): void {
+    const label = t('backup.nowTask')
+    const check = preflight('backup', {})
+    if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
+    const submit = (): void => {
+      if (!hasBackend()) { runTask(['backup'], label, { type: 'backup' }); return }
+      createBackup()
+        .then((bf) => refreshBackups().then(() => bf))
+        .then((bf) => { if (bf) toast(t('backup.created', { file: bf.file }), 'ok', 2600) })
+        .catch((e: unknown) => toast(String(e), 'err', 4600))
+    }
+    if (check.warnings.length) {
+      modal.open(DangerConfirm, { title: label, warnings: check.warnings.map((w) => ({ text: w })), confirmLabel: t('common.confirm'), onConfirm: submit })
+      return
+    }
+    submit()
+  }
+
+  // downloadBackupFile：经原生保存框导出归档；无宿主提示仅演示。
+  function downloadBackupFile(file: string): void {
+    if (!hasBackend()) { toast(t('backup.downloaded', { file }), 'ok', 2200); return }
+    downloadBackup(file)
+      .then(() => toast(t('backup.downloaded', { file }), 'ok', 2200))
+      .catch((e: unknown) => toast(String(e), 'err', 4600))
   }
 
   // runGuardedTask：忠实原型 1939–1956。预检 → 错误 toast / 有警告则危险确认 → runTask。
@@ -236,5 +284,6 @@ export function useModals() {
     openUninstallModal, openSiteRemoveModal, openDeleteBackupModal, openOfflinePruneModal, openRestoreModal,
     startService, stopService,
     runGuardedTask,
+    runBackup, downloadBackupFile, refreshBackups,
   }
 }

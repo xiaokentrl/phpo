@@ -83,3 +83,17 @@ func manifestExtSha(mf *model.CacheManifest, extType, name string) string {
 	}
 	return ""
 }
+
+// CachedImageRef 返回离线缓存 tar 所对应的镜像引用（manifest.image.name）；未命中或无记录返回 ("", false)。
+// 供上层区分「基座镜像缓存」与「已固化扩展镜像缓存」（T601 重装同配置零网络判定）。
+func (m *Manager) CachedImageRef(kind, version string) (string, bool) {
+	lk, err := m.LookupImage(kind, version)
+	if err != nil || !lk.Hit {
+		return "", false
+	}
+	mf, err := m.LoadManifest(kind, version)
+	if err != nil || mf == nil || mf.Image == nil {
+		return "", false
+	}
+	return mf.Image.Name, true
+}
