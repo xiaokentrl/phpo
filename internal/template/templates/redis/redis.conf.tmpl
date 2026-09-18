@@ -1,0 +1,14 @@
+# phpo · Redis {{ .Version }}
+bind 0.0.0.0
+port 6379
+protected-mode yes
+requirepass ${REDIS_{{ .VersionEnv }}_ROOT_PASSWORD}
+
+dir /data
+appendonly yes
+appendfilename "appendonly.aof"
+appendfsync everysec
+
+maxmemory 256mb
+maxmemory-policy allkeys-lru
+logfile /var/log/redis/redis.log

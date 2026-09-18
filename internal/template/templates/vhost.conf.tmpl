@@ -1,0 +1,15 @@
+server {
+    listen {{ .Port }};
+    server_name {{ .Domain }};
+    root {{ .Root }};
+    index index.php index.html;
+{{ .RuleBlock }}
+    location ~ \.php$ {
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $php_upstream {{ .Upstream }}:9000;
+        fastcgi_pass $php_upstream;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+}

@@ -1,0 +1,22 @@
+; phpo · PHP {{ .Version }} php.ini
+[PHP]
+memory_limit = 256M
+upload_max_filesize = 64M
+post_max_size = 64M
+max_execution_time = 60
+max_input_time = 60
+date.timezone = Asia/Shanghai
+
+[opcache]
+opcache.enable = 1
+opcache.memory_consumption = 128
+opcache.max_accelerated_files = 10000
+opcache.validate_timestamps = 1
+opcache.revalidate_freq = 2
+
+[Session]
+session.save_handler = redis
+session.save_path = "tcp://phpo-redis-8:6379"
+
+[mail]
+; sendmail_path = /usr/sbin/sendmail -t -i
