@@ -10,6 +10,7 @@ import ModalRoot from '@/components/common/ModalRoot.vue'
 import ToastHost from '@/components/common/ToastHost.vue'
 import CmdPalette from '@/components/business/CmdPalette.vue'
 import TaskDrawer from '@/components/business/TaskDrawer.vue'
+import AppTrayMenu from '@/components/business/AppTrayMenu.vue'
 
 const { locale, t, setLocale } = useI18n()
 const prefs = usePrefsStore()
@@ -83,6 +84,7 @@ function toggleLang() {
     <ModalRoot />
     <ToastHost />
     <CmdPalette />
+    <AppTrayMenu />
   </div>
 </template>
 

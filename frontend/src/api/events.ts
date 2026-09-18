@@ -35,6 +35,15 @@ export const ALL_EVENTS: EventName[] = [
   EVENT.CacheCorrupted, EVENT.CacheCleanup, EVENT.CacheTempdirCleared,
 ]
 
+// UI_COMMAND 与内部 ui:command 广播对齐（§5.6 之外的 UI→UI 本地命令，见 internal/ui/menu.go）
+export const UI_COMMAND = 'ui:command'
+export const UICmd = {
+  OpenLogs: 'openLogs',
+  BackupNow: 'backupNow',
+  Quit: 'quit',
+} as const
+export type UICmdName = (typeof UICmd)[keyof typeof UICmd]
+
 // —— 载荷类型（§5.6 事件表逐行）——
 export interface StateChangedPayload { snapshot: StateSnapshot }
 export interface ServiceChangedPayload { kind: string; version: string; running: boolean }
@@ -64,7 +73,7 @@ function wailsRuntime(): WailsRuntime | undefined {
   return (globalThis as { window?: { runtime?: WailsRuntime } }).window?.runtime
 }
 
-type Handler = (payload: never) => void
+type Handler = (payload: unknown) => void
 
 // 浏览器独立运行（pnpm dev，无 Wails 宿主）时的进程内总线，供 M1 mock 驱动
 const bus = new Map<string, Set<Handler>>()
@@ -83,15 +92,15 @@ function offLocal(event: string, handler: Handler): void {
 }
 
 // emitLocal：向进程内总线投递事件（M1 mock 定时器 / 测试驱动专用，非生产发射路径）
-export function emitLocal(event: EventName, payload: unknown): void {
-  bus.get(event)?.forEach((h) => (h as (p: unknown) => void)(payload))
+export function emitLocal(event: string, payload: unknown): void {
+  bus.get(event)?.forEach((h) => h(payload))
 }
 
 // onEvent：订阅一个事件；返回反订阅函数。优先走 Wails 原生事件，退化到进程内总线。
-export function onEvent(event: EventName, handler: Handler): () => void {
+export function onEvent(event: string, handler: Handler): () => void {
   const rt = wailsRuntime()
   if (rt?.EventsOn) {
-    rt.EventsOn(event, handler as (data: unknown) => void)
+    rt.EventsOn(event, handler)
     return () => rt.EventsOff?.(event)
   }
   onLocal(event, handler)

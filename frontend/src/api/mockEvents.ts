@@ -46,5 +46,5 @@ export function devEmitAll(): number {
 }
 
 if (import.meta.env.DEV) {
-  (globalThis as Record<string, unknown>).__phpoMock = { emitAll: devEmitAll, events: ALL_EVENTS }
+  (globalThis as Record<string, unknown>).__phpoMock = { emitAll: devEmitAll, emit: emitLocal, events: ALL_EVENTS }
 }

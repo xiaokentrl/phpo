@@ -34,7 +34,7 @@ export function startStateSync(): void {
   const app = useAppState()
 
   for (const event of ALL_EVENTS) {
-    const off = onEvent(event, ((payload: unknown) => {
+    const off = onEvent(event, (payload: unknown) => {
       record(event, payload)
       // 仅对「状态权威」事件落地到 appState；其余事件 M1 记录待后续工单接线各自 store。
       if (event === EVENT.StateChanged) {
@@ -44,7 +44,7 @@ export function startStateSync(): void {
         const p = payload as { kind?: string; version?: string; running?: boolean }
         if (p?.kind && p?.version) app.setServiceRunning(p.kind as ServiceKind, p.version, !!p.running)
       }
-    }) as (p: never) => void)
+    })
     unsubscribers.push(off)
   }
 }
