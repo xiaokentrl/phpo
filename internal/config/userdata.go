@@ -36,6 +36,24 @@ func TrashRoot() (string, error) {
 	return filepath.Join(d, "trash"), nil
 }
 
+// UpdatesDir 返回升级工作根目录（§4.2：用户数据目录内的 updates）
+func UpdatesDir() (string, error) {
+	d, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "updates"), nil
+}
+
+// UpdatesSub 返回 updates 下的子目录（downloads / backups）
+func UpdatesSub(name string) (string, error) {
+	d, err := UpdatesDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, name), nil
+}
+
 // ExpandHome 把路径前缀 `~`（或 `~/`）展开为当前用户主目录；其余原样返回。
 // PHPO_HOME / WWW_ROOT 默认含 `~`（DefaultHome），落盘前须经此展开。
 func ExpandHome(p string) string {

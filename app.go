@@ -319,3 +319,26 @@ func (a *App) DoctorFix(ctx context.Context, id string) error {
 	}
 	return a.container.DoctorService.Fix(ctx, id)
 }
+
+// ---- M6 升级绑定：读当前版本 / 检查更新 / 三段式升级（下载→双校验→备份→安装，失败回滚，硬红线 5/6）----
+
+// UpdateCurrentVersion 返回应用当前版本（前端展示比较基准）
+func (a *App) UpdateCurrentVersion() string {
+	return a.container.CurrentVersion
+}
+
+// UpdateCheck 拉取发布清单，返回是否有新版本及可用信息；未配置发布源则返回错误
+func (a *App) UpdateCheck(ctx context.Context) (model.UpdateAvailable, bool, error) {
+	if a.container.UpdateService == nil {
+		return model.UpdateAvailable{}, false, errNotReady
+	}
+	return a.container.UpdateService.Check(ctx)
+}
+
+// UpdateApply 经任务引擎执行一次升级（单飞；忙则 TASK_BUSY）；进度/结果走 update:progress/done 事件
+func (a *App) UpdateApply(ctx context.Context) error {
+	if a.container.UpdateService == nil {
+		return errNotReady
+	}
+	return a.container.UpdateService.Apply(ctx)
+}

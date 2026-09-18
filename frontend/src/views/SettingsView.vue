@@ -1,10 +1,13 @@
 <script setup lang="ts">
 // Settings 视图：1:1 迁移原型 renderSettings（2706–2712）；4 组：布局 / 缩放 / 外观 / 托盘
-import { computed } from 'vue'
+// 追加「应用升级」组（T604 / §5.9）：当前版本展示 + 打开升级弹窗（后端为唯一权威）
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { usePrefsStore } from '@/stores/prefsStore'
 import { useLayoutStore } from '@/stores/layoutStore'
+import { useModals } from '@/composables/useModals'
+import { currentVersion } from '@/api/updater'
 import { LAYOUT_LIMITS, LAYOUT_PRESETS, UI_SCALE, type PresetName } from '@/constants/layout'
 import type { Locale } from '@/locales'
 
@@ -12,6 +15,9 @@ const { t, locale, setLocale } = useI18n()
 const state = useAppState()
 const prefs = usePrefsStore()
 const layout = useLayoutStore()
+const { openUpdateModal } = useModals()
+const version = ref('')
+onMounted(async () => { version.value = await currentVersion() })
 
 const presetKeys = Object.keys(LAYOUT_PRESETS) as PresetName[]
 const currentPct = computed(() => Math.round(layout.scale * 100))
@@ -125,6 +131,17 @@ function pickLang(l: Locale) {
           <input v-model="state.tray.enabled" type="checkbox" id="tray-show" style="accent-color: var(--accent)" />
           <span class="check-label" style="color: var(--text-dim)">{{ t('settings.tray.show') }}</span>
         </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px">
+        <h3 style="font-size: 14px; font-weight: 600">{{ t('settings.upgrade') }}</h3>
+        <span class="chip">{{ t('settings.upgrade.hint') }}</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px">
+        <span style="color: var(--text-dim)">{{ t('update.subtitle', { version }) }}</span>
+        <button class="btn btn-primary" type="button" id="check-update-btn" @click="openUpdateModal()">{{ t('update.check') }}</button>
       </div>
     </div>
   </div>

@@ -19,6 +19,7 @@ import SiteConfigModal from '@/components/business/SiteConfigModal.vue'
 import ThemePickerModal from '@/components/business/ThemePickerModal.vue'
 import HomeSetupWizard from '@/components/business/HomeSetupWizard.vue'
 import DangerConfirm from '@/components/business/DangerConfirm.vue'
+import UpdateModal from '@/components/business/UpdateModal.vue'
 import type { ServiceKind } from '@/types'
 
 export function useModals() {
@@ -53,6 +54,9 @@ export function useModals() {
   }
   function openThemePicker(): void {
     modal.open(ThemePickerModal, {})
+  }
+  function openUpdateModal(): void {
+    modal.open(UpdateModal, {})
   }
   function openHomeSetupWizard(onReady?: () => void): void {
     modal.open(HomeSetupWizard, { onReady })
@@ -281,6 +285,7 @@ export function useModals() {
   return {
     openInstallModal, openSiteAddModal, openRewriteModal, openSiteConfigModal,
     openConfigModal, openPhpExtensionsModal, openThemePicker, openHomeSetupWizard,
+    openUpdateModal,
     openUninstallModal, openSiteRemoveModal, openDeleteBackupModal, openOfflinePruneModal, openRestoreModal,
     startService, stopService,
     runGuardedTask,

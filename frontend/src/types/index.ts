@@ -38,6 +38,24 @@ export interface DoctorReport {
   errors: number
 }
 
+// —— 应用升级（T604 / §5.9）——
+export interface UpdateAvailable {
+  version: string
+  changelog: string
+  size: number
+}
+export type UpdateStage = 'download' | 'verify' | 'install'
+export interface UpdateProgress {
+  stage: UpdateStage
+  percent: number
+  speed: number
+}
+export type UpdateDoneStatus = 'running' | 'success' | 'failed' | 'cancelled'
+export interface UpdateDone {
+  status: UpdateDoneStatus
+  version: string
+}
+
 export interface OfflineTree {
   svc: string
   ver: string
