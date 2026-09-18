@@ -27,6 +27,15 @@ func DBPath() (string, error) {
 	return filepath.Join(d, "phpo.db"), nil
 }
 
+// TrashRoot 返回回收站根目录（§4.2 / §5.13.7：用户数据目录内的 trash，7 天保留）
+func TrashRoot() (string, error) {
+	d, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "trash"), nil
+}
+
 // ExpandHome 把路径前缀 `~`（或 `~/`）展开为当前用户主目录；其余原样返回。
 // PHPO_HOME / WWW_ROOT 默认含 `~`（DefaultHome），落盘前须经此展开。
 func ExpandHome(p string) string {

@@ -6,6 +6,8 @@ import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { useModals } from '@/composables/useModals'
 import { useLayoutStore } from '@/stores/layoutStore'
+import { usePhpSwitch } from '@/composables/usePhpSwitch'
+import { usePortSuggest } from '@/composables/usePortSuggest'
 import type { Site } from '@/types'
 import { cmpVer, siteUrl } from '@/utils/format'
 import { hostToContainer } from '@/utils/path'
@@ -14,12 +16,37 @@ const { t } = useI18n()
 const state = useAppState()
 const modals = useModals()
 const layout = useLayoutStore()
+const { switchPhp } = usePhpSwitch()
+const { applyPort } = usePortSuggest()
 
 const phpVers = computed(() => state.installed.php)
 const healthy = computed(() => state.sites.filter((s) => s.health === 'up').length)
 
 const menuDomain = ref<string | null>(null)
 const menuPos = ref<{ left: number; top: number }>({ left: 0, top: 0 })
+
+// T404：端口行内编辑；改端口走 usePortSuggest（占用则顺延 + DangerConfirm）
+const editingPort = ref<string | null>(null)
+const portDraft = ref('')
+function startEditPort(domain: string, current: number): void {
+  editingPort.value = domain
+  portDraft.value = String(current)
+}
+function commitPort(site: Site): void {
+  if (editingPort.value !== site.domain) return
+  const v = parseInt(portDraft.value.trim(), 10)
+  editingPort.value = null
+  if (!Number.isInteger(v) || v === site.port) return
+  applyPort(site.domain, v)
+}
+function onPortKey(e: KeyboardEvent, site: Site): void {
+  if (e.key === 'Escape') { editingPort.value = null; return }
+  if (e.key === 'Enter') commitPort(site)
+}
+// T405：PHP 版本切换（精确上游，硬红线 1）
+function onPhpChange(site: Site, e: Event): void {
+  switchPhp(site.domain, (e.target as HTMLSelectElement).value, site.php)
+}
 
 function healthPill(h: Site['health']) {
   return { up: 'pill-ok', warn: 'pill-warn', down: 'pill-err' }[h]
@@ -123,10 +150,29 @@ onBeforeUnmount(() => {
                 </a>
               </td>
               <td class="col-port">
-                <span class="port-edit" :data-domain="site.domain" :data-original="site.port" tabindex="0" :title="t('common.edit')">{{ site.port }}</span>
+                <input
+                  v-if="editingPort === site.domain"
+                  v-model="portDraft"
+                  class="port-input"
+                  type="text"
+                  inputmode="numeric"
+                  autofocus
+                  @blur="commitPort(site)"
+                  @keyup="onPortKey($event, site)"
+                >
+                <span
+                  v-else
+                  class="port-edit"
+                  :data-domain="site.domain"
+                  :data-original="site.port"
+                  tabindex="0"
+                  :title="t('common.edit')"
+                  @click="startEditPort(site.domain, site.port)"
+                  @keyup.enter="startEditPort(site.domain, site.port)"
+                >{{ site.port }}</span>
               </td>
               <td>
-                <select class="php-select" :data-domain="site.domain">
+                <select class="php-select" :data-domain="site.domain" @change="onPhpChange(site, $event)">
                   <option v-for="v in phpOptions(site)" :key="v" :value="v" :selected="v === site.php">{{ v }}{{ isUninstalled(v) ? ' (uninstalled)' : '' }}</option>
                 </select>
               </td>

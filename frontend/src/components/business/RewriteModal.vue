@@ -7,6 +7,7 @@ import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
+import { setSiteRewrite, hasBackend } from '@/api/site'
 import { useAppState } from '@/stores/appState'
 import { REWRITE_PRESETS } from '@/constants/rewrite'
 
@@ -43,7 +44,11 @@ function onApply(): void {
   const preset = REWRITE_PRESETS[selected.value]
   const ruleToStore = finalRuleEqualsPreset(preset.rule) ? '' : rule.value
   emit('close')
-  runTask(['site', 'rewrite', props.domain, '--preset', selected.value], `${props.domain} · ${t(preset.nameKey)}`, { type: 'rewrite', domain: props.domain, preset: selected.value, rule: ruleToStore })
+  if (!hasBackend()) {
+    runTask(['site', 'rewrite', props.domain, '--preset', selected.value], `${props.domain} · ${t(preset.nameKey)}`, { type: 'rewrite', domain: props.domain, preset: selected.value, rule: ruleToStore })
+    return
+  }
+  setSiteRewrite(props.domain, selected.value, ruleToStore).catch((e: unknown) => toast(String(e), 'err', 4600))
 }
 function finalRuleEqualsPreset(presetRule: string): boolean {
   return rule.value === presetRule

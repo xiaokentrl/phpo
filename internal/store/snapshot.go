@@ -106,7 +106,7 @@ func (s *Store) SetDirReady(key string, ready bool) error {
 
 // sites
 func (s *Store) ListSites() ([]model.Site, error) {
-	rows, err := s.db.Query(`SELECT domain, port, php, root, rewrite FROM sites ORDER BY domain`)
+	rows, err := s.db.Query(`SELECT domain, port, php, root, rewrite, rewrite_rule, vhost_customized FROM sites ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
@@ -114,18 +114,25 @@ func (s *Store) ListSites() ([]model.Site, error) {
 	var out []model.Site
 	for rows.Next() {
 		var st model.Site
-		if err := rows.Scan(&st.Domain, &st.Port, &st.PHP, &st.Root, &st.Rewrite); err != nil {
+		var customized int
+		if err := rows.Scan(&st.Domain, &st.Port, &st.PHP, &st.Root, &st.Rewrite, &st.RewriteRule, &customized); err != nil {
 			return nil, err
 		}
+		st.VhostCustomized = customized != 0
 		out = append(out, st)
 	}
 	return out, nil
 }
 
 func (s *Store) UpsertSite(st model.Site) error {
-	_, err := s.db.Exec(`INSERT INTO sites(domain,port,php,root,rewrite) VALUES(?,?,?,?,?)
-		ON CONFLICT(domain) DO UPDATE SET port=excluded.port, php=excluded.php, root=excluded.root, rewrite=excluded.rewrite`,
-		st.Domain, st.Port, st.PHP, st.Root, st.Rewrite)
+	c := 0
+	if st.VhostCustomized {
+		c = 1
+	}
+	_, err := s.db.Exec(`INSERT INTO sites(domain,port,php,root,rewrite,rewrite_rule,vhost_customized) VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(domain) DO UPDATE SET port=excluded.port, php=excluded.php, root=excluded.root, rewrite=excluded.rewrite,
+			rewrite_rule=excluded.rewrite_rule, vhost_customized=excluded.vhost_customized`,
+		st.Domain, st.Port, st.PHP, st.Root, st.Rewrite, st.RewriteRule, c)
 	return err
 }
 

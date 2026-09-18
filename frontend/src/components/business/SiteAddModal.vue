@@ -8,6 +8,7 @@ import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
+import { addSite, hasBackend } from '@/api/site'
 import { useModalStore } from '@/stores/modalStore'
 import { useAppState } from '@/stores/appState'
 import { REWRITE_PRESETS } from '@/constants/rewrite'
@@ -70,13 +71,18 @@ function onOk(): void {
   const finalArgs = ['site', 'add', d, '--port', String(finalPort), '--php', php.value, '--rewrite', rewrite.value, '--root', rootPath]
   const finalMeta = { type: 'site-add', domain: d, port: finalPort, php: php.value, rewrite: rewrite.value, root: rootPath }
   const label = `${t('siteAdd.title')} ${d}`
+  const submit = (): void => {
+    if (!hasBackend()) { runTask(finalArgs, label, finalMeta); return }
+    addSite({ domain: d, port: finalPort, php: php.value, root: rootPath, rewrite: rewrite.value })
+      .catch((e: unknown) => toast(String(e), 'err', 4600))
+  }
   if (check.warnings.length) {
     emit('close')
-    modal.open(DangerConfirm, { title: label, warnings: check.warnings.map((w) => ({ text: w })), confirmLabel: t('common.confirm'), onConfirm: () => runTask(finalArgs, label, finalMeta) })
+    modal.open(DangerConfirm, { title: label, warnings: check.warnings.map((w) => ({ text: w })), confirmLabel: t('common.confirm'), onConfirm: submit })
     return
   }
   emit('close')
-  runTask(finalArgs, label, finalMeta)
+  submit()
 }
 </script>
 

@@ -9,6 +9,7 @@ import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
 import { useAppState } from '@/stores/appState'
 import { computeVhost } from '@/utils/vhost'
+import { setSiteVhostContent, hasBackend } from '@/api/site'
 
 const props = defineProps<{ domain: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -38,8 +39,14 @@ function onSave(): void {
   const check = preflight('site-vhost', { domain: props.domain, content: content.value, php: site.value?.php })
   if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
   emit('close')
-  runTask(['site', 'vhost', 'save', props.domain], `${props.domain} · nginx 配置`, { type: 'site-vhost', domain: props.domain, content: content.value })
-  toast(t('siteConfig.saved', { domain: props.domain }), 'ok', 2400)
+  if (!hasBackend()) {
+    runTask(['site', 'vhost', 'save', props.domain], `${props.domain} · nginx 配置`, { type: 'site-vhost', domain: props.domain, content: content.value })
+    toast(t('siteConfig.saved', { domain: props.domain }), 'ok', 2400)
+    return
+  }
+  setSiteVhostContent(props.domain, content.value)
+    .then(() => toast(t('siteConfig.saved', { domain: props.domain }), 'ok', 2400))
+    .catch((e) => toast(String(e), 'err', 4600))
 }
 </script>
 

@@ -7,6 +7,11 @@ type Site struct {
 	PHP     string `json:"php"`
 	Root    string `json:"root"`
 	Rewrite string `json:"rewrite"`
+
+	// 伪静态自定义规则原文（preset==custom 时生效）；vhostCustomized 标记 vhost 被手改过
+	// 二者为 vhost 计算/运行态字段，落库在 T403 补 rewrite_rule 列（当前 store 用显式列扫描，不受影响）
+	RewriteRule     string `json:"rewriteRule,omitempty"`
+	VhostCustomized bool   `json:"vhostCustomized,omitempty"`
 }
 
 // URL 展示用访问地址

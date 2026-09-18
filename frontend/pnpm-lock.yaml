@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@wailsio/runtime':
+        specifier: 3.0.0-beta.23
+        version: 3.0.0-beta.23
       pinia:
         specifier: ^2.2.6
         version: 2.3.1(typescript@5.7.3)(vue@3.5.43(typescript@5.7.3))
@@ -406,6 +409,9 @@ packages:
 
   '@vue/shared@3.5.43':
     resolution: {integrity: sha512-uksS7YGMR5NZyr4JNq0Rp+QyLns0ueaz20KwzIPW9R0LH1Vnt4E+XUM29PNseEbf1www2gOuhuDi5AKOIXag9Q==}
+
+  '@wailsio/runtime@3.0.0-beta.23':
+    resolution: {integrity: sha512-Am9N7nvA9WBpVzOkrJ0PzTg/cgEFL72I97ksOfOuryLP4VOdnl7viP59+6Nx5zMoHJo207k85WINJaWfCY1CQQ==}
 
   alien-signals@1.0.13:
     resolution: {integrity: sha512-OGj9yyTnJEttvzhTUWuscOvtqxq5vrhF7vL9oS0xJ2mK0ItPYP1/y+vCFebfxoEyAz0++1AIwJ5CMr+Fk3nDmg==}
@@ -820,6 +826,8 @@ snapshots:
       '@vue/shared': 3.5.43
 
   '@vue/shared@3.5.43': {}
+
+  '@wailsio/runtime@3.0.0-beta.23': {}
 
   alien-signals@1.0.13: {}
 

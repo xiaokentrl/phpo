@@ -61,4 +61,11 @@ func TestUserDataDirAndDBPath(t *testing.T) {
 	if filepath.Base(db) != "phpo.db" || filepath.Dir(db) != d {
 		t.Errorf("DBPath 应落在用户数据目录内: %q vs %q", db, d)
 	}
+	trash, err := TrashRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(trash) != "trash" || filepath.Dir(trash) != d {
+		t.Errorf("TrashRoot 应为用户数据目录内的 trash: %q vs %q", trash, d)
+	}
 }

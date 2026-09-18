@@ -1,0 +1,307 @@
+// T403 验收：SiteService 三段式建站/删站——幂等、回收站、坏 vhost 被拦不落库、state:changed 广播
+package service
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"phpo/internal/config"
+	"phpo/internal/engine"
+	"phpo/internal/model"
+	"phpo/internal/store"
+	"phpo/internal/task"
+	"phpo/internal/vhost"
+	"phpo/internal/vhost/hosts"
+)
+
+// fakeSiteStore 实现 SiteStore（内存权威）
+type fakeSiteStore struct {
+	sites   []model.Site
+	trash   []store.TrashItem
+	snap    *model.Snapshot
+	upserts int
+}
+
+func newFakeSiteStore() *fakeSiteStore {
+	return &fakeSiteStore{snap: model.NewSnapshot()}
+}
+func (f *fakeSiteStore) ListSites() ([]model.Site, error) {
+	return append([]model.Site{}, f.sites...), nil
+}
+func (f *fakeSiteStore) UpsertSite(st model.Site) error {
+	f.upserts++
+	for i := range f.sites {
+		if f.sites[i].Domain == st.Domain {
+			f.sites[i] = st
+			return nil
+		}
+	}
+	f.sites = append(f.sites, st)
+	return nil
+}
+func (f *fakeSiteStore) DeleteSite(domain string) error {
+	out := f.sites[:0]
+	for _, st := range f.sites {
+		if st.Domain != domain {
+			out = append(out, st)
+		}
+	}
+	f.sites = out
+	return nil
+}
+func (f *fakeSiteStore) AddTrashItem(it store.TrashItem) (int64, error) {
+	f.trash = append(f.trash, it)
+	return int64(len(f.trash)), nil
+}
+func (f *fakeSiteStore) BuildSnapshot() (*model.Snapshot, error) {
+	f.snap.Sites = append([]model.Site{}, f.sites...)
+	return f.snap, nil
+}
+
+// errValidator 模拟 nginx -t 失败
+type errValidator struct{ err error }
+
+func (e errValidator) Validate(context.Context, string, string) error { return e.err }
+
+// newSiteSvc 用临时 home/www 构造真 vhost + 真 hosts(临时文件) + 真回收站 + 假库
+func newSiteSvc(t *testing.T, validate vhost.Validator) (*SiteService, *fakeSiteStore, config.Env, *fakeEmitter) {
+	t.Helper()
+	dir := t.TempDir()
+	env := config.DerivePaths(filepath.Join(dir, "phpo"), filepath.Join(dir, "www"))
+	os.MkdirAll(env.NginxSitesRoot, 0o755)
+	hostsFile := filepath.Join(dir, "hosts")
+	os.WriteFile(hostsFile, []byte("127.0.0.1 localhost\n"), 0o644)
+
+	st := newFakeSiteStore()
+	vh := vhost.New(env)
+	hm := hosts.NewAt(hostsFile)
+	tr := engine.NewTrash(filepath.Join(dir, "trash"))
+	em := &fakeEmitter{}
+	tm := task.NewManager(em)
+	return NewSiteService(st, vh, hm, tr, validate, nil, tm, em, env), st, env, em
+}
+
+func TestSiteService_Add_CreatesDirVHostAndHosts(t *testing.T) {
+	svc, st, env, em := newSiteSvc(t, nil)
+	err := svc.Add(context.Background(), AddInput{Domain: "demo.test", Port: 80, PHP: "8.4", Rewrite: "laravel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 站点目录
+	if _, e := os.Stat(filepath.Join(env.WWWRoot, "demo.test")); e != nil {
+		t.Fatalf("应创建站点目录: %v", e)
+	}
+	// vhost 文件含精确上游
+	conf := filepath.Join(env.NginxSitesRoot, "demo.test.conf")
+	b, e := os.ReadFile(conf)
+	if e != nil {
+		t.Fatalf("应写 vhost: %v", e)
+	}
+	if !strings.Contains(string(b), "set $php_upstream php-8.4-fpm:9000;") {
+		t.Fatalf("vhost 上游错误:\n%s", b)
+	}
+	// hosts 落条目
+	hb, _ := os.ReadFile(filepath.Dir(env.PHPOHome) + "/hosts")
+	if !strings.Contains(string(hb), "demo.test") {
+		t.Fatalf("hosts 未加条目:\n%s", hb)
+	}
+	// 落库 + 广播
+	if len(st.sites) != 1 || st.sites[0].Domain != "demo.test" {
+		t.Fatalf("站点未落库: %+v", st.sites)
+	}
+	if !em.has("task:done") || !em.has("state:changed") {
+		t.Fatalf("应发 task:done + state:changed，实得 %v", em.events)
+	}
+}
+
+// TestSiteService_Add_Idempotent 重复建站：站点数仍为 1，不产生脏状态
+func TestSiteService_Add_Idempotent(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	in := AddInput{Domain: "demo.test", Port: 80, PHP: "8.4", Rewrite: "laravel"}
+	for i := 0; i < 3; i++ {
+		if err := svc.Add(context.Background(), in); err != nil {
+			t.Fatalf("第 %d 次建站失败: %v", i+1, err)
+		}
+	}
+	if len(st.sites) != 1 {
+		t.Fatalf("重复建站应幂等，实得 %d 个", len(st.sites))
+	}
+	if st.upserts != 3 {
+		t.Fatalf("每次应 upsert 一次（覆盖），实得 %d", st.upserts)
+	}
+	// 目录与 vhost 仍各一份
+	entries, _ := os.ReadDir(env.NginxSitesRoot)
+	if len(entries) != 1 {
+		t.Fatalf("sites 目录应只有 1 个 conf，实得 %d", len(entries))
+	}
+}
+
+// TestSiteService_Add_BlockedByNginxT 硬红线 2：坏 vhost 被 nginx -t 拦下，不落库、不留文件
+func TestSiteService_Add_BlockedByNginxT(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, errValidator{err: errors.New("nginx: configuration file test failed")})
+	err := svc.Add(context.Background(), AddInput{Domain: "bad.test", Port: 80, PHP: "8.4"})
+	if err == nil {
+		t.Fatal("nginx -t 失败应使建站失败")
+	}
+	if len(st.sites) != 0 {
+		t.Fatalf("校验失败不得落库，实得 %+v", st.sites)
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "bad.test.conf")); !os.IsNotExist(e) {
+		t.Fatal("校验失败不得留下 vhost 文件")
+	}
+}
+
+// TestSiteService_Remove_ToTrash 删站：根目录入回收站、vhost 删除、库删除、回收站条目登记
+func TestSiteService_Remove_ToTrash(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(context.Background(), AddInput{Domain: "demo.test", Port: 80, PHP: "8.4", Rewrite: "laravel"}); err != nil {
+		t.Fatal(err)
+	}
+	// 放个文件进站点目录，确保整目录入回收站
+	os.WriteFile(filepath.Join(env.WWWRoot, "demo.test", "index.php"), []byte("<?php"), 0o644)
+
+	if err := svc.Remove(context.Background(), "demo.test"); err != nil {
+		t.Fatal(err)
+	}
+	// 原目录消失
+	if _, e := os.Stat(filepath.Join(env.WWWRoot, "demo.test")); !os.IsNotExist(e) {
+		t.Fatal("站点目录应移走")
+	}
+	// 回收站里能看到原文件（数据不丢，可恢复）
+	trashDir := filepath.Join(filepath.Dir(env.PHPOHome), "trash", "demo.test")
+	if _, e := os.Stat(filepath.Join(trashDir, "index.php")); e != nil {
+		t.Fatalf("回收站应保留站点源码: %v", e)
+	}
+	// vhost 文件删除
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "demo.test.conf")); !os.IsNotExist(e) {
+		t.Fatal("vhost 文件应删除")
+	}
+	// 库删除 + 回收站条目登记
+	if len(st.sites) != 0 {
+		t.Fatalf("站点应注销，实得 %+v", st.sites)
+	}
+	if len(st.trash) != 1 || st.trash[0].Kind != "site" {
+		t.Fatalf("应登记 1 条 site 回收站条目，实得 %+v", st.trash)
+	}
+}
+
+func TestSiteService_Remove_Unknown(t *testing.T) {
+	svc, _, _, _ := newSiteSvc(t, nil)
+	if err := svc.Remove(context.Background(), "nope.test"); err == nil {
+		t.Fatal("删除不存在站点应报错")
+	}
+}
+
+// TestSiteService_WriteOps_PortPhpRewrite 改端口/切 PHP/伪静态各自重写落盘 vhost 并落库
+func TestSiteService_WriteOps_PortPhpRewrite(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(context.Background(), AddInput{Domain: "demo.test", Port: 80, PHP: "8.4", Rewrite: "laravel"}); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(env.NginxSitesRoot, "demo.test.conf")
+	read := func() string { b, _ := os.ReadFile(conf); return string(b) }
+
+	// 改端口 80→8080
+	if err := svc.SetPort(context.Background(), "demo.test", 8080); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(), "listen 8080;") {
+		t.Fatalf("端口未落盘:\n%s", read())
+	}
+
+	// 切 PHP 8.4→8.3（硬红线 1 精确上游）
+	if err := svc.SwitchPHP(context.Background(), "demo.test", "8.3"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(), "set $php_upstream php-8.3-fpm:9000;") {
+		t.Fatalf("PHP 上游未落盘:\n%s", read())
+	}
+	if st.sites[0].PHP != "8.3" || st.sites[0].Port != 8080 {
+		t.Fatalf("库未同步: %+v", st.sites[0])
+	}
+
+	// 改伪静态 thinkphp
+	if err := svc.SetRewrite(context.Background(), "demo.test", "thinkphp", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(), "# ThinkPHP") {
+		t.Fatalf("伪静态未落盘:\n%s", read())
+	}
+	if st.sites[0].Rewrite != "thinkphp" {
+		t.Fatalf("库 rewrite 未同步: %s", st.sites[0].Rewrite)
+	}
+}
+
+// TestSiteService_SwitchPHP_BlockedByNginxT nginx -t 失败：vhost 文件与库均不落地（硬红线 2 回滚）
+func TestSiteService_SwitchPHP_BlockedByNginxT(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(context.Background(), AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	// 注入会失败的校验器
+	svc.validate = errValidator{err: errors.New("nginx -t failed")}
+	conf := filepath.Join(env.NginxSitesRoot, "demo.test.conf")
+	before, _ := os.ReadFile(conf)
+
+	if err := svc.SwitchPHP(context.Background(), "demo.test", "8.2"); err == nil {
+		t.Fatal("校验失败应使切换失败")
+	}
+	// 文件回滚为原内容（8.4），库仍为 8.4
+	after, _ := os.ReadFile(conf)
+	if string(after) != string(before) {
+		t.Fatalf("回滚后正文应还原:\n%s", after)
+	}
+	if st.sites[0].PHP != "8.4" {
+		t.Fatalf("库 PHP 不应被改: %s", st.sites[0].PHP)
+	}
+}
+
+// TestSiteService_SetVhostContent 手改正文回读端口/root
+func TestSiteService_SetVhostContent(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(context.Background(), AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	manual := "server {\n    listen 9090;\n    root /var/www/custom;\n    set $php_upstream php-8.4-fpm:9000;\n}"
+	if err := svc.SetVhostContent(context.Background(), "demo.test", manual); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(env.NginxSitesRoot, "demo.test.conf"))
+	if string(b) != manual {
+		t.Fatalf("手改正文应逐字落盘:\n%s", b)
+	}
+	// 端口/root 从正文回读进库（root 容器路径反映射回宿主）
+	if st.sites[0].Port != 9090 {
+		t.Fatalf("端口应回读为 9090，实得 %d", st.sites[0].Port)
+	}
+	if !st.sites[0].VhostCustomized {
+		t.Fatal("手改后应标记 customized")
+	}
+}
+
+// TestSiteService_SwitchPHP_RoundTrip T405 验收：8.4↔8.3 往返切换，上游逐字符精确（硬红线 1），库始终同步
+func TestSiteService_SwitchPHP_RoundTrip(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(context.Background(), AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(env.NginxSitesRoot, "demo.test.conf")
+	read := func() string { b, _ := os.ReadFile(conf); return string(b) }
+
+	for _, php := range []string{"8.3", "7.4", "8.1", "8.4"} {
+		if err := svc.SwitchPHP(context.Background(), "demo.test", php); err != nil {
+			t.Fatalf("切换到 %s 失败: %v", php, err)
+		}
+		want := "set $php_upstream php-" + php + "-fpm:9000;"
+		if !strings.Contains(read(), want) {
+			t.Fatalf("切换后上游应逐字符为 %q:\n%s", want, read())
+		}
+		if st.sites[0].PHP != php {
+			t.Fatalf("库 PHP 应为 %s，实得 %s", php, st.sites[0].PHP)
+		}
+	}
+}

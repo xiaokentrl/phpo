@@ -6,6 +6,7 @@ import { usePreflight } from './usePreflight'
 import { useI18n } from './useI18n'
 import { toast } from './useToast'
 import { runTask, type TaskMeta } from './useTask'
+import { removeSite, hasBackend } from '@/api/site'
 import { SVC_META } from '@/constants/service'
 import InstallModal from '@/components/business/InstallModal.vue'
 import SiteAddModal from '@/components/business/SiteAddModal.vue'
@@ -94,7 +95,11 @@ export function useModals() {
       onConfirm: () => {
         const check = preflight('site-remove', { domain })
         if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-        runTask(['site', 'remove', domain], `${t('sites.actions.delete')} ${domain}`, { type: 'site-remove', domain })
+        if (!hasBackend()) {
+          runTask(['site', 'remove', domain], `${t('sites.actions.delete')} ${domain}`, { type: 'site-remove', domain })
+          return
+        }
+        removeSite(domain).catch((e: unknown) => toast(String(e), 'err', 4600))
       },
     })
   }

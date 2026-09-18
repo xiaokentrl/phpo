@@ -9,6 +9,7 @@ import (
 
 	phpapp "phpo/internal/app"
 	"phpo/internal/model"
+	"phpo/internal/service"
 	"phpo/internal/ui"
 )
 
@@ -130,4 +131,54 @@ func (a *App) Calibrate(ctx context.Context) error {
 		return errNotReady
 	}
 	return a.container.AppService.Calibrate(ctx)
+}
+
+// ---- M4 站点绑定：所有写操作经 SiteService → task.Manager 三段式（硬红线 4/5）----
+
+// SiteAdd 幂等建站（建目录 → nginx -t 校验写 vhost → 加 hosts → 落库并广播 state:changed）
+func (a *App) SiteAdd(ctx context.Context, in service.AddInput) error {
+	if a.container.SiteService == nil {
+		return errNotReady
+	}
+	return a.container.SiteService.Add(ctx, in)
+}
+
+// SiteRemove 删站：根目录入回收站（7 天）→ 删 vhost → 落库删除
+func (a *App) SiteRemove(ctx context.Context, domain string) error {
+	if a.container.SiteService == nil {
+		return errNotReady
+	}
+	return a.container.SiteService.Remove(ctx, domain)
+}
+
+// SiteSetPort 改站点端口（写 vhost listen + nginx -t → 落库）
+func (a *App) SiteSetPort(ctx context.Context, domain string, port int) error {
+	if a.container.SiteService == nil {
+		return errNotReady
+	}
+	return a.container.SiteService.SetPort(ctx, domain, port)
+}
+
+// SiteSwitchPHP 切换 PHP 上游（硬红线 1：精确 php-{version}-fpm:9000）
+func (a *App) SiteSwitchPHP(ctx context.Context, domain, php string) error {
+	if a.container.SiteService == nil {
+		return errNotReady
+	}
+	return a.container.SiteService.SwitchPHP(ctx, domain, php)
+}
+
+// SiteSetRewrite 设置伪静态预设（preset）及自定义规则（rule）
+func (a *App) SiteSetRewrite(ctx context.Context, domain, preset, rule string) error {
+	if a.container.SiteService == nil {
+		return errNotReady
+	}
+	return a.container.SiteService.SetRewrite(ctx, domain, preset, rule)
+}
+
+// SiteSetVhostContent 手改并保存 vhost 正文（落库前 nginx -t 必过，硬红线 2）
+func (a *App) SiteSetVhostContent(ctx context.Context, domain, content string) error {
+	if a.container.SiteService == nil {
+		return errNotReady
+	}
+	return a.container.SiteService.SetVhostContent(ctx, domain, content)
 }

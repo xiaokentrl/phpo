@@ -9,11 +9,15 @@ import (
 	"phpo/internal/cache"
 	"phpo/internal/config"
 	"phpo/internal/engine"
+	"phpo/internal/model"
 	"phpo/internal/service"
 	"phpo/internal/store"
 	"phpo/internal/task"
 	"phpo/internal/task/steps"
 	"phpo/internal/updater"
+	"phpo/internal/vhost"
+	"phpo/internal/vhost/hosts"
+	"phpo/pkg/dockerutil"
 )
 
 // Container 汇集已构造的底层组件；M2 逐层扩充（Store/Config/Cache/TaskManager/Preflight）
@@ -25,7 +29,8 @@ type Container struct {
 	UpdateURL      string // 发布清单地址；为空则不启用自动检查
 
 	// M3 真实对象图：于启动钩子内构造（避免 Build 期产生文件/连接，保持单测纯净）
-	AppService *service.AppService // 前端绑定的写/读门面；启动后非 nil
+	AppService  *service.AppService  // 前端绑定的写/读门面；启动后非 nil
+	SiteService *service.SiteService // 站点生命周期门面（T403+）；启动后非 nil
 }
 
 func NewContainer() *Container {
@@ -65,6 +70,24 @@ func (c *Container) Build() *Assembly {
 		lc := service.NewLifecycle(cli, st, c.Emitter, env)
 		cacheMgr := steps.NewCacheManager(env, c.Emitter, cli)
 		c.AppService = service.NewAppService(lc, tm, cacheMgr, cli, env)
+
+		// M4 站点对象图：vhost 管理器 + hosts + 回收站 + 真实 nginx -t/ reload（走 phpo-nginx 容器）
+		trashRoot, err := config.TrashRoot()
+		if err != nil {
+			st.Close()
+			_ = cli.Close()
+			return err
+		}
+		nginxContainer := dockerutil.ContainerName(string(model.KindNginx), "alpine")
+		c.SiteService = service.NewSiteService(
+			st,
+			vhost.New(env),
+			hosts.New(),
+			engine.NewTrash(trashRoot),
+			vhost.NewNginxTValidator(nginxContainer),
+			vhost.NewNginxReloader(nginxContainer),
+			tm, c.Emitter, env,
+		)
 
 		// §5.13.9 启动时校准：Docker 缺席/未运行时容忍失败，不阻断 GUI 启动
 		if _, cerr := lc.Calibrate(ctx); cerr != nil {
