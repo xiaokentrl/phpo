@@ -1,12 +1,15 @@
 # 三平台一键出包 + 签名 + 校验 + 发布（对应 AGENTS.md §10 M7 / §11.1 / 任务工单 T703）
 #
 # 触发：推送 v* 标签，或手动 dispatch。三个原生 runner 并行出包 → 汇总签名/校验 → 挂到 GitHub Release。
+# dry-run：手动 dispatch 勾选 guard_only=true 时，跳过出包/发布，仅跑 verify-guard 作业验证
+#   「内嵌公钥 ≡ 签名私钥」守卫是否生效（复用 scripts/verify-signing-guard.sh，与真实签名步骤同一代码）。
 # 说明（scope「脚手架优先」）：本工作流已在本地按 wails3 v3.0.0-beta.23 命令模型编写并经 actionlint 校验；
 #   真实出包/签名/公证需以下仓库 secrets（缺失时签名步骤自动跳过，不阻断出包）：
 #     PHPO_SIGNING_KEY   Ed25519 私钥（base64；scripts/sign-release.sh genkey 生成）——供 .sig 自升级验签
 #                        配好私钥后必须把 sign-release.sh pubkey 导出的匹配公钥提交到
 #                        internal/updater/signing/public.key（go:embed 编进二进制）；
-#                        下方 Sign 步骤会在签名前反推公钥比对，不匹配（占位未替换）即拒绝发布（硬红线 6）。
+#                        Sign 步骤与 verify-guard 作业均调用 scripts/verify-signing-guard.sh
+#                        在签名前反推公钥比对，不匹配（占位未替换）即拒绝发布（硬红线 6）。
 #     APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID / build/signing/*.p12  macOS 开发者签名+公证（可选）
 #     WIN_CERT / WIN_CERT_PASSWORD                                                   Windows 代码签名（可选）
 name: Release
@@ -21,6 +24,11 @@ on:
         description: "发布版本号（不含前缀 v），如 0.1.0"
         required: false
         default: ""
+      guard_only:
+        description: "dry-run：仅校验内嵌公钥与签名私钥匹配，不出包/不发布"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -31,8 +39,32 @@ env:
   WAILS_VERSION: "v3.0.0-beta.23"
 
 jobs:
+  # dry-run：勾选 guard_only 时仅此作业运行——复用与真实签名步骤同一脚本，验证守卫是否生效，不出包/不发布。
+  verify-guard:
+    name: Verify signing guard (dry-run)
+    if: github.event_name == 'workflow_dispatch' && inputs.guard_only
+    runs-on: ubuntu-22.04
+    env:
+      PHPO_SIGNING_KEY: ${{ secrets.PHPO_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check embedded pubkey matches signing key
+        if: env.PHPO_SIGNING_KEY != ''
+        run: |
+          printf '%s' "$PHPO_SIGNING_KEY" | base64 -d > /tmp/phpo-sign.pem
+          chmod 600 /tmp/phpo-sign.pem
+          bash scripts/verify-signing-guard.sh /tmp/phpo-sign.pem internal/updater/signing/public.key
+          rm -f /tmp/phpo-sign.pem
+
+      - name: Secret not configured → guard cannot be exercised
+        if: env.PHPO_SIGNING_KEY == ''
+        run: |
+          echo "::warning::未配置 PHPO_SIGNING_KEY，无法验证公钥匹配（真实发布时守卫步骤同样会被 if 跳过）"
+
   build:
     name: Build (${{ matrix.target }})
+    if: ${{ !inputs.guard_only }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -125,16 +157,11 @@ jobs:
         run: |
           printf '%s' "$PHPO_SIGNING_KEY" | base64 -d > /tmp/phpo-sign.pem
           chmod 600 /tmp/phpo-sign.pem
-          # 硬红线6：二进制内嵌公钥在 build 期即固化，必须与签名私钥匹配，否则客户端验签全失败。
-          # 从私钥反推公钥与已提交公钥比对；不一致（多为占位公钥未替换）直接拒绝发布。
-          bash scripts/sign-release.sh pubkey /tmp/phpo-sign.pem /tmp/phpo-embed.key
-          norm() { tr -d '[:space:]' < "$1"; }
-          if [ "$(norm /tmp/phpo-embed.key)" != "$(norm internal/updater/signing/public.key)" ]; then
-            echo "::error::内嵌的 internal/updater/signing/public.key 与 PHPO_SIGNING_KEY 私钥不匹配（疑占位公钥未替换）；请先用 sign-release.sh pubkey 导出真实公钥并提交后再发布"
-            exit 1
-          fi
+          # 硬红线6：二进制内嵌公钥在 build 期固化，必须与签名私钥匹配，否则客户端验签全失败。
+          # 与 dry-run verify-guard 作业复用同一脚本，不匹配（占位未替换）即拒绝发布。
+          bash scripts/verify-signing-guard.sh /tmp/phpo-sign.pem internal/updater/signing/public.key
           PHPO_SIGNING_KEY=/tmp/phpo-sign.pem bash scripts/sign-release.sh sign out/*
-          rm -f /tmp/phpo-sign.pem /tmp/phpo-embed.key
+          rm -f /tmp/phpo-sign.pem
 
       - name: Generate checksums.txt
         run: BIN_DIR=out bash scripts/gen-checksums.sh
