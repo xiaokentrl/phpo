@@ -45,6 +45,9 @@ type Container struct {
 	// M6 诊断门面：§5.7 环境诊断 15 项 + 一键修复（T603）；启动后非 nil
 	DoctorService *service.DoctorService
 
+	// M6 清理门面：孤儿三模式清理 + 回收站 + 审计（T605）；启动后非 nil
+	CleanupService *service.CleanupService
+
 	// M6 升级门面：应用版本检查 + 三段式升级（下载→双校验→备份→安装，失败回滚，T604）；启动后非 nil
 	UpdateService *service.UpdateService
 }
@@ -124,6 +127,12 @@ func (c *Container) Build() *Assembly {
 
 		// M6 诊断门面（T603）：§5.7 十五项纯读诊断 + 状态校准/清临时目录两类一键修复
 		c.DoctorService = service.NewDoctor(cli, cli, st, cacheMgr, lc, env)
+
+		// M6 清理门面（T605）：孤儿三模式删除 + 7 天回收站恢复/清空 + JSON Lines 审计双写
+		auditPath, _ := config.AuditLogPath() // 解析失败留空 → 审计降级为仅落表，不阻断清理
+		c.CleanupService = service.NewCleanupService(
+			cli, st, engine.NewTrash(trashRoot), cacheMgr, engine.NewAudit(auditPath), c.Emitter, tm,
+		)
 
 		// M6 升级门面（T604 / 硬红线 5/6）：编排器 + 三段式 UpdateService；无发布源时 Check 返回错误而非 panic
 		// §5.9 中断升级下次启动自动回滚：pending 标记存在且运行版本≠目标 → 恢复旧二进制（失败不阻断 GUI）

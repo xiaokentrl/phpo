@@ -64,6 +64,55 @@ export interface OfflineTree {
   verified: string
 }
 
+// —— 清理 / 孤儿 / 回收站 / 审计（T605 / §5.13.6-7-10）——
+export type CleanupMode = 'conservative' | 'standard' | 'aggressive'
+export type DockerResourceType = 'container' | 'volume' | 'network' | 'image'
+export interface DockerResource {
+  type: DockerResourceType
+  id: string
+  name: string
+  size: number
+  inUse: boolean
+}
+export interface OrphanReport {
+  containers: DockerResource[]
+  volumes: DockerResource[]
+  networks: DockerResource[]
+  images: DockerResource[]
+}
+export interface CleanedItem {
+  type: DockerResourceType
+  name: string
+  ok: boolean
+  error?: string
+}
+export interface CleanupReport {
+  mode: CleanupMode
+  items: CleanedItem[]
+  removed: number
+  failed: number
+  freedBytes: number
+  trashPurged: number
+}
+export interface TrashEntry {
+  id: number
+  kind: string
+  origPath: string
+  trashPath: string
+  movedAt: string
+  expiresAt: string
+  expired: boolean
+}
+export interface Operation {
+  ts: string
+  actor: string
+  op: string
+  args: unknown
+  status: string
+  durationMs: number
+  error?: string
+}
+
 export interface TrayPrefs {
   enabled: boolean
   minimizeOnClose: boolean

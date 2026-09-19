@@ -6,12 +6,14 @@ import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { toast } from '@/composables/useToast'
 import { runDoctor, fixDoctor } from '@/api/doctor'
+import { useModals } from '@/composables/useModals'
 import { SVC_META } from '@/constants/service'
 import type { DoctorReport, DoctorStatus, ServiceKind } from '@/types'
 
 const { t } = useI18n()
 const state = useAppState()
 const router = useRouter()
+const { openCleanupModal, openTrashModal } = useModals()
 
 const report = ref<DoctorReport | null>(null)
 const diagnosing = ref(false)
@@ -78,6 +80,8 @@ function jump(kind: ServiceKind) {
         <p class="view-sub">{{ t('overview.subtitle') }}</p>
       </div>
       <div class="header-actions">
+        <button class="btn" @click="openCleanupModal">{{ t('cleanup.title') }}</button>
+        <button class="btn" @click="openTrashModal">{{ t('cleanup.trash.title') }}</button>
         <button class="btn" :disabled="diagnosing" @click="runDiagnose">{{ diagnosing ? t('doctor.diagnosing') : (report ? t('doctor.recheck') : t('doctor.run')) }}</button>
       </div>
     </header>

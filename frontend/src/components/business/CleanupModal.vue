@@ -1,17 +1,25 @@
 <script setup lang="ts">
-// 清理弹窗：M6 才接真实逻辑，原型无此模态源码、亦无 cleanup.* i18n 冻结键。
-// 依「唯一真实来源=原型」——此处仅留最小外壳占位，不虚构界面与键。真实实现见 M6（internal/cleanup_service + 3 种模式）。
+// 清理弹窗（T605 / §5.13.6-7）：外壳承载 CleanupView（孤儿三模式 + 回收站入口 + 审计）。
+// 硬红线 4：面板数据只来自后端读接口与 docker:* 事件；无独立 NAV 路由（§0.3 路由数=10），仅从 doctor 入口打开。
 import ModalShell from '@/components/common/ModalShell.vue'
+import CleanupView from '@/views/CleanupView.vue'
+import { useI18n } from '@/composables/useI18n'
+
 const emit = defineEmits<{ close: [] }>()
+const { t } = useI18n()
 </script>
 
 <template>
   <ModalShell>
+    <template #head>
+      <h3>{{ t('cleanup.title') }}</h3>
+      <p>{{ t('cleanup.subtitle') }}</p>
+    </template>
     <template #body>
-      <p style="margin: 0">CleanupModal — 占位（M6 接入）</p>
+      <CleanupView />
     </template>
     <template #foot>
-      <button class="btn" type="button" @click="emit('close')">Close</button>
+      <button class="btn" type="button" @click="emit('close')">{{ t('common.close') }}</button>
     </template>
   </ModalShell>
 </template>

@@ -23,6 +23,29 @@ type OrphanFound struct {
 	Resources []DockerResource `json:"resources"`
 }
 
+// OrphanReport 一次全量孤儿扫描的分类结果（容器/卷/网络/镜像四矩阵，§5.13.5）
+type OrphanReport struct {
+	Containers []DockerResource `json:"containers"`
+	Volumes    []DockerResource `json:"volumes"`
+	Networks   []DockerResource `json:"networks"`
+	Images     []DockerResource `json:"images"`
+}
+
+// Total 四类孤儿总数
+func (r OrphanReport) Total() int {
+	return len(r.Containers) + len(r.Volumes) + len(r.Networks) + len(r.Images)
+}
+
+// All 平铺为单一列表（docker:orphan-found 事件载荷用）
+func (r OrphanReport) All() []DockerResource {
+	out := make([]DockerResource, 0, r.Total())
+	out = append(out, r.Containers...)
+	out = append(out, r.Volumes...)
+	out = append(out, r.Networks...)
+	out = append(out, r.Images...)
+	return out
+}
+
 // docker:state-drift 事件载荷（期望态 ≡ 实际态 被破坏时发射）
 type StateDrift struct {
 	Expected any `json:"expected"`

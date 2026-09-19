@@ -342,3 +342,69 @@ func (a *App) UpdateApply(ctx context.Context) error {
 	}
 	return a.container.UpdateService.Apply(ctx)
 }
+
+// ---- M6 清理绑定：孤儿三模式 + 回收站 + 审计（T605，§5.13.6/7/10）----
+
+// CleanupScan 全量孤儿扫描并广播 docker:orphan-found，返回分类报告
+func (a *App) CleanupScan(ctx context.Context) (model.OrphanReport, error) {
+	if a.container.CleanupService == nil {
+		return model.OrphanReport{}, errNotReady
+	}
+	return a.container.CleanupService.Scan(ctx)
+}
+
+// CleanupRun 按三模式（conservative/standard/aggressive）删除孤儿资源；激进涉卷删除由前端二次确认
+func (a *App) CleanupRun(ctx context.Context, mode string) (model.CleanupReport, error) {
+	if a.container.CleanupService == nil {
+		return model.CleanupReport{}, errNotReady
+	}
+	rep, err := a.container.CleanupService.Clean(ctx, model.CleanupMode(mode))
+	if err != nil {
+		return model.CleanupReport{}, err
+	}
+	return *rep, nil
+}
+
+// CleanupCache 按三模式清理离线缓存（§5.14.6）；inUse 由已安装服务推导
+func (a *App) CleanupCache(ctx context.Context, mode string) (model.CleanupResult, error) {
+	if a.container.CleanupService == nil {
+		return model.CleanupResult{}, errNotReady
+	}
+	res, err := a.container.CleanupService.CleanCache(ctx, model.CleanupMode(mode))
+	if err != nil {
+		return model.CleanupResult{}, err
+	}
+	return *res, nil
+}
+
+// TrashList 回收站条目（7 天保留，含是否过期）
+func (a *App) TrashList() ([]model.TrashEntry, error) {
+	if a.container.CleanupService == nil {
+		return nil, errNotReady
+	}
+	return a.container.CleanupService.ListTrash()
+}
+
+// TrashRestore 从回收站恢复误删条目到原位并注销登记
+func (a *App) TrashRestore(ctx context.Context, id int64) error {
+	if a.container.CleanupService == nil {
+		return errNotReady
+	}
+	return a.container.CleanupService.RestoreTrash(ctx, id)
+}
+
+// TrashEmptyExpired 立即永久删除全部到期回收站条目（未满期不动）
+func (a *App) TrashEmptyExpired(ctx context.Context) (int, error) {
+	if a.container.CleanupService == nil {
+		return 0, errNotReady
+	}
+	return a.container.CleanupService.EmptyExpired(ctx)
+}
+
+// OperationList 最近审计历史（operations 表，UI 展示；文件权威见 operations.log）
+func (a *App) OperationList(limit int) ([]model.Operation, error) {
+	if a.container.CleanupService == nil {
+		return nil, errNotReady
+	}
+	return a.container.CleanupService.ListOperations(limit)
+}

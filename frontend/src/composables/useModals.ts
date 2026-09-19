@@ -20,6 +20,8 @@ import ThemePickerModal from '@/components/business/ThemePickerModal.vue'
 import HomeSetupWizard from '@/components/business/HomeSetupWizard.vue'
 import DangerConfirm from '@/components/business/DangerConfirm.vue'
 import UpdateModal from '@/components/business/UpdateModal.vue'
+import CleanupModal from '@/components/business/CleanupModal.vue'
+import TrashViewer from '@/components/business/TrashViewer.vue'
 import type { ServiceKind } from '@/types'
 
 export function useModals() {
@@ -57,6 +59,14 @@ export function useModals() {
   }
   function openUpdateModal(): void {
     modal.open(UpdateModal, {})
+  }
+  // openCleanupModal：环境清理面板（孤儿三模式 + 回收站入口 + 缓存清理 + 审计），doctor 入口调用
+  function openCleanupModal(): void {
+    modal.open(CleanupModal, {})
+  }
+  // openTrashModal：独立打开回收站
+  function openTrashModal(): void {
+    modal.open(TrashViewer, {})
   }
   function openHomeSetupWizard(onReady?: () => void): void {
     modal.open(HomeSetupWizard, { onReady })
@@ -285,7 +295,7 @@ export function useModals() {
   return {
     openInstallModal, openSiteAddModal, openRewriteModal, openSiteConfigModal,
     openConfigModal, openPhpExtensionsModal, openThemePicker, openHomeSetupWizard,
-    openUpdateModal,
+    openUpdateModal, openCleanupModal, openTrashModal,
     openUninstallModal, openSiteRemoveModal, openDeleteBackupModal, openOfflinePruneModal, openRestoreModal,
     startService, stopService,
     runGuardedTask,

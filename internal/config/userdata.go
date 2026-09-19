@@ -54,6 +54,24 @@ func UpdatesSub(name string) (string, error) {
 	return filepath.Join(d, name), nil
 }
 
+// LogsDir 返回日志根目录（§4.2：用户数据目录内的 logs）
+func LogsDir() (string, error) {
+	d, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "logs"), nil
+}
+
+// AuditLogPath 返回操作审计日志绝对路径（§5.13.10：logs/operations.log，JSON Lines）
+func AuditLogPath() (string, error) {
+	d, err := LogsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "operations.log"), nil
+}
+
 // ExpandHome 把路径前缀 `~`（或 `~/`）展开为当前用户主目录；其余原样返回。
 // PHPO_HOME / WWW_ROOT 默认含 `~`（DefaultHome），落盘前须经此展开。
 func ExpandHome(p string) string {
