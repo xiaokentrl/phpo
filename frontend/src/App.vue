@@ -8,17 +8,18 @@ import { subscribeUpdater, unsubscribeUpdater } from '@/composables/useUpdater'
 import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
 import { useAppState } from '@/stores/appState'
 import { getState } from '@/api/state'
-import { usePrefsStore } from '@/stores/prefsStore'
 import { useLayoutStore } from '@/stores/layoutStore'
+import { useModals } from '@/composables/useModals'
+import { toast } from '@/composables/useToast'
 import ModalRoot from '@/components/common/ModalRoot.vue'
 import ToastHost from '@/components/common/ToastHost.vue'
 import CmdPalette from '@/components/business/CmdPalette.vue'
 import TaskDrawer from '@/components/business/TaskDrawer.vue'
 import AppTrayMenu from '@/components/business/AppTrayMenu.vue'
 
-const { locale, t, setLocale } = useI18n()
-const prefs = usePrefsStore()
+const { t } = useI18n()
 const app = useAppState()
+const { openThemePicker } = useModals()
 useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
 
 onMounted(async () => {
@@ -58,8 +59,11 @@ const sections: { titleKey: string; items: { id: string; labelKey: string; icon:
   },
 ]
 
-function toggleLang() {
-  setLocale(locale.value === 'zh-CN' ? 'en-US' : 'zh-CN')
+// resync：手动向后端重新拉取权威快照并落地（硬红线 4：后端唯一权威，非本地乐观更新）
+async function resync(): Promise<void> {
+  const snap = await getState()
+  if (snap) app.applySnapshot(snap)
+  toast(t('common.refresh'), 'ok', 1400)
 }
 </script>
 
@@ -77,14 +81,13 @@ function toggleLang() {
         </section>
       </nav>
       <div class="sidebar-foot">
-        <label class="pref-row">
-          <span>{{ t('settings.appearance') }}</span>
-          <select :value="prefs.theme" @change="prefs.setTheme(($event.target as HTMLSelectElement).value as any)">
-            <option v-for="id in prefs.THEME_IDS" :key="id" :value="id">{{ t('theme.' + id) }}</option>
-          </select>
-        </label>
-        <button class="lang-toggle" @click="toggleLang">
-          {{ locale === 'zh-CN' ? 'English' : '中文' }}
+        <button class="btn-ghost" type="button" id="refresh-btn" @click="resync">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+          <span>{{ t('common.refresh') }}</span>
+        </button>
+        <button class="btn-ghost" type="button" id="theme-btn" @click="openThemePicker">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <span>{{ t('common.theme') }}</span>
         </button>
       </div>
     </aside>
@@ -161,22 +164,5 @@ function toggleLang() {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-.pref-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-select {
-  background: var(--surface-2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 6px;
-}
-.lang-toggle {
-  padding: 6px 10px;
 }
 </style>
