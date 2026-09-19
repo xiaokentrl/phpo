@@ -506,3 +506,21 @@ func (a *App) OfflineClearTempDir(ctx context.Context, kind, version, reason str
 	}
 	return a.container.OfflineService.ClearTempDir(ctx, kind, version, reason)
 }
+
+// ---- M6 装机向导（T607）----
+
+// HomeVerify 校验并试建工作目录子树 + 可写探测（纯探测，不落库）；返回逐条进度与错误
+func (a *App) HomeVerify(ctx context.Context, home, www string) (model.HomeVerifyResult, error) {
+	if a.container.WizardService == nil {
+		return model.HomeVerifyResult{}, errNotReady
+	}
+	return a.container.WizardService.HomeVerify(ctx, home, www)
+}
+
+// HomeEnsure 装机确认：三段式创建工作目录子树并落地派生 env + dirReady，随后广播 state:changed
+func (a *App) HomeEnsure(ctx context.Context, home, www string) error {
+	if a.container.WizardService == nil {
+		return errNotReady
+	}
+	return a.container.WizardService.HomeEnsure(ctx, home, www)
+}

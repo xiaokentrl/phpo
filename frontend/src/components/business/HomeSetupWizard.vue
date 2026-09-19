@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 装机向导：忠实迁移原型 openHomeSetupWizard（1959–2132），三步 + 目录树预览 + 校验动画
-// 完成 → 写 env（derivePaths）+ dirReady.PHPO_HOME=true → 回调 onReady
+// 装机向导：忠实迁移原型 openHomeSetupWizard（1959–2132），三步 + 目录树预览 + 校验
+// 验证/确认走后端 HomeVerify / HomeEnsure（硬红线 4/5：确认后不本地乐观更新，等 state:changed 回流）
+// 无宿主（纯 Vite demo）时回退到原型动画 + 本地写 env/dirReady
 import { computed, ref } from 'vue'
 import ModalShell from '@/components/common/ModalShell.vue'
 import { useI18n } from '@/composables/useI18n'
@@ -8,6 +9,8 @@ import { toast } from '@/composables/useToast'
 import { useAppState } from '@/stores/appState'
 import { HOME_SUBDIRS } from '@/constants/home'
 import { DEFAULT_HOME, DEFAULT_WWW, derivePaths } from '@/utils/path'
+import { hasBackend } from '@/api/site'
+import { homeEnsure, homeVerify } from '@/api/wizard'
 
 const props = defineProps<{ onReady?: () => void }>()
 const emit = defineEmits<{ close: [] }>()
@@ -78,20 +81,14 @@ function prev(): void {
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
-async function doVerify(): Promise<void> {
-  if (verifying.value) return
-  const h = normHome.value
-  const w = normWww.value
-  if (!h) { toast(t('wiz.needHome'), 'err'); return }
-  if (!w) { toast(t('wiz.needWww'), 'err'); return }
-  if (h === w) { toast(t('wiz.samePath'), 'err'); return }
-  verifying.value = true
-  const log = verifyLog.value
-  log.length = 0
-  log.push({ c: 'dim', x: '' })
-  verifyLog.value = [{ c: 'prompt', x: `$ phpo home ensure ${h} --www ${w}` }]
+const promptSeg = (h: string, w: string): Seg => ({ c: 'prompt', x: `$ phpo home ensure ${h} --www ${w}` })
+
+// runDemoVerify 无宿主回退：复刻原型逐行动画，纯展示不落库
+async function runDemoVerify(h: string, w: string): Promise<void> {
+  verifyLog.value = []
   const push = (s: Seg) => { verifyLog.value = [...verifyLog.value, s] }
   const d0 = HOME_SUBDIRS.filter((s) => s.depth === 0).length
+  push(promptSeg(h, w))
   await wait(200)
   push({ c: 'ok', x: `${t('wiz.s3.homeReady')}：${h}` })
   await wait(200)
@@ -104,15 +101,53 @@ async function doVerify(): Promise<void> {
   push({ c: 'ok', x: '✓ ' + t('wiz.s3.chmod') + '   u+rwX,go+rX' })
   await wait(200)
   push({ c: 'ok', x: '✓ ' + t('wiz.s3.rw') + '   write / read / delete OK' })
-  verifying.value = false
   verified.value = true
 }
 
-function doConfirm(): void {
-  Object.assign(app.env, derivePaths(normHome.value, normWww.value))
-  app.dirReady.PHPO_HOME = true
-  emit('close')
-  props.onReady?.()
+async function doVerify(): Promise<void> {
+  if (verifying.value) return
+  const h = normHome.value
+  const w = normWww.value
+  if (!h) { toast(t('wiz.needHome'), 'err'); return }
+  if (!w) { toast(t('wiz.needWww'), 'err'); return }
+  if (h === w) { toast(t('wiz.samePath'), 'err'); return }
+  verifying.value = true
+  try {
+    const r = await homeVerify(h, w)
+    if (r === null) { await runDemoVerify(h, w); return }
+    const segs: Seg[] = [promptSeg(h, w)]
+    for (const ln of r.lines) segs.push({ c: 'ok', x: ln })
+    for (const e of r.errors) segs.push({ c: 'err', x: e })
+    verifyLog.value = segs
+    verified.value = r.ok
+    if (!r.ok && r.errors[0]) toast(r.errors[0], 'err')
+  } catch (e) {
+    verifyLog.value = [promptSeg(h, w), { c: 'err', x: String((e as Error)?.message ?? e) }]
+    verified.value = false
+  } finally {
+    verifying.value = false
+  }
+}
+
+const confirming = ref(false)
+async function doConfirm(): Promise<void> {
+  if (confirming.value) return
+  confirming.value = true
+  const h = normHome.value
+  const w = normWww.value
+  try {
+    await homeEnsure(h, w) // 有宿主：后端建树 + 写 env + 置 dirReady + 广播 state:changed（硬红线 4/5）
+    if (!hasBackend()) { // 无宿主：本地占位落地
+      Object.assign(app.env, derivePaths(h, w))
+      app.dirReady.PHPO_HOME = true
+    }
+    emit('close')
+    props.onReady?.()
+  } catch (e) {
+    toast(String((e as Error)?.message ?? e), 'err')
+  } finally {
+    confirming.value = false
+  }
 }
 </script>
 
@@ -171,7 +206,7 @@ function doConfirm(): void {
       <button v-if="step > 1" class="btn" type="button" @click="prev">← {{ t('wiz.prev') }}</button>
       <button v-else class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
       <button v-if="step < 3" class="btn btn-primary" type="button" @click="next">{{ t('wiz.next') }} →</button>
-      <button v-else-if="verified" class="btn btn-primary" type="button" @click="doConfirm">{{ t('dir.confirm') }}</button>
+      <button v-else-if="verified" class="btn btn-primary" type="button" :disabled="confirming" @click="doConfirm">{{ t('dir.confirm') }}</button>
       <button v-else class="btn btn-primary" type="button" :disabled="verifying" @click="doVerify">{{ t('dir.verify') }}</button>
     </template>
   </ModalShell>

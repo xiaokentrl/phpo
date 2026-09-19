@@ -144,6 +144,11 @@ export interface VerifyAllResult {
   failed: number
   entries: VerifyResult[]
 }
+export interface HomeVerifyResult {
+  ok: boolean
+  lines: string[]
+  errors: string[]
+}
 export interface ImageCacheResult {
   hit: boolean
   path: string

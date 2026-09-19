@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
 import type { Backup, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TrayPrefs } from '@/types'
 import { derivePaths } from '@/utils/path'
+import { hasBackend } from '@/api/site'
 
 function defaultEnv(): Env {
   return {
@@ -65,8 +66,9 @@ export const useAppState = defineStore('appState', () => {
   const tray = reactive<TrayPrefs>({ enabled: true, minimizeOnClose: true })
   // 用户改过的配置正文，键 `${kind}:${version}:${fileName}`（原型 state.configs）
   const configs = reactive<Record<string, string>>({})
-  // PHPO_HOME 就绪标志：M1 默认已装机，使全部模态可直接打开验证
-  const dirReady = reactive<{ PHPO_HOME: boolean }>({ PHPO_HOME: true })
+  // PHPO_HOME 就绪标志（T607）：真实宿主默认未就绪，待启动权威快照（api/state bootstrap）按 DB 落地；
+  // 无宿主（纯 Vite demo）默认已就绪，保持 M1 占位数据可直接打开各模态验证。
+  const dirReady = reactive<{ PHPO_HOME: boolean }>({ PHPO_HOME: !hasBackend() })
 
   function isServiceRunning(kind: ServiceKind, version: string): boolean {
     return !stopped[kind].includes(version)

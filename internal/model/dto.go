@@ -9,6 +9,13 @@ type PreflightResult struct {
 	Adjusted map[string]any `json:"adjusted,omitempty"` // 如 {"port":81}（端口顺延）
 }
 
+// HomeVerifyResult 装机向导校验输出（T607）：逐条创建/探测进度行 + 错误行；OK=false 时前端不进入确认步
+type HomeVerifyResult struct {
+	OK     bool     `json:"ok"`
+	Lines  []string `json:"lines"`
+	Errors []string `json:"errors"`
+}
+
 // TaskMeta runTask 的业务上下文（applyStateChange 按 Type 落地）
 type TaskMeta struct {
 	Type    string   `json:"type"`

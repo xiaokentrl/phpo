@@ -6,6 +6,8 @@ import { useI18n } from '@/composables/useI18n'
 import { startStateSync, stopStateSync } from '@/composables/useStateSync'
 import { subscribeUpdater, unsubscribeUpdater } from '@/composables/useUpdater'
 import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
+import { useAppState } from '@/stores/appState'
+import { getState } from '@/api/state'
 import { usePrefsStore } from '@/stores/prefsStore'
 import { useLayoutStore } from '@/stores/layoutStore'
 import ModalRoot from '@/components/common/ModalRoot.vue'
@@ -16,12 +18,15 @@ import AppTrayMenu from '@/components/business/AppTrayMenu.vue'
 
 const { locale, t, setLocale } = useI18n()
 const prefs = usePrefsStore()
+const app = useAppState()
 useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
 
 onMounted(async () => {
   startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
   subscribeUpdater() // 订阅 update:* 事件：后台发现新版本即时提示（硬红线 4）
   subscribeCache() // 订阅 6 类 cache:* 事件：缓存命中/未命中/提升/损坏/清理/临时目录清空落地 cacheStore
+  const snap = await getState() // 启动权威快照（T607/硬红线 4）：dirReady/env 以 DB 为准；无宿主返回 null 保留占位
+  if (snap) app.applySnapshot(snap)
   if (import.meta.env.DEV) await import('@/api/mockEvents') // 开发期 mock 发射驱动（构建产物不含）
 })
 onBeforeUnmount(() => {
