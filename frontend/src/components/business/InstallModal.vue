@@ -83,7 +83,7 @@ function onOk(): void {
 </script>
 
 <template>
-  <ModalShell>
+  <ModalShell @close="emit('close')">
     <template #head>
       <h3>{{ t('install.title', { name: t(meta.titleKey) }) }}</h3>
       <p>{{ t('install.subtitle') }}</p>

@@ -51,7 +51,7 @@ function onSave(): void {
 </script>
 
 <template>
-  <ModalShell size="xl">
+  <ModalShell size="xl" @close="emit('close')">
     <template #head>
       <h3>{{ domain }} · {{ t('siteConfig.title') }}</h3>
       <p>{{ t('siteConfig.subtitle') }}</p>

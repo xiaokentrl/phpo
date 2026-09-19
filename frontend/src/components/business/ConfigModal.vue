@@ -107,7 +107,7 @@ async function apply(): Promise<void> {
 </script>
 
 <template>
-  <ModalShell size="xl" body-config>
+  <ModalShell size="xl" body-config @close="emit('close')">
     <template #head>
       <h3>{{ t(meta.titleKey) }} {{ version }} · {{ t('config.title') }}</h3>
       <p>{{ t('config.subtitle') }}</p>

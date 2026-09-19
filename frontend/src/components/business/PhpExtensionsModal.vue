@@ -89,7 +89,7 @@ async function apply(): Promise<void> {
 </script>
 
 <template>
-  <ModalShell size="lg">
+  <ModalShell size="lg" @close="emit('close')">
     <template #head>
       <h3>PHP {{ version }} · {{ t('ext.title') }}</h3>
       <p>{{ t('ext.subtitle') }}</p>

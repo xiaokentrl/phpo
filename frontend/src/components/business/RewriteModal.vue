@@ -56,7 +56,7 @@ function finalRuleEqualsPreset(presetRule: string): boolean {
 </script>
 
 <template>
-  <ModalShell size="lg">
+  <ModalShell size="lg" @close="emit('close')">
     <template #head>
       <h3>{{ domain }} · {{ t('rw.title') }}</h3>
       <p>{{ t('rw.subtitle') }}</p>

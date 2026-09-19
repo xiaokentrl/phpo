@@ -10,7 +10,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <ModalShell>
+  <ModalShell @close="emit('close')">
     <template #head>
       <h3>{{ t('cleanup.title') }}</h3>
       <p>{{ t('cleanup.subtitle') }}</p>

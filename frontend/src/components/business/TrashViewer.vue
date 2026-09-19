@@ -20,7 +20,7 @@ function fmt(ts: string): string {
 </script>
 
 <template>
-  <ModalShell>
+  <ModalShell @close="emit('close')">
     <template #head>
       <h3>{{ t('cleanup.trash.title') }}</h3>
       <p>{{ t('cleanup.trash.subtitle') }}</p>

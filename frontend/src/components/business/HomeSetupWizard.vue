@@ -152,7 +152,7 @@ async function doConfirm(): Promise<void> {
 </script>
 
 <template>
-  <ModalShell size="lg">
+  <ModalShell size="lg" @close="emit('close')">
     <template #head>
       <h3>{{ t('wiz.title') }}</h3>
       <p>{{ t('wiz.subtitle') }}</p>

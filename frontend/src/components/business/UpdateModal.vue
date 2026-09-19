@@ -35,7 +35,7 @@ const canApply = computed(() => !!store.available && !busy.value && !doneOk.valu
 </script>
 
 <template>
-  <ModalShell>
+  <ModalShell @close="emit('close')">
     <template #head>
       <h3>{{ t('update.title') }}</h3>
       <p>{{ t('update.subtitle', { version: cur }) }}</p>

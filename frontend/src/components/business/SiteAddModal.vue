@@ -87,7 +87,7 @@ function onOk(): void {
 </script>
 
 <template>
-  <ModalShell>
+  <ModalShell @close="emit('close')">
     <template #head>
       <h3>{{ t('siteAdd.title') }}</h3>
       <p>{{ t('siteAdd.subtitle') }}</p>

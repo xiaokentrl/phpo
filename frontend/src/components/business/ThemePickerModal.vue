@@ -12,7 +12,7 @@ const prefs = usePrefsStore()
 </script>
 
 <template>
-  <ModalShell size="lg">
+  <ModalShell size="lg" @close="emit('close')">
     <template #head>
       <h3>{{ t('theme.title') }}</h3>
       <p>{{ t('theme.subtitle') }}</p>
