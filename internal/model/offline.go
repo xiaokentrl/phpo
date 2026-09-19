@@ -7,6 +7,7 @@ import "time"
 type CacheEntry struct {
 	Kind       string    `json:"kind"`
 	Version    string    `json:"version"`
+	Path       string    `json:"path"`
 	HasImage   bool      `json:"hasImage"`
 	ApkCount   int       `json:"apkCount"`
 	PeclCount  int       `json:"peclCount"`
@@ -37,4 +38,36 @@ type CleanupResult struct {
 	Mode       CleanupMode `json:"mode"`
 	FreedBytes int64       `json:"freedBytes"`
 	Removed    int         `json:"removed"`
+}
+
+// VerifyResult 单条缓存逐项校验结果（§5.14.5 / §5.14.10 VerifyCacheEntry）；Failed 为校验失败的文件相对名
+type VerifyResult struct {
+	Kind    string   `json:"kind"`
+	Version string   `json:"version"`
+	OK      bool     `json:"ok"`
+	Failed  []string `json:"failed"`
+}
+
+// VerifyAllResult 全量校验汇总（§5.14.10 VerifyAllCache）
+type VerifyAllResult struct {
+	Total   int            `json:"total"`
+	OK      int            `json:"ok"`
+	Failed  int            `json:"failed"`
+	Entries []VerifyResult `json:"entries"`
+}
+
+// ImageCacheResult 镜像缓存查找结果（§5.14.10 LookupImage）
+type ImageCacheResult struct {
+	Hit       bool   `json:"hit"`
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	Corrupted bool   `json:"corrupted"`
+}
+
+// ExtCacheResult 扩展包缓存查找结果（§5.14.10 LookupExtension）
+type ExtCacheResult struct {
+	Hit       bool   `json:"hit"`
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	Corrupted bool   `json:"corrupted"`
 }

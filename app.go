@@ -408,3 +408,101 @@ func (a *App) OperationList(limit int) ([]model.Operation, error) {
 	}
 	return a.container.CleanupService.ListOperations(limit)
 }
+
+// ---- M6 离线缓存绑定：§5.14.10 全量缓存服务层 API（T606）----
+
+// OfflineListEntries 遍历离线缓存条目并聚合 manifest 计数/校验态
+func (a *App) OfflineListEntries(ctx context.Context) ([]model.CacheEntry, error) {
+	if a.container.OfflineService == nil {
+		return nil, errNotReady
+	}
+	return a.container.OfflineService.ListCacheEntries(ctx)
+}
+
+// OfflineGetEntry 读取单个 kind/version 缓存条目（不存在返回 null）
+func (a *App) OfflineGetEntry(ctx context.Context, kind, version string) (*model.CacheEntry, error) {
+	if a.container.OfflineService == nil {
+		return nil, errNotReady
+	}
+	return a.container.OfflineService.GetCacheEntry(ctx, kind, version)
+}
+
+// OfflineStats 缓存根目录总览（占用/条目/镜像/扩展/损坏）
+func (a *App) OfflineStats(ctx context.Context) (model.CacheStats, error) {
+	if a.container.OfflineService == nil {
+		return model.CacheStats{}, errNotReady
+	}
+	return a.container.OfflineService.GetCacheStats(ctx)
+}
+
+// OfflineVerifyEntry 逐文件重校验单条缓存，损坏发射 cache:corrupted
+func (a *App) OfflineVerifyEntry(ctx context.Context, kind, version string) (model.VerifyResult, error) {
+	if a.container.OfflineService == nil {
+		return model.VerifyResult{}, errNotReady
+	}
+	return a.container.OfflineService.VerifyCacheEntry(ctx, kind, version)
+}
+
+// OfflineVerifyAll 全量校验所有缓存条目，返回通过/失败汇总与明细
+func (a *App) OfflineVerifyAll(ctx context.Context) (model.VerifyAllResult, error) {
+	if a.container.OfflineService == nil {
+		return model.VerifyAllResult{}, errNotReady
+	}
+	return a.container.OfflineService.VerifyAllCache(ctx)
+}
+
+// OfflineCleanupCache 按三模式清理缓存（§5.14.6）；在用条目受保护，涉删除由前端二次确认
+func (a *App) OfflineCleanupCache(ctx context.Context, mode string) (model.CleanupResult, error) {
+	if a.container.OfflineService == nil {
+		return model.CleanupResult{}, errNotReady
+	}
+	return a.container.OfflineService.CleanupCache(ctx, model.CleanupMode(mode))
+}
+
+// OfflineRemoveEntry 删除单条缓存目录（不可恢复，前端确认后调用）
+func (a *App) OfflineRemoveEntry(ctx context.Context, kind, version string) error {
+	if a.container.OfflineService == nil {
+		return errNotReady
+	}
+	return a.container.OfflineService.RemoveCacheEntry(ctx, kind, version)
+}
+
+// OfflineLookupImage 查镜像离线缓存命中情况（命中前已校验 SHA256）
+func (a *App) OfflineLookupImage(ctx context.Context, kind, version string) (model.ImageCacheResult, error) {
+	if a.container.OfflineService == nil {
+		return model.ImageCacheResult{}, errNotReady
+	}
+	return a.container.OfflineService.LookupImage(ctx, kind, version)
+}
+
+// OfflineLookupExtension 查扩展包离线缓存命中情况
+func (a *App) OfflineLookupExtension(ctx context.Context, phpVersion, extType, name string) (model.ExtCacheResult, error) {
+	if a.container.OfflineService == nil {
+		return model.ExtCacheResult{}, errNotReady
+	}
+	return a.container.OfflineService.LookupExtension(ctx, phpVersion, extType, name)
+}
+
+// OfflinePromoteImage 把临时镜像 tar 提升到离线缓存
+func (a *App) OfflinePromoteImage(ctx context.Context, kind, version, tarPath string) error {
+	if a.container.OfflineService == nil {
+		return errNotReady
+	}
+	return a.container.OfflineService.PromoteImage(ctx, kind, version, tarPath)
+}
+
+// OfflinePromoteExtension 把临时扩展包提升到离线缓存
+func (a *App) OfflinePromoteExtension(ctx context.Context, phpVersion, extType, filePath string) error {
+	if a.container.OfflineService == nil {
+		return errNotReady
+	}
+	return a.container.OfflineService.PromoteExtension(ctx, phpVersion, extType, filePath)
+}
+
+// OfflineClearTempDir 清空指定 kind/version 临时目录并发射 cache:tempdir-cleared
+func (a *App) OfflineClearTempDir(ctx context.Context, kind, version, reason string) error {
+	if a.container.OfflineService == nil {
+		return errNotReady
+	}
+	return a.container.OfflineService.ClearTempDir(ctx, kind, version, reason)
+}

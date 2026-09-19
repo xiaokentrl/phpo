@@ -48,6 +48,9 @@ type Container struct {
 	// M6 清理门面：孤儿三模式清理 + 回收站 + 审计（T605）；启动后非 nil
 	CleanupService *service.CleanupService
 
+	// M6 离线缓存门面：§5.14.10 统计/校验/三模式清理/单条删除/lookup/promote/临时目录（T606）；启动后非 nil
+	OfflineService *service.OfflineService
+
 	// M6 升级门面：应用版本检查 + 三段式升级（下载→双校验→备份→安装，失败回滚，T604）；启动后非 nil
 	UpdateService *service.UpdateService
 }
@@ -133,6 +136,9 @@ func (c *Container) Build() *Assembly {
 		c.CleanupService = service.NewCleanupService(
 			cli, st, engine.NewTrash(trashRoot), cacheMgr, engine.NewAudit(auditPath), c.Emitter, tm,
 		)
+
+		// M6 离线缓存门面（T606）：§5.14.10 统计/校验/三模式清理/单条删除/lookup/promote/临时目录全接真
+		c.OfflineService = service.NewOfflineService(cacheMgr, st, engine.NewAudit(auditPath), c.Emitter, tm)
 
 		// M6 升级门面（T604 / 硬红线 5/6）：编排器 + 三段式 UpdateService；无发布源时 Check 返回错误而非 panic
 		// §5.9 中断升级下次启动自动回滚：pending 标记存在且运行版本≠目标 → 恢复旧二进制（失败不阻断 GUI）

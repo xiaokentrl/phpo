@@ -5,6 +5,7 @@ import { onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { startStateSync, stopStateSync } from '@/composables/useStateSync'
 import { subscribeUpdater, unsubscribeUpdater } from '@/composables/useUpdater'
+import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
 import { usePrefsStore } from '@/stores/prefsStore'
 import { useLayoutStore } from '@/stores/layoutStore'
 import ModalRoot from '@/components/common/ModalRoot.vue'
@@ -20,11 +21,13 @@ useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 document
 onMounted(async () => {
   startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
   subscribeUpdater() // 订阅 update:* 事件：后台发现新版本即时提示（硬红线 4）
+  subscribeCache() // 订阅 6 类 cache:* 事件：缓存命中/未命中/提升/损坏/清理/临时目录清空落地 cacheStore
   if (import.meta.env.DEV) await import('@/api/mockEvents') // 开发期 mock 发射驱动（构建产物不含）
 })
 onBeforeUnmount(() => {
   stopStateSync()
   unsubscribeUpdater()
+  unsubscribeCache()
 })
 
 const sections: { titleKey: string; items: { id: string; labelKey: string; icon: string }[] }[] = [

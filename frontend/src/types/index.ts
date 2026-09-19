@@ -113,6 +113,59 @@ export interface Operation {
   error?: string
 }
 
+// —— 离线缓存（T606 / §5.14.10）——
+export interface CacheEntry {
+  kind: string
+  version: string
+  path: string
+  hasImage: boolean
+  apkCount: number
+  peclCount: number
+  totalSize: number
+  lastVerify: string
+  verifyOk: boolean
+}
+export interface CacheStats {
+  totalBytes: number
+  entryCount: number
+  imageCount: number
+  extCount: number
+  corrupted: number
+}
+export interface VerifyResult {
+  kind: string
+  version: string
+  ok: boolean
+  failed: string[]
+}
+export interface VerifyAllResult {
+  total: number
+  ok: number
+  failed: number
+  entries: VerifyResult[]
+}
+export interface ImageCacheResult {
+  hit: boolean
+  path: string
+  size: number
+  corrupted: boolean
+}
+export interface ExtCacheResult {
+  hit: boolean
+  path: string
+  size: number
+  corrupted: boolean
+}
+// 缓存事件最近标记（CacheHitBadge 用）
+export type CacheEventKind = 'hit' | 'miss'
+export interface CacheEventMark {
+  kind: CacheEventKind
+  source?: string
+  size?: number
+  action?: string
+  at: number
+}
+
 export interface TrayPrefs {
   enabled: boolean
   minimizeOnClose: boolean

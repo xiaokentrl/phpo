@@ -70,6 +70,36 @@ func (m *Manager) corrupted(kind, version string) bool {
 	return false
 }
 
+// VerifyEntry 逐文件重校验 kind/version 缓存（§5.14.5）：镜像 tar + php 的 apk/pecl 包各按 manifest SHA256 校验。
+// 与 corrupted() 的区别在于本方法会把每个损坏项发射 cache:corrupted，并返回失败文件相对名清单（emitCorrupted 由离线视图「校验」触发，需可见告警）。
+func (m *Manager) VerifyEntry(kind, version string) ([]string, error) {
+	var failed []string
+	il, err := m.LookupImage(kind, version)
+	if err != nil {
+		return nil, err
+	}
+	if il.Corrupted {
+		name := filepath.Base(il.Path)
+		failed = append(failed, name)
+		m.emitCorrupted(kind, version, model.ManifestPackage{Name: name})
+	}
+	if kind == "php" {
+		for _, et := range []string{"apk", "pecl"} {
+			for _, fn := range listFiles(filepath.Join(m.env.OfflineExtDir(kind, version, et))) {
+				el, err := m.LookupExtension(version, et, fn)
+				if err != nil {
+					return nil, err
+				}
+				if el.Corrupted {
+					failed = append(failed, et+"/"+fn)
+					m.emitCorrupted("php", version, model.ManifestPackage{Name: fn})
+				}
+			}
+		}
+	}
+	return failed, nil
+}
+
 // Stats 汇总缓存占用（OfflineView 用）
 func (m *Manager) Stats() (model.CacheStats, error) {
 	entries, err := m.ListEntries()
