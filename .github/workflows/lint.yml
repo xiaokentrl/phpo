@@ -35,8 +35,14 @@ jobs:
           out="$(gofmt -l .)"
           if [ -n "$out" ]; then echo "需要 gofmt 的文件:"; echo "$out"; exit 1; fi
 
-      # golangci-lint 目前设为非阻断：编写环境离线无法本地验证其是否全绿；
-      # 先输出暴露问题，待首次 CI 确认干净后改回阻断（删去 continue-on-error）。
+      # go vet 为阻断门禁：属 Go 工具链、离线可验真，本地已全绿。
+      # 即便下方 golangci-lint 暂非阻断，vet 级问题也会在此拦下。
+      - name: go vet
+        run: go vet ./...
+
+      # golangci-lint 目前设为非阻断：编写环境离线无法本地安装/验证其是否全绿
+      # （errcheck/staticcheck/gosimple/unused/ineffassign/goimports/misspell 均需联网装二进制）；
+      # 先输出暴露问题，待首次联网 CI 确认干净后改回阻断（删去 continue-on-error）。
       - name: golangci-lint
         continue-on-error: true
         run: |
