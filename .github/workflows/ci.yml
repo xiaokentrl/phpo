@@ -1,0 +1,72 @@
+# CI 主链路：构建 + 全量单测 + 工程规范校验 + 前端构建（对应 AGENTS.md §11.3 / 并行轨 TX01）
+#
+# 说明：`go test ./...` 会编译含 Wails ui 包在内的全部包，Linux 上需 webkit2gtk 开发头（CGO）。
+#   纯逻辑单测不触碰真实 Docker；集成 live 测以 PHPO_LIVE 门禁，默认 skip，不在 CI 强跑。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27"
+  NODE_VERSION: "22"
+
+jobs:
+  go:
+    name: Go build & test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install webkit2gtk toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Project checks (i18n / templates / docker-naming / cache-manifest)
+        run: |
+          go run ./scripts/check-i18n-keys.go
+          go run ./scripts/check-templates.go
+          go run ./scripts/check-docker-naming.go
+          go run ./scripts/check-cache-manifest.go
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install deps
+        run: pnpm -C frontend install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -C frontend build

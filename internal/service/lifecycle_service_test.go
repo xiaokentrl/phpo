@@ -17,7 +17,7 @@ import (
 // fakeDocker 内存容器世界（name -> running）+ 数据卷（卸载不得触碰）
 type fakeDocker struct {
 	containers map[string]bool
-	volumes    map[string]bool           // 模拟绑定/命名卷；RemoveContainer 不应删除
+	volumes    map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
 	lastSpec   map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
 }
 

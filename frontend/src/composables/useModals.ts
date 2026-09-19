@@ -190,27 +190,6 @@ export function useModals() {
     })
   }
 
-  function openOfflinePruneModal(svc: string, ver: string, size: string): void {
-    modal.open(DangerConfirm, {
-      title: t('danger.offlinePrune.title', { svc, ver }),
-      description: t('danger.offlinePrune.desc'),
-      warnings: [
-        { text: t('danger.offlinePrune.warn1', { svc, ver, size }) },
-        { text: t('danger.offlinePrune.warn2') },
-        { text: t('danger.offlinePrune.warn3'), keep: true },
-        { text: t('danger.offlinePrune.warn4'), keep: true },
-      ],
-      checkbox: { label: t('danger.offlinePrune.check') },
-      cliPreview: `phpo offline prune ${svc} ${ver}`,
-      confirmLabel: t('danger.offlinePrune.confirm'),
-      onConfirm: () => {
-        const check = preflight('offline-prune', { svc, ver })
-        if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-        runTask(['offline', 'prune', svc, ver], `Prune ${svc}/${ver}`, { type: 'offline-prune', svc, ver })
-      },
-    })
-  }
-
   function openRestoreModal(file: string): void {
     const b = app.backups.find((x) => x.file === file)
     modal.open(DangerConfirm, {
@@ -296,7 +275,7 @@ export function useModals() {
     openInstallModal, openSiteAddModal, openRewriteModal, openSiteConfigModal,
     openConfigModal, openPhpExtensionsModal, openThemePicker, openHomeSetupWizard,
     openUpdateModal, openCleanupModal, openTrashModal,
-    openUninstallModal, openSiteRemoveModal, openDeleteBackupModal, openOfflinePruneModal, openRestoreModal,
+    openUninstallModal, openSiteRemoveModal, openDeleteBackupModal, openRestoreModal,
     startService, stopService,
     runGuardedTask,
     runBackup, downloadBackupFile, refreshBackups,

@@ -1,0 +1,74 @@
+# Lint 门禁：Go 格式/静态 + 前端类型 + 工作流自检（对应 AGENTS.md §11.3 / 并行轨 TX01）
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27"
+  NODE_VERSION: "22"
+
+jobs:
+  go-lint:
+    name: Go fmt & golangci-lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install webkit2gtk toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+
+      - name: gofmt check
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "需要 gofmt 的文件:"; echo "$out"; exit 1; fi
+
+      # golangci-lint 目前设为非阻断：编写环境离线无法本地验证其是否全绿；
+      # 先输出暴露问题，待首次 CI 确认干净后改回阻断（删去 continue-on-error）。
+      - name: golangci-lint
+        continue-on-error: true
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v1.61.0
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
+
+  frontend-lint:
+    name: Frontend typecheck
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install deps
+        run: pnpm -C frontend install --frozen-lockfile
+
+      - name: vue-tsc typecheck
+        run: pnpm -C frontend exec vue-tsc --noEmit
+
+  workflow-lint:
+    name: actionlint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: reviewdog/action-actionlint@v1

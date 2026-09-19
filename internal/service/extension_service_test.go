@@ -100,7 +100,9 @@ func (c *fakeImageCache) EnsureImage(_ context.Context, kind, version, ref strin
 	c.ensured = append(c.ensured, kind+"/"+version+"="+ref)
 	return nil
 }
-func (c *fakeImageCache) CachedImageRef(string, string) (string, bool) { return c.cachedRef, c.cachedRefOK }
+func (c *fakeImageCache) CachedImageRef(string, string) (string, bool) {
+	return c.cachedRef, c.cachedRefOK
+}
 func (c *fakeImageCache) PromoteImage(kind, version, ref, tmpTar string) error {
 	if _, err := os.Stat(tmpTar); err != nil {
 		return err
@@ -123,12 +125,14 @@ func (c *fakeImageCache) ClearTempDir(_ context.Context, kind, version, reason s
 
 // extStore 实现 ExtStore
 type extStore struct {
-	snap     *model.Snapshot
-	saved    map[string][]string
-	failSet  bool
+	snap    *model.Snapshot
+	saved   map[string][]string
+	failSet bool
 }
 
-func newExtStore() *extStore { return &extStore{snap: model.NewSnapshot(), saved: map[string][]string{}} }
+func newExtStore() *extStore {
+	return &extStore{snap: model.NewSnapshot(), saved: map[string][]string{}}
+}
 func (s *extStore) BuildSnapshot() (*model.Snapshot, error) { return s.snap, nil }
 func (s *extStore) SetPHPExtensions(version string, exts []string) error {
 	if s.failSet {
