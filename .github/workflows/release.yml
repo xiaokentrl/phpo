@@ -93,6 +93,9 @@ jobs:
     name: Sign & Release
     needs: build
     runs-on: ubuntu-22.04
+    env:
+      # 提到 job 级 env：步骤 if 可读 env 上下文（secrets 上下文在 step if 不可用）。
+      PHPO_SIGNING_KEY: ${{ secrets.PHPO_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,8 +119,6 @@ jobs:
 
       - name: Sign artifacts (Ed25519 → .sig)
         if: env.PHPO_SIGNING_KEY != ''
-        env:
-          PHPO_SIGNING_KEY: ${{ secrets.PHPO_SIGNING_KEY }}
         run: |
           printf '%s' "$PHPO_SIGNING_KEY" | base64 -d > /tmp/phpo-sign.pem
           chmod 600 /tmp/phpo-sign.pem
@@ -132,7 +133,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: phpo ${{ steps.ver.outputs.version }}
-          body_path: ${{ github.workspace }}/CHANGELOG.md
+          body_path: ${{ github.workspace }}/docs/CHANGELOG.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
