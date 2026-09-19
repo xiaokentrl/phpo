@@ -2,6 +2,7 @@
 // 建站弹窗：忠实迁移原型 openSiteAddModal（3102–3155）
 // ★ FIX #4/#5：端口自动顺延（站点端口占用不报错）；root 外置降级为 warning → 确认弹窗
 import { computed, ref } from 'vue'
+import { Dialogs } from '@wailsio/runtime'
 import ModalShell from '@/components/common/ModalShell.vue'
 import DangerConfirm from '@/components/business/DangerConfirm.vue'
 import { useI18n } from '@/composables/useI18n'
@@ -19,6 +20,7 @@ const { t } = useI18n()
 const { preflight } = usePreflight()
 const app = useAppState()
 const modal = useModalStore()
+const canBrowse = hasBackend() // 有宿主才提供原生目录选择器
 
 const wwwRoot = computed(() => app.env.WWW_ROOT.replace(/\/$/, ''))
 const phpVers = computed(() => app.installed.php)
@@ -54,6 +56,22 @@ function onRoot(): void {
 }
 function onPort(): void {
   if (!/^\d{0,5}$/.test(port.value)) port.value = port.value.replace(/[^\d]/g, '').slice(0, 5)
+}
+
+// 打开原生目录选择器，默认定位到相对根目录（WWW_ROOT）；选定的子目录折算为 rootSub
+async function browseRoot(): Promise<void> {
+  const picked = await Dialogs.OpenFile({
+    Title: t('siteAdd.root'),
+    CanChooseDirectories: true,
+    CanChooseFiles: false,
+    Directory: fullPath(),
+  })
+  const abs = String(picked || '').replace(/\/+$/, '')
+  if (!abs) return
+  const root = wwwRoot.value
+  if (abs === root) { rootSub.value = ''; onRoot(); return }
+  if (abs.startsWith(root + '/')) { rootSub.value = abs.slice(root.length + 1); onRoot(); return }
+  toast(t('siteAdd.browse.outsideRoot', { root }), 'err', 4600)
 }
 
 function onOk(): void {
@@ -100,7 +118,10 @@ function onOk(): void {
       </div>
       <div class="field">
         <label>{{ t('siteAdd.root') }}</label>
-        <input v-model="rootSub" type="text" autocomplete="off" spellcheck="false" placeholder="demo.test" @input="onRoot">
+        <div class="input-with-action">
+          <input v-model="rootSub" type="text" autocomplete="off" spellcheck="false" placeholder="demo.test" @input="onRoot">
+          <button v-if="canBrowse" class="input-action-btn" type="button" @click="browseRoot">{{ t('siteAdd.browse') }}</button>
+        </div>
         <div class="hint">{{ t('siteAdd.root.hint', { root: wwwRoot }) }}</div>
         <div class="root-full-path" :title="t('siteAdd.root.full')">
           <span class="rp-label">{{ t('siteAdd.root.full') }}:</span>

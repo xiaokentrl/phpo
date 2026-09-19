@@ -390,6 +390,8 @@ const messages: Record<string, string> = {
   "siteAdd.root.hint": "Subdirectory under {root} · Defaults to domain, edit or click Browse",
   "siteAdd.root.full": "Host path",
   "siteAdd.root.container": "Container path",
+  "siteAdd.browse": "Browse",
+  "siteAdd.browse.outsideRoot": "Site directory must be inside {root}",
   "siteAdd.preview": "Will run",
   "siteAdd.create": "Create Site",
   "siteAdd.needDomain": "Please enter a domain",
