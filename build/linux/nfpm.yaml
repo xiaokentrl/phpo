@@ -1,0 +1,44 @@
+# nfpm 打包配置（Linux deb/rpm），供 `wails3 tool package -format deb|rpm -config build/linux/nfpm.yaml` 使用
+# 依据 AGENTS.md §11.1：phpo_x.x.x_amd64.deb / .rpm 交付物
+name: phpo
+arch: amd64
+platform: linux
+version: 0.1.0
+section: default
+priority: optional
+maintainer: phpo <kentrl@qq.com>
+description: |
+  phpo - 面向 PHP 开发者的本地 Docker 化开发环境管理器（Windows / macOS / Linux 桌面应用）。
+homepage: https://github.com/xiaokentrl/phpo
+license: MIT
+vendor: phpo
+depends:
+  - libwebkit2gtk-4.1-0
+scripts:
+  postinstall: build/linux/postinstall.sh
+contents:
+  - src: build/bin/phpo
+    dst: /usr/bin/phpo
+    file_info:
+      mode: 0755
+  - src: build/linux/phpo.desktop
+    dst: /usr/share/applications/phpo.desktop
+    file_info:
+      mode: 0644
+  - src: build/linux/icons/128x128/phpo.png
+    dst: /usr/share/icons/hicolor/128x128/apps/phpo.png
+    file_info:
+      mode: 0644
+  - src: build/linux/icons/256x256/phpo.png
+    dst: /usr/share/icons/hicolor/256x256/apps/phpo.png
+    file_info:
+      mode: 0644
+  - src: build/linux/icons/512x512/phpo.png
+    dst: /usr/share/icons/hicolor/512x512/apps/phpo.png
+    file_info:
+      mode: 0644
+# rpm 与 deb 的 webkit 依赖包名不同，用 nfpm overrides 分别覆盖
+overrides:
+  rpm:
+    depends:
+      - webkit2gtk4.1

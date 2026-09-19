@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=phpo
+GenericName=PHP Dev Environment Manager
+Comment=面向 PHP 开发者的本地 Docker 化开发环境管理器
+Exec=phpo %u
+Icon=phpo
+Terminal=false
+Categories=Development;IDE;
+Keywords=php;docker;env;nginx;mysql;
+StartupNotify=true
+StartupWMClass=phpo

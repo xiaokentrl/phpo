@@ -1,0 +1,139 @@
+# 三平台一键出包 + 签名 + 校验 + 发布（对应 AGENTS.md §10 M7 / §11.1 / 任务工单 T703）
+#
+# 触发：推送 v* 标签，或手动 dispatch。三个原生 runner 并行出包 → 汇总签名/校验 → 挂到 GitHub Release。
+# 说明（scope「脚手架优先」）：本工作流已在本地按 wails3 v3.0.0-beta.23 命令模型编写并经 actionlint 校验；
+#   真实出包/签名/公证需以下仓库 secrets（缺失时签名步骤自动跳过，不阻断出包）：
+#     PHPO_SIGNING_KEY   Ed25519 私钥（base64；scripts/sign-release.sh genkey 生成）——供 .sig 自升级验签
+#     APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID / build/signing/*.p12  macOS 开发者签名+公证（可选）
+#     WIN_CERT / WIN_CERT_PASSWORD                                                   Windows 代码签名（可选）
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本号（不含前缀 v），如 0.1.0"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.27"
+  NODE_VERSION: "22"
+  WAILS_VERSION: "v3.0.0-beta.23"
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux
+            os: ubuntu-22.04
+          - target: windows
+            os: windows-latest
+          - target: darwin
+            os: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+        shell: bash
+
+      - name: Install Linux toolchain (webkit2gtk)
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+
+      - name: Install NSIS (Windows)
+        if: matrix.target == 'windows'
+        run: choco install nsis -y
+        shell: pwsh
+
+      - name: Install frontend deps
+        run: pnpm -C frontend install --frozen-lockfile
+
+      - name: Package ${{ matrix.target }}
+        run: wails3 task package:${{ matrix.target }}
+        shell: bash
+
+      - name: Upload staged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.target }}
+          path: build/bin/*
+          if-no-files-found: error
+
+  release:
+    name: Sign & Release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pkg-linux
+          path: out
+      - uses: actions/download-artifact@v4
+        with: { name: pkg-windows, path: out }
+      - uses: actions/download-artifact@v4
+        with: { name: pkg-darwin, path: out }
+
+      - name: Compute version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then echo "version=${{ inputs.version }}" >>"$GITHUB_OUTPUT";
+          else echo "version=${GITHUB_REF_NAME#v}" >>"$GITHUB_OUTPUT"; fi
+
+      - name: Sign artifacts (Ed25519 → .sig)
+        if: env.PHPO_SIGNING_KEY != ''
+        env:
+          PHPO_SIGNING_KEY: ${{ secrets.PHPO_SIGNING_KEY }}
+        run: |
+          printf '%s' "$PHPO_SIGNING_KEY" | base64 -d > /tmp/phpo-sign.pem
+          chmod 600 /tmp/phpo-sign.pem
+          PHPO_SIGNING_KEY=/tmp/phpo-sign.pem bash scripts/sign-release.sh sign out/*
+          rm -f /tmp/phpo-sign.pem
+
+      - name: Generate checksums.txt
+        run: BIN_DIR=out bash scripts/gen-checksums.sh
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: phpo ${{ steps.ver.outputs.version }}
+          body_path: ${{ github.workspace }}/CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            out/*

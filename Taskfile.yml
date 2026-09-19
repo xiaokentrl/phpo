@@ -2,6 +2,9 @@ version: '3'
 
 vars:
   BINARY: phpo
+  VERSION:
+    sh: >-
+      grep -oE '"productVersion"[^0-9]*[0-9][0-9.]*' wails.json | grep -oE '[0-9][0-9.]*'
 
 tasks:
   default:
@@ -29,26 +32,41 @@ tasks:
     cmds:
       - pnpm -C frontend build
 
+  # 说明：wails3 v3.0.0-beta.23 的 `wails3 build` / `wails3 package` 会转发到本 Taskfile
+  # 的同名任务（build / package），真正的编译编排在下面这些任务里。
   build:
-    desc: 构建当前平台桌面程序
+    desc: 构建当前平台桌面二进制（CGO + webkit2gtk）
     deps: [frontend:build]
     cmds:
-      - wails3 package -platform current -o build/bin/{{.BINARY}}
+      - go build -trimpath -ldflags "-s -w" -o build/bin/{{.BINARY}} .
 
-  build:windows:
-    desc: 交叉打包 Windows
+  package:
+    desc: 打包当前平台安装包（Linux→deb；win/darwin 见 package:windows / package:darwin，通常在各自 runner 上跑）
+    deps: [build]
     cmds:
-      - wails3 package -platform windows -o build/bin/{{.BINARY}}-windows-x64.exe
+      - wails3 tool package -format deb -name {{.BINARY}} -out build/bin -config build/linux/nfpm.yaml
+      - mv -f build/bin/{{.BINARY}}.deb build/bin/{{.BINARY}}_{{.VERSION}}_amd64.deb
 
-  build:darwin:
-    desc: 交叉打包 macOS
+  package:linux:
+    desc: Linux 出包（deb + rpm），需本机有 dpkg-deb / rpmbuild
+    deps: [build]
     cmds:
-      - wails3 package -platform darwin -o build/bin/{{.BINARY}}-darwin
+      - wails3 tool package -format deb -name {{.BINARY}} -out build/bin -config build/linux/nfpm.yaml
+      - mv -f build/bin/{{.BINARY}}.deb build/bin/{{.BINARY}}_{{.VERSION}}_amd64.deb
+      - wails3 tool package -format rpm -name {{.BINARY}} -out build/bin -config build/linux/nfpm.yaml
+      - mv -f build/bin/{{.BINARY}}.rpm build/bin/{{.BINARY}}-{{.VERSION}}.x86_64.rpm
 
-  build:linux:
-    desc: 打包 Linux
+  package:windows:
+    desc: Windows NSIS 安装包（需在 windows runner / 装有 makensis 的环境执行）
+    deps: [build]
     cmds:
-      - wails3 package -platform linux -o build/bin/{{.BINARY}}-linux
+      - makensis -DAPP_NAME={{.BINARY}} -DAPP_VERSION={{.VERSION}} -DBINARY_NAME={{.BINARY}} -DEXE_NAME=build/bin/{{.BINARY}}-setup-x64.exe -DBUILD_DIR=build/bin -DICON=build/windows/icon.ico build/windows/nsis/installer.nsi
+
+  package:darwin:
+    desc: macOS .app/.dmg（需在 mac runner 执行；签名/公证见 scripts/sign-release.sh）
+    deps: [build]
+    cmds:
+      - wails3 tool package -format dmg -name {{.BINARY}} -out build/bin
 
   test:
     desc: 全量 Go 测试（无 Docker 环境必须可跑，M2 门禁）

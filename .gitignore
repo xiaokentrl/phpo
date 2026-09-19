@@ -8,8 +8,10 @@
 
 # 本地数据与密钥（签名私钥绝不入库；公钥 build/signing/public.key 入库）
 *.key
-# 公钥入库（go:embed 编译依赖；*.key 规则只针对私钥，此处反选回公钥）
+*.pem
+# 公钥入库（go:embed 编译依赖；*.key/*.pem 规则只针对私钥，此处反选回公钥）
 !internal/updater/signing/public.key
+!build/signing/public.key
 .env
 *.db
 *.db-wal
