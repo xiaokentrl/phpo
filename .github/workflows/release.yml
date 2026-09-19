@@ -4,6 +4,9 @@
 # 说明（scope「脚手架优先」）：本工作流已在本地按 wails3 v3.0.0-beta.23 命令模型编写并经 actionlint 校验；
 #   真实出包/签名/公证需以下仓库 secrets（缺失时签名步骤自动跳过，不阻断出包）：
 #     PHPO_SIGNING_KEY   Ed25519 私钥（base64；scripts/sign-release.sh genkey 生成）——供 .sig 自升级验签
+#                        配好私钥后必须把 sign-release.sh pubkey 导出的匹配公钥提交到
+#                        internal/updater/signing/public.key（go:embed 编进二进制）；
+#                        下方 Sign 步骤会在签名前反推公钥比对，不匹配（占位未替换）即拒绝发布（硬红线 6）。
 #     APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID / build/signing/*.p12  macOS 开发者签名+公证（可选）
 #     WIN_CERT / WIN_CERT_PASSWORD                                                   Windows 代码签名（可选）
 name: Release
@@ -122,8 +125,16 @@ jobs:
         run: |
           printf '%s' "$PHPO_SIGNING_KEY" | base64 -d > /tmp/phpo-sign.pem
           chmod 600 /tmp/phpo-sign.pem
+          # 硬红线6：二进制内嵌公钥在 build 期即固化，必须与签名私钥匹配，否则客户端验签全失败。
+          # 从私钥反推公钥与已提交公钥比对；不一致（多为占位公钥未替换）直接拒绝发布。
+          bash scripts/sign-release.sh pubkey /tmp/phpo-sign.pem /tmp/phpo-embed.key
+          norm() { tr -d '[:space:]' < "$1"; }
+          if [ "$(norm /tmp/phpo-embed.key)" != "$(norm internal/updater/signing/public.key)" ]; then
+            echo "::error::内嵌的 internal/updater/signing/public.key 与 PHPO_SIGNING_KEY 私钥不匹配（疑占位公钥未替换）；请先用 sign-release.sh pubkey 导出真实公钥并提交后再发布"
+            exit 1
+          fi
           PHPO_SIGNING_KEY=/tmp/phpo-sign.pem bash scripts/sign-release.sh sign out/*
-          rm -f /tmp/phpo-sign.pem
+          rm -f /tmp/phpo-sign.pem /tmp/phpo-embed.key
 
       - name: Generate checksums.txt
         run: BIN_DIR=out bash scripts/gen-checksums.sh

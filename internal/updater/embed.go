@@ -1,5 +1,7 @@
 // 发布公钥嵌入（硬红线 6）：go:embed 随包分发，用于校验升级包 Ed25519 签名
-// 当前为占位公钥；T702 签名发布流程将以 build/signing/public.key 的真实公钥替换本文件
+// 当前为占位公钥。配钥流程（一次性，离线）：scripts/sign-release.sh genkey 生成私钥 →
+// 私钥存 CI secret PHPO_SIGNING_KEY → sign-release.sh pubkey 导出真实公钥写入本文件并提交；
+// release.yml 在签名前反推公钥并与本文件比对，不匹配（占位未替换）即拒绝发布，杜绝客户端验签全失败。
 package updater
 
 import (
