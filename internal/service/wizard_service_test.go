@@ -16,13 +16,15 @@ import (
 
 // fakeWizard 同满足 WizardConfig（SetRoots/Roots）与 WizardStore（SetDirReady/BuildSnapshot）：内存两根 + 就绪标记
 type fakeWizard struct {
-	home, www string
-	dir       map[string]bool
+	home, www  string
+	dir        map[string]bool
+	rootsCalls int // SetRoots 调用次数：验证「已设置」路径不重复落库/建树
 }
 
 func newFakeWizard() *fakeWizard { return &fakeWizard{dir: map[string]bool{}} }
 func (f *fakeWizard) SetRoots(home, www string) error {
 	f.home, f.www = home, www
+	f.rootsCalls++
 	return nil
 }
 func (f *fakeWizard) Roots() (string, string)                 { return f.home, f.www }
@@ -105,6 +107,40 @@ func TestHomeEnsure_PersistsAndEmits(t *testing.T) {
 	}
 	if !em.has("state:changed") {
 		t.Fatalf("HomeEnsure 应广播 state:changed，得 %v", em.events)
+	}
+}
+
+// TestHomeEnsure_SkipsWhenAlreadyReady 两根目录已持久化且实际存在时，HomeEnsure 应跳过建树/落库，
+// 仅校正 dirReady 并广播以即时更新 UI（禁止重复创建工作目录）。
+func TestHomeEnsure_SkipsWhenAlreadyReady(t *testing.T) {
+	svc, st, em := newWizardSvc(t)
+	base := t.TempDir()
+	home := filepath.Join(base, "phpo")
+	www := filepath.Join(base, "www")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(www, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	st.home, st.www = home, www // 预置 config.yaml 两根 = 目标目录
+	st.rootsCalls = 0
+	sub := filepath.Join(home, filepath.FromSlash(config.HomeSubdirs[0].Path)) // home/php，跳过路径不应创建
+
+	if err := svc.HomeEnsure(context.Background(), home, www); err != nil {
+		t.Fatalf("HomeEnsure err: %v", err)
+	}
+	if st.rootsCalls != 0 {
+		t.Fatalf("已设置时不应重复落库/建树，SetRoots 调用 %d 次", st.rootsCalls)
+	}
+	if _, e := os.Stat(sub); !os.IsNotExist(e) {
+		t.Fatalf("已设置时不应创建工作目录子树：%s", sub)
+	}
+	if st.dir["PHPO_HOME"] != true || st.dir["WWW_ROOT"] != true {
+		t.Fatalf("应校正 dirReady=true 以更新 UI，得 %v", st.dir)
+	}
+	if !em.has("state:changed") {
+		t.Fatalf("已设置时仍应广播 state:changed 更新 UI，得 %v", em.events)
 	}
 }
 

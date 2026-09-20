@@ -2,7 +2,7 @@
 // HomeVerify 纯探测（校验路径安全 + 逐级创建 PHPO_HOME 子树与 WWW_ROOT + 可写测试），不落库、不发事件；
 // HomeEnsure 走三段式任务：创建工作目录子树 → Apply 把两根目录写入 config.yaml（ConfigStore）并置 dirReady=true → 广播 state:changed。
 // 遵循硬红线 3（.. 路径穿越拒绝）、硬红线 4（前端只读快照，不本地乐观更新）、硬红线 5（写操作三段式）。
-// 幂等：重复 ensure 只是重复 MkdirAll（目录已存在即空操作）与覆盖写 config.yaml/dirReady。
+// 幂等：HomeEnsure 先检测两根是否「已持久化 + 目录已存在」，已设置则跳过建树、仅校正 dirReady 并广播，禁止重复创建工作目录。
 package service
 
 import (
@@ -54,10 +54,18 @@ func (s *WizardService) HomeVerify(ctx context.Context, home, www string) (model
 }
 
 // HomeEnsure 装机确认：三段式任务创建工作目录子树并落地 env / dirReady，随后广播 state:changed（硬红线 5）
+// 先决检测：两根目录已在 config.yaml 持久化且实际存在 → 视为「已设置」，只校正就绪标记并广播以即时更新 UI，
+// 跳过目录子树创建，禁止重复创建（幂等）。
 func (s *WizardService) HomeEnsure(ctx context.Context, home, www string) error {
 	h, w, verr := validateHomeWww(home, www)
 	if verr != "" {
 		return fmt.Errorf("%s", verr)
+	}
+	if s.alreadyReady(h, w) {
+		if err := s.markReady(); err != nil {
+			return err
+		}
+		return s.emit()
 	}
 	t := &task.Task{
 		ID:    s.newID("home-ensure"),
@@ -124,16 +132,33 @@ func ensureTree(home, www string) (lines, errsList []string) {
 	return lines, errsList
 }
 
+// alreadyReady 判定请求的两根目录是否「已设置」：config.yaml 已持久化非空根、展开后与请求一致、且两目录实际存在。
+// 命中即说明工作目录早已建好，HomeEnsure 据此跳过重复创建。
+func (s *WizardService) alreadyReady(home, www string) bool {
+	ph, pw := s.cfg.Roots()
+	if ph == "" || pw == "" {
+		return false
+	}
+	sameHome := config.ExpandHome(config.NormPath(ph)) == config.ExpandHome(home)
+	sameWww := config.ExpandHome(config.NormPath(pw)) == config.ExpandHome(www)
+	return sameHome && sameWww && dirExists(config.ExpandHome(home)) && dirExists(config.ExpandHome(www))
+}
+
+// markReady 置双 dirReady=true（供 Snapshot 回流 + preflight NEEDS_HOME 放行）；仅在两根目录已实际存在时调用。
+func (s *WizardService) markReady() error {
+	if err := s.store.SetDirReady("PHPO_HOME", true); err != nil {
+		return err
+	}
+	return s.store.SetDirReady("WWW_ROOT", true)
+}
+
 // persistEnv 把规范化 home/www 写入 config.yaml（ConfigStore，仅存两根，派生路径现算），并置双 dirReady=true（供 Snapshot 回流）
 func (s *WizardService) persistEnv(home, www string) error {
 	if err := s.cfg.SetRoots(home, www); err != nil {
 		return err
 	}
 	// 主目录与网站目录一并建树成功 → 双就绪标记（供 Snapshot 回流 + preflight NEEDS_HOME 放行）
-	if err := s.store.SetDirReady("PHPO_HOME", true); err != nil {
-		return err
-	}
-	return s.store.SetDirReady("WWW_ROOT", true)
+	return s.markReady()
 }
 
 // RefreshDirReady 启动时按「config.yaml 已持久化 + 目录实际存在」重算双就绪标记：任一缺失即置 false（永久阻断写操作）。
