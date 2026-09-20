@@ -171,7 +171,7 @@ func TestDoctor_PortOccupied(t *testing.T) {
 	rep := d.Run(context.Background())
 	c := find(t, rep, "site_port")
 	if c.Status != model.DoctorWarn {
-		t.Fatalf("80 占用应 warn（自动顺延），实得 %s", c.Status)
+		t.Fatalf("80 占用应 warn（新建站点降级），实得 %s", c.Status)
 	}
 }
 

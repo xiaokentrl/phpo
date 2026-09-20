@@ -27,7 +27,9 @@ type fakeSiteStore struct {
 }
 
 func newFakeSiteStore() *fakeSiteStore {
-	return &fakeSiteStore{snap: model.NewSnapshot()}
+	snap := model.NewSnapshot()
+	snap.Installed["php"] = []string{"8.4"} // vhost 可写的判定依据：所选 PHP 已安装
+	return &fakeSiteStore{snap: snap}
 }
 func (f *fakeSiteStore) ListSites() ([]model.Site, error) {
 	return append([]model.Site{}, f.sites...), nil
@@ -280,6 +282,84 @@ func TestSiteService_SetVhostContent(t *testing.T) {
 	}
 	if !st.sites[0].VhostCustomized {
 		t.Fatal("手改后应标记 customized")
+	}
+}
+
+// TestSiteService_Add_DegradesWithoutPhp #1：建站只以 nginx 为硬门禁——无可用 PHP 时站点照建
+// （目录 + hosts + 落库），仅不写 vhost（否则 nginx -t 因上游不存在必失败，硬红线 2）；
+// PHP 就绪后经 SwitchPHP 自动补写 vhost，降级可自愈。
+func TestSiteService_Add_DegradesWithoutPhp(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	hostsFile := filepath.Join(filepath.Dir(env.PHPOHome), "hosts")
+
+	// 未指定 PHP 与选定未安装版本，两者都应降级
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: ""}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8082, PHP: "9.9"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"a.test", "b.test"} {
+		if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, d+".conf")); !os.IsNotExist(e) {
+			t.Fatalf("PHP 未就绪时不得写 %s 的 vhost", d)
+		}
+		if _, e := os.Stat(filepath.Join(env.WWWRoot, d)); e != nil {
+			t.Fatalf("站点目录仍应创建: %v", e)
+		}
+	}
+	if len(st.sites) != 2 {
+		t.Fatalf("两个站点都应落库，实得 %+v", st.sites)
+	}
+	hb, _ := os.ReadFile(hostsFile)
+	if !strings.Contains(string(hb), "a.test") || !strings.Contains(string(hb), "b.test") {
+		t.Fatalf("hosts 仍应写入条目:\n%s", hb)
+	}
+
+	// 自愈：PHP 8.4 就绪后切换 → vhost 补写且上游精确
+	if err := svc.SwitchPHP(ctx, "a.test", "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "a.test.conf"))
+	if e != nil {
+		t.Fatalf("切换 PHP 后应补写 vhost: %v", e)
+	}
+	if !strings.Contains(string(b), "set $php_upstream php-8.4-fpm:9000;") {
+		t.Fatalf("补写的上游应逐字符精确:\n%s", b)
+	}
+}
+
+// TestSiteService_Add_DegradesOnPortConflict #2：端口被占用时不擅改用户所填端口、站点照建（目录 + hosts + 落库），
+// 仅降级为「vhost 不落盘、端口不发布」；改用空闲端口后经 SetPort 自愈补写（总纲 §5.8 / v2.9.2）。
+func TestSiteService_Add_DegradesOnPortConflict(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	// 既有站点占用 80（快照占用表由库派生）
+	st.sites = []model.Site{{Domain: "old.test", Port: 80, PHP: "8.4", Root: filepath.Join(env.WWWRoot, "old.test")}}
+
+	if err := svc.Add(ctx, AddInput{Domain: "new.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "new.test.conf")); !os.IsNotExist(e) {
+		t.Fatal("端口占用时不得写 vhost")
+	}
+	if _, e := os.Stat(filepath.Join(env.WWWRoot, "new.test")); e != nil {
+		t.Fatalf("站点目录仍应创建: %v", e)
+	}
+	if len(st.sites) != 2 || st.sites[1].Domain != "new.test" || st.sites[1].Port != 80 {
+		t.Fatalf("应保留用户所填端口并落库，实得 %+v", st.sites)
+	}
+
+	// 自愈：改到空闲端口 → vhost 补写、监听端口为新值
+	if err := svc.SetPort(ctx, "new.test", 8080); err != nil {
+		t.Fatal(err)
+	}
+	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "new.test.conf"))
+	if e != nil {
+		t.Fatalf("改端口后应补写 vhost: %v", e)
+	}
+	if !strings.Contains(string(b), "listen 8080;") {
+		t.Fatalf("补写的 vhost 端口错误:\n%s", b)
 	}
 }
 

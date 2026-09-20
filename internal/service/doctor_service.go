@@ -183,7 +183,7 @@ func (s *DoctorService) checkSitePort() model.DoctorCheck {
 	if s.portFree(siteDefaultPort) {
 		c.Status, c.Detail = model.DoctorOK, "80 端口空闲"
 	} else {
-		c.Status, c.Detail = model.DoctorWarn, "80 端口被占用，站点端口将自动顺延首个可用端口。"
+		c.Status, c.Detail = model.DoctorWarn, "80 端口已被占用。新建站点会以降级态创建（暂不发布端口、暂不写 vhost），或改用其他端口。"
 	}
 	return c
 }

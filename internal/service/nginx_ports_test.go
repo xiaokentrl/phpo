@@ -121,6 +121,61 @@ func TestSiteService_PublishesUnionOnPortChange(t *testing.T) {
 	}
 }
 
+// TestSiteService_AddPortConflictSkipsPublish 端口冲突降级：既不写 vhost 也不把该端口发布给 nginx
+// （发布会让容器重建去绑一个已被占用的端口）；改用空闲端口后经 SetPort 一次性补发。
+func TestSiteService_AddPortConflictSkipsPublish(t *testing.T) {
+	ctx := context.Background()
+	s, _, _, _ := newSiteSvc(t, nil)
+	pub := &recordingPublisher{}
+	s.SetNginxPublisher(pub)
+	if err := s.Add(ctx, AddInput{Domain: "old.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	pub.calls = nil // 只看降级建站这一次
+
+	if err := s.Add(ctx, AddInput{Domain: "new.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.calls) != 0 {
+		t.Fatalf("降级站点不得发布端口，实得 %v", pub.calls)
+	}
+
+	if err := s.SetPort(ctx, "new.test", 8090); err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.calls) != 1 || !containsInt(pub.calls[0], 8090) {
+		t.Fatalf("改到空闲端口后应发布 8090，实得 %v", pub.calls)
+	}
+}
+
+// TestSiteService_DegradedSitePortNeverPublished 降级站点的端口不得混进后续发布集：
+// 站点因端口被服务占用而降级后，库里仍记着该端口；若另一站点触发重发布时把它带上，
+// nginx 容器会去绑一个已被占用的宿主端口而起不来。
+func TestSiteService_DegradedSitePortNeverPublished(t *testing.T) {
+	ctx := context.Background()
+	s, st, _, _ := newSiteSvc(t, nil)
+	pub := &recordingPublisher{}
+	s.SetNginxPublisher(pub)
+	st.snap.Installed["mysql"] = []string{"3306"}
+	st.snap.Env[config.EnvKeyPort("mysql", "3306")] = "3306"
+
+	if err := s.Add(ctx, AddInput{Domain: "a.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	// b.test 选 3306：被 mysql 占用 → 降级（不写 vhost、不发布端口）
+	if err := s.Add(ctx, AddInput{Domain: "b.test", Port: 3306, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	pub.calls = nil // 只看此后 a.test 改端口这一次
+
+	if err := s.SetPort(ctx, "a.test", 8080); err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.calls) != 1 || !containsInt(pub.calls[0], 8080) || containsInt(pub.calls[0], 3306) {
+		t.Fatalf("发布集应只含 {8080}，降级站点的 3306 不得出现，实得 %v", pub.calls)
+	}
+}
+
 func containsInt(xs []int, x int) bool {
 	for _, v := range xs {
 		if v == x {

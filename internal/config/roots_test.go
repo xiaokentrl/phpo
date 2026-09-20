@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -106,5 +107,39 @@ func TestRootsStatus_ExpandsHomePrefix(t *testing.T) {
 	}
 	if h, w := cs.RootsReady(); !h || w {
 		t.Errorf("~/ 前缀主目录应判就绪 (true,false)，得 %v %v", h, w)
+	}
+}
+
+// 快照 env（前端 app.env.* 唯一来源）必须是展开 `~` 后的绝对路径：
+// 前端把 WWW_ROOT 直接用于原生目录选择器与站点根拼接，含 `~` 会被解析成「当前工作目录/~/www」而报错。
+// config.yaml 内仍原样存 `~`（保持跨机可迁移），展开只发生在出口。
+func TestFlatEnv_RootsAlwaysExpanded(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("无可用主目录，跳过 ~ 展开测试")
+	}
+	cs := newStoreAt(filepath.Join(t.TempDir(), "config.yaml"))
+	cs.fc.PHPOHome, cs.fc.WWWRoot = "~/flatenv-home", "~/flatenv-www"
+
+	flat := cs.FlatEnv()
+	if got := flat["PHPO_HOME"]; got != filepath.Join(home, "flatenv-home") {
+		t.Errorf("PHPO_HOME 应为展开后的绝对路径，得 %q", got)
+	}
+	if got := flat["WWW_ROOT"]; got != filepath.Join(home, "flatenv-www") {
+		t.Errorf("WWW_ROOT 应为展开后的绝对路径，得 %q", got)
+	}
+	if got := flat["NGINX_SITES_ROOT"]; got != filepath.Join(home, "flatenv-home", "nginx", "sites") {
+		t.Errorf("派生子目录应随展开根重新派生，得 %q", got)
+	}
+	for k, v := range flat {
+		if strings.HasPrefix(v, "~") {
+			t.Errorf("快照 env 键 %s 不应含未展开的 ~：%q", k, v)
+		}
+	}
+
+	// 首启（两根未落库）回落默认根时同样不得带 `~`
+	fresh := newStoreAt(filepath.Join(t.TempDir(), "config.yaml")).FlatEnv()
+	if got := fresh["WWW_ROOT"]; got != filepath.Join(home, "www") {
+		t.Errorf("默认 WWW_ROOT 也应展开，得 %q", got)
 	}
 }

@@ -190,19 +190,38 @@ func TestUpdateConfigPortExcludeCurrent(t *testing.T) {
 	}
 }
 
-// —— site-add（含端口顺延）——
+// —— site-add（端口占用只告警降级，不顺延）——
 
-func TestSiteAddAdvancePort(t *testing.T) {
-	// 请求 80（被 demo.test 占用）→ 顺延到 81
+// TestSiteAddOccupiedPortDegrades 新建站点端口被占用：保留用户所填端口、不阻断，只给降级告警（总纲 §5.8 / v2.9.2）
+func TestSiteAddOccupiedPortDegrades(t *testing.T) {
 	res := Run(ActSiteAdd, Ctx{Domain: "new.test", Port: "80", PHP: "8.4", Root: "/www/new.test"}, readyWorld())
 	if !res.Ok {
-		t.Fatalf("站点新增应通过，得 %+v", res.Errors)
+		t.Fatalf("端口占用应放行建站，实得错误 %+v", res.Errors)
 	}
-	if res.Adjusted["port"] != 81 {
-		t.Fatalf("应顺延至 81，得 %v", res.Adjusted)
+	if _, adjusted := res.Adjusted["port"]; adjusted {
+		t.Fatalf("新建站点不得擅改用户所填端口，实得 %v", res.Adjusted)
 	}
-	if len(res.Warnings) == 0 {
-		t.Fatal("顺延应产生告警")
+	if !contains(res.Warnings, portDegradeWarn(errs.PortInUse+": 80 (site demo.test)")) {
+		t.Fatalf("应含端口占用降级告警，实得 %+v", res.Warnings)
+	}
+}
+
+// TestSiteAddFreePortNoWarn 空闲端口：无告警、不改端口
+func TestSiteAddFreePortNoWarn(t *testing.T) {
+	res := Run(ActSiteAdd, Ctx{Domain: "new.test", Port: "8090", PHP: "8.4", Root: "/www/new.test"}, readyWorld())
+	if !res.Ok {
+		t.Fatalf("空闲端口应通过，实得 %+v", res.Errors)
+	}
+	if len(res.Warnings) != 0 || len(res.Adjusted) != 0 {
+		t.Fatalf("空闲端口不应有告警或调整，实得 warn=%+v adj=%+v", res.Warnings, res.Adjusted)
+	}
+}
+
+// TestSiteAddBadPortStillBlocked 端口格式非法仍阻断：占用降级不等于放开非法值
+func TestSiteAddBadPortStillBlocked(t *testing.T) {
+	res := Run(ActSiteAdd, Ctx{Domain: "new.test", Port: "99999", PHP: "8.4", Root: "/www/new.test"}, readyWorld())
+	if firstErr(res) != errs.PortInvalid {
+		t.Fatalf("非法端口应报 portInvalid，实得 %q", firstErr(res))
 	}
 }
 
@@ -230,6 +249,44 @@ func TestSiteNeedNginx(t *testing.T) {
 	if firstErr(res) != errs.NginxNeeded {
 		t.Fatalf("缺 Nginx 应报 nginxNeeded，得 %q", firstErr(res))
 	}
+}
+
+// TestSiteAddNeedsOnlyNginx 建站唯一硬门禁是 nginx 已安装：未装 PHP 等其余服务只告警，不阻断（最小限制原则）
+func TestSiteAddNeedsOnlyNginx(t *testing.T) {
+	w := readyWorld()
+	w.Snap.Installed["php"] = nil
+	w.Snap.Installed["mysql"] = nil
+	w.Snap.Running["php"] = nil
+	res := Run(ActSiteAdd, Ctx{Domain: "z.test", Port: "8082"}, w)
+	if !res.Ok {
+		t.Fatalf("未装 PHP 应放行建站，实得错误 %+v", res.Errors)
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("未装 PHP 建站应降级告警（暂不写 vhost）")
+	}
+}
+
+// TestSiteAddPhpNotInstalledWarn 选定未安装的 PHP 版本 → 告警降级，不当作错误阻断
+func TestSiteAddPhpNotInstalledWarn(t *testing.T) {
+	res := Run(ActSiteAdd, Ctx{Domain: "z.test", Port: "8082", PHP: "9.9"}, readyWorld())
+	if !res.Ok {
+		t.Fatalf("选未装 PHP 应放行建站，实得错误 %+v", res.Errors)
+	}
+	if !contains(res.Warnings, phpPendingWarn("9.9")) {
+		t.Fatalf("应含 PHP 降级告警，实得 %+v", res.Warnings)
+	}
+}
+
+func phpPendingWarn(php string) string {
+	if php == "" {
+		php = "未指定"
+	}
+	return errs.NotInstalled + ": PHP " + php + "（站点仍会创建，安装或切换到可用 PHP 版本后生效）"
+}
+
+// portDegradeWarn 端口占用降级告警文案（与 rules_site.go#siteAdd 逐字对齐，前后端同口径）
+func portDegradeWarn(msg string) string {
+	return msg + "（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）"
 }
 
 // —— site-port（排除自身域名与当前端口）——

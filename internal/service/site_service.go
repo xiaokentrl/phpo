@@ -1,11 +1,13 @@
 // SiteService：站点新增/删除（T403）——严格三段式（preflight 由上层裁决 → task 执行 → Apply 落地并广播 state:changed）
 // 建站：建目录 → 校验并写 vhost（硬红线 2）→ 加 hosts（不可写仅警告）→ 落库。删站：根目录入回收站（7 天）→ 删 vhost → 落库删除。
+// 降级：PHP 未就绪或端口被占用时站点照建（目录/hosts/落库、端口原样保留），仅跳过 vhost 落盘与端口发布，后续写操作自愈（§5.8）。
 // 域名零限制、根路径允许 WWW_ROOT 外（preflight 已降级为警告），建站幂等（重复建站不产生脏状态）。
 package service
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"path"
 	"sync/atomic"
 
@@ -76,13 +78,19 @@ func (s *SiteService) Add(ctx context.Context, in AddInput) error {
 	content := s.vhostContent(site)
 
 	domain := site.Domain
-	stepsList := []task.Step{
-		steps.NewPrepareSiteDir("创建站点目录", s.env, site.Root),
-		steps.NewWriteVHost("生成 vhost", s.vhosts, s.validate, domain, content),
-		steps.NewAddHosts("写入 hosts", s.hosts, domain),
+	stepsList := []task.Step{steps.NewPrepareSiteDir("创建站点目录", s.env, site.Root)}
+	// 降级态：所选 PHP 未装（上游 php-{ver}-fpm:9000 无法解析，nginx -t 必失败，硬红线 2）
+	// 或所选端口已被占用（发布即让 nginx 绑不上）。两者都只跳过「写 vhost + 发布端口」，
+	// 站点目录/hosts/落库照常、端口原样保留；经 SwitchPHP / SetPort / SetRewrite 的 writeVHost 链路自愈。
+	ready := s.serveReady(site)
+	if ready {
+		stepsList = append(stepsList, steps.NewWriteVHost("生成 vhost", s.vhosts, s.validate, domain, content))
 	}
-	if rp := s.republishStep(sitePorts(mustSites(s.store), domain, site.Port)); rp != nil {
-		stepsList = append(stepsList, rp)
+	stepsList = append(stepsList, steps.NewAddHosts("写入 hosts", s.hosts, domain))
+	if ready {
+		if rp := s.republishStep(s.publishPorts(mustSites(s.store), domain, site.Port)); rp != nil {
+			stepsList = append(stepsList, rp)
+		}
 	}
 	t := &task.Task{
 		ID:    s.newID("site-add"),
@@ -109,7 +117,7 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 		trashStep,
 		steps.NewDeleteVHostFile("移除 vhost", s.vhosts, domain, prevContent),
 	}
-	if rp := s.republishStep(sitePorts(mustSites(s.store), domain, 0)); rp != nil {
+	if rp := s.republishStep(s.publishPorts(mustSites(s.store), domain, 0)); rp != nil {
 		stepsList = append(stepsList, rp)
 	}
 	t := &task.Task{
@@ -160,6 +168,21 @@ func (s *SiteService) vhostContent(site model.Site) string {
 	merged = append(merged, site)
 	s.vhosts.Sync(merged)
 	return s.vhosts.Get(site.Domain)
+}
+
+// serveReady 判定新建站点能否立即对外服务：所选 PHP 已安装（否则 nginx -t 必失败，硬红线 2）
+// 且所选端口未被占用（占用判据与 preflight 同源——store.CollectUsedPorts，排除自身域名）。
+// 权威快照不可读按未就绪处理（宁可降级也不写出跑不通的 vhost）。
+func (s *SiteService) serveReady(site model.Site) bool {
+	snap, err := s.store.BuildSnapshot()
+	if err != nil {
+		return false
+	}
+	if !snap.HasVersion("php", site.PHP) {
+		return false
+	}
+	_, occupied := store.CollectUsedPorts(snap, []string{site.Domain})[site.Port]
+	return !occupied
 }
 
 // find 从权威库取站点
@@ -225,7 +248,7 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 			return s.reload.Reload(ctx)
 		}},
 	}
-	if rp := s.republishStep(sitePorts(sites, domain, updated.Port)); rp != nil {
+	if rp := s.republishStep(s.publishPorts(sites, domain, updated.Port)); rp != nil {
 		stepList = append(stepList, rp)
 	}
 	t := &task.Task{
@@ -299,6 +322,33 @@ func (s *SiteService) republishStep(ports []int) task.Step {
 	return &task.FuncStep{StepName: "发布站点端口到 Nginx", Exec: func(ctx context.Context, _ task.StepLog) error {
 		return s.publisher.RepublishNginx(ctx, ports)
 	}}
+}
+
+// publishPorts 汇总应发布给 nginx 的宿主端口：只计入 vhost 已落盘的站点，并剔除数据服务占用的端口。
+// 降级站点（PHP 未就绪 / 端口被占）库里仍记着端口，但没有 conf——发布出去只会让 nginx 容器去抢绑
+// 一个没人服务、甚至已被 mysql 等占用的宿主端口，绑不上即全站瘫痪（§5.8）。
+func (s *SiteService) publishPorts(sites []model.Site, exceptDomain string, addPort int) []int {
+	out := make([]model.Site, 0, len(sites))
+	for _, st := range sites {
+		if _, err := os.Stat(s.vhosts.Path(st.Domain)); err != nil {
+			continue
+		}
+		out = append(out, st)
+	}
+	ports := sitePorts(out, exceptDomain, addPort)
+	svc := map[int]bool{}
+	if snap, err := s.store.BuildSnapshot(); err == nil {
+		for p := range store.CollectServicePorts(snap) {
+			svc[p] = true
+		}
+	}
+	keep := make([]int, 0, len(ports))
+	for _, p := range ports {
+		if !svc[p] {
+			keep = append(keep, p)
+		}
+	}
+	return keep
 }
 
 // sitePorts 汇总应发布端口并集：取现有站点端口（排除 exceptDomain），再并入 addPort（<=0 忽略）；去重。

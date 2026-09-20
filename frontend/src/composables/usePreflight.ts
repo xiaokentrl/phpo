@@ -43,6 +43,17 @@ export interface PreflightResult {
 function normPath(p: string): string {
   return String(p || '').trim().replace(/\/+/g, '/').replace(/\/+$/, '')
 }
+
+// PHP 未就绪的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐（建站不阻断，仅暂不写 vhost）
+function phpPendingWarn(php?: string): string {
+  return `${PF.notInstalled}: PHP ${php || '未指定'}（站点仍会创建，安装或切换到可用 PHP 版本后生效）`
+}
+
+// 端口占用的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐（§5.8：不改用户所填端口，仅暂不发布端口、暂不落盘 vhost）
+function portDegradeWarn(msg: string): string {
+  return `${msg}（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）`
+}
+
 function hasTraversal(p: string): boolean {
   return /(^|\/)\.\.(\/|$)/.test(String(p || ''))
 }
@@ -91,7 +102,7 @@ export function usePreflight() {
     return null
   }
 
-  function validatePort(port: unknown, opts: { exclude?: number | number[]; excludeDomains?: string[]; autoAdvance?: boolean } = {}): ValResult & { adjusted?: boolean; original?: number } {
+  function validatePort(port: unknown, opts: { exclude?: number | number[]; excludeDomains?: string[]; autoAdvance?: boolean; keepOnConflict?: boolean } = {}): ValResult & { adjusted?: boolean; occupied?: boolean; original?: number } {
     const s = String(port ?? '').trim()
     if (!/^\d{1,5}$/.test(s)) return { ok: false, msg: PF.portInvalid }
     const n = parseInt(s, 10)
@@ -101,6 +112,8 @@ export function usePreflight() {
     if (exclude.includes(n)) return { ok: true, value: n }
     const used = collectUsedPorts(opts.excludeDomains || [])
     if (!used.has(n)) return { ok: true, value: n }
+    // 新建站点端口占用（§5.8）：端口原样保留，只回传占用信息交上层弹框告警 + 降级建站
+    if (opts.keepOnConflict) return { ok: true, value: n, occupied: true, msg: `${PF.portInUse}: ${n} (${used.get(n)})` }
     if (opts.autoAdvance) {
       const next = findNextAvailablePort(n, 65535, 1, used)
       if (next != null) return { ok: true, value: next, adjusted: true, original: n }
@@ -194,20 +207,18 @@ export function usePreflight() {
       }
       case 'site-add': {
         const { domain, port, php, root } = c
-        if (!installed('php').length) { errors.push(PF.phpNeeded); break }
+        // 建站唯一的服务门禁是 nginx 已安装；PHP 等其余服务缺失只降级告警，不阻断
         if (!installed('nginx').length) { errors.push(PF.nginxNeeded); break }
         const dd = validateDomain(domain)
         if (!dd.ok) { errors.push(dd.msg!); break }
         if (app.sites.some((s) => s.domain === dd.value)) errors.push(`${PF.domainExists}: ${dd.value}`)
         if (port != null) {
-          const pp = validatePort(port, { autoAdvance: true })
+          // 新建站点端口占用：不顺延、不阻断，仅告警并以降级态建站（§5.8）
+          const pp = validatePort(port, { keepOnConflict: true })
           if (!pp.ok) errors.push(pp.msg!)
-          else if (pp.adjusted) {
-            adjusted.port = pp.value
-            warnings.push(PF.portAdvance.replace('{from}', String(pp.original)).replace('{to}', String(pp.value)))
-          }
+          else if (pp.occupied) warnings.push(portDegradeWarn(pp.msg!))
         }
-        if (php && !installed('php').includes(php)) errors.push(`${PF.notInstalled}: PHP ${php}`)
+        if (!installed('php').includes(php ?? '')) warnings.push(phpPendingWarn(php))
         if (root) {
           const rr = validateSiteRoot(root)
           if (!rr.ok) errors.push(rr.msg!)

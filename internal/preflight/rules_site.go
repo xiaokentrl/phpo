@@ -10,10 +10,7 @@ import (
 
 func (r *run) siteAdd() {
 	c := r.c
-	if len(r.w.Snap.Installed["php"]) == 0 {
-		r.errf("%s", errs.PhpNeeded)
-		return
-	}
+	// 建站的唯一服务门禁是 nginx（未装则无法发布站点）；PHP/MySQL 等其余服务缺失只降级不阻断
 	if len(r.w.Snap.Installed["nginx"]) == 0 {
 		r.errf("%s", errs.NginxNeeded)
 		return
@@ -26,18 +23,18 @@ func (r *run) siteAdd() {
 	if r.findSite(dd.Value) != nil {
 		r.errf("%s: %s", errs.DomainExists, dd.Value)
 	}
-	// 站点端口冲突：顺延首个可用空位（无窗口上限，不报错）
+	// 站点端口冲突：保留用户所填端口，只告警并降级（vhost 暂不落盘、端口暂不发布），不顺延、不阻断建站（§5.8）
 	if c.Port != nil {
-		pp := r.validatePort(asString(c.Port), nil, nil, true)
+		pp := r.validatePort(asString(c.Port), nil, nil, conflictKeepWarn)
 		if !pp.Ok {
 			r.errf("%s", pp.Msg)
-		} else if pp.Adjusted {
-			r.setAdjustedPort(pp.Value)
-			r.warnf("%s", advanceMsg(pp.Original, pp.Value))
+		} else if pp.Occupied {
+			r.warnf("%s（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）", pp.Msg)
 		}
 	}
-	if c.PHP != "" && !contains(r.w.Snap.Installed["php"], c.PHP) {
-		r.errf("%s: PHP %s", errs.NotInstalled, c.PHP)
+	// 无可用 PHP：站点仍建，但 vhost 暂不落盘（上游容器不存在则 nginx -t 必失败，硬红线 2）
+	if !r.w.Snap.HasVersion("php", c.PHP) {
+		r.warnf("%s: PHP %s（站点仍会创建，安装或切换到可用 PHP 版本后生效）", errs.NotInstalled, phpLabel(c.PHP))
 	}
 	if c.Root != "" {
 		rr := config.ValidateSiteRoot(c.Root, r.w.Snap.Env["WWW_ROOT"])
@@ -68,8 +65,8 @@ func (r *run) sitePort() {
 		r.errf("%s: %s", errs.SiteMissing, c.Domain)
 		return
 	}
-	// FIX #5：站点端口编辑同样支持自动顺延（排除自身域名与当前端口）
-	pp := r.validatePort(asString(c.NewValue), []int{site.Port}, []string{c.Domain}, true)
+	// FIX #5：改已有站点的端口仍支持自动顺延（排除自身域名与当前端口）
+	pp := r.validatePort(asString(c.NewValue), []int{site.Port}, []string{c.Domain}, conflictAdvance)
 	if !pp.Ok {
 		r.errf("%s", pp.Msg)
 	} else if pp.Adjusted {
@@ -144,4 +141,12 @@ func advanceMsg(from, to int) string {
 		"{from}", itoa(from),
 		"{to}", itoa(to),
 	).Replace(errs.PortAdvance)
+}
+
+// phpLabel 告警文案用：未选版本时给出可读占位
+func phpLabel(php string) string {
+	if php == "" {
+		return "未指定"
+	}
+	return php
 }

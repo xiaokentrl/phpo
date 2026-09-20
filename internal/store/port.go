@@ -9,13 +9,9 @@ import (
 	"phpo/pkg/port"
 )
 
-// CollectUsedPorts 从快照构造逻辑占用表；先到先得语义与原型一致（服务先、站点后，跳过已占用）
-func CollectUsedPorts(snap *model.Snapshot, excludeDomains []string) port.Used {
+// CollectServicePorts 数据服务（mysql/pgsql/redis）已占用的宿主端口（先到先得，与占用表同源）
+func CollectServicePorts(snap *model.Snapshot) port.Used {
 	used := port.Used{}
-	excluded := map[string]bool{}
-	for _, d := range excludeDomains {
-		excluded[d] = true
-	}
 	for _, kind := range []string{"mysql", "pgsql", "redis"} {
 		for _, v := range snap.Installed[kind] {
 			raw, ok := snap.Env[config.EnvKeyPort(kind, v)]
@@ -30,6 +26,16 @@ func CollectUsedPorts(snap *model.Snapshot, excludeDomains []string) port.Used {
 				used[p] = kind + " " + v
 			}
 		}
+	}
+	return used
+}
+
+// CollectUsedPorts 从快照构造逻辑占用表；先到先得语义与原型一致（服务先、站点后，跳过已占用）
+func CollectUsedPorts(snap *model.Snapshot, excludeDomains []string) port.Used {
+	used := CollectServicePorts(snap)
+	excluded := map[string]bool{}
+	for _, d := range excludeDomains {
+		excluded[d] = true
 	}
 	for _, st := range snap.Sites {
 		if excluded[st.Domain] {

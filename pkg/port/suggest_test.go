@@ -70,6 +70,30 @@ func TestValidatePortBranches(t *testing.T) {
 	}
 }
 
+// TestValidateKeepOnConflict 新建站点端口冲突口径（总纲 §5.8）：保留用户所填端口、只标记占用，不顺延、不判失败
+func TestValidateKeepOnConflict(t *testing.T) {
+	used := Used{80: "site demo.test", 3306: "mysql 8.4"}
+	got := Validate("80", used, Options{KeepOnConflict: true})
+	if !got.Ok || got.Value != 80 || got.Adjusted || !got.Occupied {
+		t.Fatalf("占用应保留原端口并标记 Occupied，实得 %+v", got)
+	}
+	if !strings.HasPrefix(got.Msg, errs.PortInUse) {
+		t.Errorf("Msg=%q 应以 %q 开头（供上层拼降级告警）", got.Msg, errs.PortInUse)
+	}
+	// 空闲端口不受影响：不标占用、不改值
+	if r := Validate("8080", used, Options{KeepOnConflict: true}); !r.Ok || r.Occupied || r.Value != 8080 {
+		t.Errorf("空闲端口应直通: %+v", r)
+	}
+	// 自身端口排除后视为空闲
+	if r := Validate("80", used, Options{Exclude: []int{80}, KeepOnConflict: true}); !r.Ok || r.Occupied {
+		t.Errorf("被排除的端口不应判占用: %+v", r)
+	}
+	// 格式/范围非法仍阻断（占用降级不放行非法端口）
+	if r := Validate("99999", used, Options{KeepOnConflict: true}); r.Ok || r.Msg != errs.PortInvalid {
+		t.Errorf("非法端口仍须阻断: %+v", r)
+	}
+}
+
 func TestValidateAdjustedCarriesOriginal(t *testing.T) {
 	used := Used{80: "site a"}
 	got := Validate("80", used, Options{AutoAdvance: true})

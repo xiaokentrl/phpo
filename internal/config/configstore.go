@@ -217,11 +217,13 @@ func (c *ConfigStore) SetServicePort(kind, version string, port int) error {
 
 // FlatEnv 合成前端 snapshot.env 契约：全部派生路径键 + 已设置的密码/端口扁平键。
 // 保持与旧 SQLite env 表完全一致的键名，前端 app.env.* 零改动。
+// 出口一律展开 `~`：前端把这些值直接用于原生目录选择器与站点根拼接，未展开会被解析成
+// 「当前工作目录/~/www」而报错（config.yaml 内仍原样存 `~`，保持跨机可迁移，展开只发生在出口）。
 func (c *ConfigStore) FlatEnv() map[string]string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := map[string]string{}
-	e := DerivePaths(c.fc.PHPOHome, c.fc.WWWRoot)
+	e := ExpandEnvHomes(DerivePaths(c.fc.PHPOHome, c.fc.WWWRoot))
 	for _, k := range []string{"PHPO_HOME", "WWW_ROOT", "PHP_ROOT", "NGINX_ROOT", "NGINX_SITES_ROOT",
 		"MYSQL_ROOT", "PGSQL_ROOT", "REDIS_ROOT", "BACKUP_ROOT", "OFFLINE_ROOT"} {
 		out[k] = e.Get(k)

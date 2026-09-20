@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 建站弹窗：忠实迁移原型 openSiteAddModal（3102–3155）
-// ★ FIX #4/#5：端口自动顺延（站点端口占用不报错）；root 外置降级为 warning → 确认弹窗
+// ★ FIX #4：root 外置降级为 warning；FIX #5：新建站点端口占用不改用户所填端口，只弹框告警 + 降级建站（§5.8）
 import { computed, ref } from 'vue'
 import { Dialogs } from '@wailsio/runtime'
 import ModalShell from '@/components/common/ModalShell.vue'
@@ -85,13 +85,13 @@ function onOk(): void {
   const ctx = { domain: d, port: portNum, php: php.value, root: rootPath, rewrite: rewrite.value }
   const check = preflight('site-add', ctx)
   if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-  const finalPort = (check.adjusted.port as number | undefined) ?? portNum
-  const finalArgs = ['site', 'add', d, '--port', String(finalPort), '--php', php.value, '--rewrite', rewrite.value, '--root', rootPath]
-  const finalMeta = { type: 'site-add', domain: d, port: finalPort, php: php.value, rewrite: rewrite.value, root: rootPath }
+  // 新建站点端口占用不改用户所填端口（§5.8）：仅走下方 DangerConfirm 告警，确认后以降级态建站
+  const finalArgs = ['site', 'add', d, '--port', String(portNum), '--php', php.value, '--rewrite', rewrite.value, '--root', rootPath]
+  const finalMeta = { type: 'site-add', domain: d, port: portNum, php: php.value, rewrite: rewrite.value, root: rootPath }
   const label = `${t('siteAdd.title')} ${d}`
   const submit = (): void => {
     if (!hasBackend()) { runTask(finalArgs, label, finalMeta); return }
-    addSite({ domain: d, port: finalPort, php: php.value, root: rootPath, rewrite: rewrite.value })
+    addSite({ domain: d, port: portNum, php: php.value, root: rootPath, rewrite: rewrite.value })
       .catch((e: unknown) => toast(String(e), 'err', 4600))
   }
   if (check.warnings.length) {
@@ -139,7 +139,9 @@ function onOk(): void {
         <label>{{ t('siteAdd.phpVersion') }}</label>
         <select v-model="php">
           <option v-for="v in phpVers" :key="v" :value="v">{{ v }}</option>
+          <option v-if="!phpVers.length" value="">{{ t('siteAdd.phpVersion.none') }}</option>
         </select>
+        <div v-if="!phpVers.length" class="hint">{{ t('siteAdd.phpVersion.hint') }}</div>
       </div>
       <div class="field">
         <label>{{ t('siteAdd.framework') }}</label>

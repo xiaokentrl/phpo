@@ -30,7 +30,7 @@ func (r *run) install() {
 	// FIX #2：无密码长度校验
 	if c.Port != nil {
 		if s := strings.TrimSpace(asString(c.Port)); s != "" {
-			if pp := r.validatePort(s, nil, nil, false); !pp.Ok {
+			if pp := r.validatePort(s, nil, nil, conflictBlock); !pp.Ok {
 				r.errf("%s", pp.Msg)
 			}
 		}
@@ -130,7 +130,7 @@ func (r *run) updateConfig() {
 		} else {
 			cur = r.w.Snap.Env[config.EnvKeyPort(c.Kind, c.Version)]
 		}
-		if pp := r.validatePort(asString(c.NewValue), parseIntSlice(cur), nil, false); !pp.Ok {
+		if pp := r.validatePort(asString(c.NewValue), parseIntSlice(cur), nil, conflictBlock); !pp.Ok {
 			r.errf("%s", pp.Msg)
 		}
 	}
