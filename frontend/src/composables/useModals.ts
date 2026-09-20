@@ -68,8 +68,8 @@ export function useModals() {
   function openTrashModal(): void {
     modal.open(TrashViewer, {})
   }
-  function openHomeSetupWizard(onReady?: () => void): void {
-    modal.open(HomeSetupWizard, { onReady })
+  function openHomeSetupWizard(onReady?: () => void, locked = false): void {
+    modal.open(HomeSetupWizard, { onReady, locked })
   }
 
   function openUninstallModal(kind: string, version: string): void {

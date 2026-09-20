@@ -16,6 +16,17 @@ type HomeVerifyResult struct {
 	Errors []string `json:"errors"`
 }
 
+// DockerStatus 首启/轮询的 Docker 可用性探测结果（只读绑定，非可持久 Snapshot 字段）
+// status: ok / not_installed / not_running / old_version；CanStart=false 时不得启动任何容器（硬红线 7）
+type DockerStatus struct {
+	Status   string `json:"status"`
+	Version  string `json:"version,omitempty"`
+	CanStart bool   `json:"canStart"`
+	Warning  bool   `json:"warning"`
+	Message  string `json:"message,omitempty"`
+	Hint     string `json:"hint,omitempty"`
+}
+
 // TaskMeta runTask 的业务上下文（applyStateChange 按 Type 落地）
 type TaskMeta struct {
 	Type    string   `json:"type"`

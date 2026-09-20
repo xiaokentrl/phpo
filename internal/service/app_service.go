@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"phpo/internal/config"
 	"phpo/internal/engine"
@@ -15,6 +16,9 @@ import (
 	"phpo/internal/task/steps"
 	"phpo/pkg/dockerutil"
 )
+
+// dockerProbeTimeout 单次 Docker 探测超时：防 Ping 挂起阻塞首启/轮询
+const dockerProbeTimeout = 3 * time.Second
 
 // AppService 组合注入的编排入口；各写方法产出一个 task.Task 经 task.Manager 单飞执行
 type AppService struct {
@@ -45,6 +49,21 @@ func (s *AppService) Cancel() { s.tasks.Cancel() }
 func (s *AppService) Calibrate(ctx context.Context) error {
 	_, err := s.lifecycle.Calibrate(ctx)
 	return err
+}
+
+// DockerStatus 探测 Docker 可用性（只读，供首启/轮询门禁；硬红线 7 的判定源，不改 Snapshot 不发事件）
+func (s *AppService) DockerStatus(ctx context.Context) model.DockerStatus {
+	cctx, cancel := context.WithTimeout(ctx, dockerProbeTimeout)
+	defer cancel()
+	h := engine.Check(cctx, s.probe)
+	return model.DockerStatus{
+		Status:   string(h.Status),
+		Version:  h.Version,
+		CanStart: h.CanStart,
+		Warning:  h.Warning,
+		Message:  h.Message,
+		Hint:     h.Hint,
+	}
 }
 
 // ---- 写接口（一律经 task.Manager 三段式）----

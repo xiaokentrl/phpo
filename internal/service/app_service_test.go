@@ -147,3 +147,46 @@ func TestAppService_GetStateAndCancel(t *testing.T) {
 	}
 	a.Cancel() // 无运行任务时不应 panic
 }
+
+// versionProbe 报告指定版本或探测错误，覆盖 DockerStatus 四态
+type versionProbe struct {
+	ver string
+	err error
+}
+
+func (p versionProbe) Detect(context.Context) (string, error) { return p.ver, p.err }
+
+// TestAppService_DockerStatus 覆盖首启/轮询门禁的四种探测结论（硬红线 7 判定源）
+func TestAppService_DockerStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		probe      versionProbe
+		wantStatus string
+		wantStart  bool
+		wantWarn   bool
+	}{
+		{"可用", versionProbe{ver: "28.3.2"}, "ok", true, false},
+		{"未安装", versionProbe{err: engine.ErrDockerNotInstalled}, "not_installed", false, false},
+		{"未运行", versionProbe{err: engine.ErrDockerNotRunning}, "not_running", false, false},
+		{"连接失败", versionProbe{err: context.DeadlineExceeded}, "not_running", false, false},
+		{"版本过旧", versionProbe{ver: "20.9.0"}, "old_version", true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := &AppService{probe: c.probe}
+			got := s.DockerStatus(context.Background())
+			if got.Status != c.wantStatus {
+				t.Fatalf("status=%q，期望 %q", got.Status, c.wantStatus)
+			}
+			if got.CanStart != c.wantStart {
+				t.Fatalf("canStart=%v，期望 %v", got.CanStart, c.wantStart)
+			}
+			if got.Warning != c.wantWarn {
+				t.Fatalf("warning=%v，期望 %v", got.Warning, c.wantWarn)
+			}
+			if !c.wantStart && got.Hint == "" {
+				t.Fatalf("不可启动时应给出人话提示 Hint，实得空")
+			}
+		})
+	}
+}

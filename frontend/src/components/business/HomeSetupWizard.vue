@@ -12,7 +12,7 @@ import { DEFAULT_HOME, DEFAULT_WWW, derivePaths } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 import { homeEnsure, homeVerify } from '@/api/wizard'
 
-const props = defineProps<{ onReady?: () => void }>()
+const props = defineProps<{ onReady?: () => void; locked?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 const app = useAppState()
@@ -152,7 +152,7 @@ async function doConfirm(): Promise<void> {
 </script>
 
 <template>
-  <ModalShell size="lg" @close="emit('close')">
+  <ModalShell size="lg" :locked="props.locked" @close="emit('close')">
     <template #head>
       <h3>{{ t('wiz.title') }}</h3>
       <p>{{ t('wiz.subtitle') }}</p>
@@ -204,7 +204,7 @@ async function doConfirm(): Promise<void> {
     </template>
     <template #foot>
       <button v-if="step > 1" class="btn" type="button" @click="prev">← {{ t('wiz.prev') }}</button>
-      <button v-else class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
+      <button v-else-if="!props.locked" class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
       <button v-if="step < 3" class="btn btn-primary" type="button" @click="next">{{ t('wiz.next') }} →</button>
       <button v-else-if="verified" class="btn btn-primary" type="button" :disabled="confirming" @click="doConfirm">{{ t('dir.confirm') }}</button>
       <button v-else class="btn btn-primary" type="button" :disabled="verifying" @click="doVerify">{{ t('dir.verify') }}</button>

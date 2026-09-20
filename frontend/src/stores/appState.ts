@@ -2,7 +2,7 @@
 // 硬红线 4：本仓只由后端 state:changed / service:changed 事件落地（见 composables/useStateSync.ts），无本地乐观更新。
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
-import type { Backup, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TrayPrefs } from '@/types'
+import type { Backup, DockerStatus, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TrayPrefs } from '@/types'
 import { derivePaths } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 
@@ -70,6 +70,14 @@ export const useAppState = defineStore('appState', () => {
   // 无宿主（纯 Vite demo）默认已就绪，保持 M1 占位数据可直接打开各模态验证。
   const dirReady = reactive<{ PHPO_HOME: boolean }>({ PHPO_HOME: !hasBackend() })
 
+  // docker：Docker 可用性运行时状态（首启/轮询探测，硬红线 7）。非持久、不来自 Snapshot/事件，
+  // 由 useDockerPreflight 经 setDocker 落地；checked=false 表示尚未探测（不拦截）。
+  const docker = reactive<DockerStatus & { checked: boolean }>({ status: 'unknown', canStart: false, warning: false, checked: false })
+
+  function setDocker(s: DockerStatus): void {
+    Object.assign(docker, s, { checked: true })
+  }
+
   function isServiceRunning(kind: ServiceKind, version: string): boolean {
     return !stopped[kind].includes(version)
   }
@@ -106,5 +114,5 @@ export const useAppState = defineStore('appState', () => {
 
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, isServiceRunning, applySnapshot, setServiceRunning, setBackups, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, docker, isServiceRunning, applySnapshot, setServiceRunning, setBackups, setDocker, phpVersions }
 })

@@ -134,6 +134,14 @@ func (a *App) Calibrate(ctx context.Context) error {
 	return a.container.AppService.Calibrate(ctx)
 }
 
+// DockerStatus 只读探测 Docker 可用性（首启/轮询门禁用；硬红线 7 判定源；不改快照不发事件）
+func (a *App) DockerStatus(ctx context.Context) (model.DockerStatus, error) {
+	if a.container.AppService == nil {
+		return model.DockerStatus{}, errNotReady
+	}
+	return a.container.AppService.DockerStatus(ctx), nil
+}
+
 // ---- M4 站点绑定：所有写操作经 SiteService → task.Manager 三段式（硬红线 4/5）----
 
 // SiteAdd 幂等建站（建目录 → nginx -t 校验写 vhost → 加 hosts → 落库并广播 state:changed）

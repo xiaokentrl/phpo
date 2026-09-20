@@ -6,8 +6,10 @@ import { useI18n } from '@/composables/useI18n'
 import { startStateSync, stopStateSync } from '@/composables/useStateSync'
 import { subscribeUpdater, unsubscribeUpdater } from '@/composables/useUpdater'
 import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
+import { startDockerPreflight, stopDockerPreflight } from '@/composables/useDockerPreflight'
 import { useAppState } from '@/stores/appState'
 import { getState } from '@/api/state'
+import { hasBackend } from '@/api/site'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { useModals } from '@/composables/useModals'
 import { toast } from '@/composables/useToast'
@@ -16,10 +18,11 @@ import ToastHost from '@/components/common/ToastHost.vue'
 import CmdPalette from '@/components/business/CmdPalette.vue'
 import TaskDrawer from '@/components/business/TaskDrawer.vue'
 import AppTrayMenu from '@/components/business/AppTrayMenu.vue'
+import DockerGate from '@/components/business/DockerGate.vue'
 
 const { t } = useI18n()
 const app = useAppState()
-const { openThemePicker } = useModals()
+const { openThemePicker, openHomeSetupWizard } = useModals()
 useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
 
 onMounted(async () => {
@@ -28,12 +31,16 @@ onMounted(async () => {
   subscribeCache() // 订阅 6 类 cache:* 事件：缓存命中/未命中/提升/损坏/清理/临时目录清空落地 cacheStore
   const snap = await getState() // 启动权威快照（T607/硬红线 4）：dirReady/env 以 DB 为准；无宿主返回 null 保留占位
   if (snap) app.applySnapshot(snap)
+  // 首启硬门禁：真实宿主下工作目录未初始化 → 弹出不可关闭的装机向导，完成前不放行
+  if (hasBackend() && !app.dirReady.PHPO_HOME) openHomeSetupWizard(undefined, true)
+  startDockerPreflight() // 首启探测 + 定时轮询 Docker 可用性（硬红线 7 门禁，两段式引导）
   if (import.meta.env.DEV) await import('@/api/mockEvents') // 开发期 mock 发射驱动（构建产物不含）
 })
 onBeforeUnmount(() => {
   stopStateSync()
   unsubscribeUpdater()
   unsubscribeCache()
+  stopDockerPreflight()
 })
 
 const sections: { titleKey: string; items: { id: string; labelKey: string; icon: string }[] }[] = [
@@ -92,6 +99,7 @@ async function resync(): Promise<void> {
       </div>
     </aside>
     <main class="app-main">
+      <DockerGate />
       <div class="view">
         <RouterView />
       </div>
