@@ -104,3 +104,24 @@ func TestTimeFormatsInManifest(t *testing.T) {
 		t.Errorf("时间必须 RFC3339 UTC: %s", b)
 	}
 }
+
+// TestSiteRuntimeHealth 站点列表健康列三态判定的唯一规则（前端只渲染，不自行推断——硬红线 4）
+func TestSiteRuntimeHealth(t *testing.T) {
+	cases := []struct {
+		name string
+		r    SiteRuntime
+		want string
+	}{
+		{"全部就绪", SiteRuntime{NginxRunning: true, VHostOnDisk: true, PHPRunning: true, RootExists: true}, HealthUp},
+		{"nginx 未运行→降级", SiteRuntime{VHostOnDisk: true, PHPRunning: true, RootExists: true}, HealthWarn},
+		{"vhost 未落盘→降级", SiteRuntime{NginxRunning: true, PHPRunning: true, RootExists: true}, HealthWarn},
+		{"未装 PHP（无 vhost）→降级", SiteRuntime{NginxRunning: true, RootExists: true}, HealthWarn},
+		{"PHP 未运行→未响应", SiteRuntime{NginxRunning: true, VHostOnDisk: true, RootExists: true}, HealthDown},
+		{"站点目录缺失→未响应", SiteRuntime{NginxRunning: true, VHostOnDisk: true, PHPRunning: true}, HealthDown},
+	}
+	for _, c := range cases {
+		if got := c.r.Health(); got != c.want {
+			t.Errorf("%s: Health() = %s，期望 %s", c.name, got, c.want)
+		}
+	}
+}

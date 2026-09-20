@@ -1,6 +1,7 @@
 package hosts
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,5 +89,41 @@ func TestManager_MissingFileTreatedEmpty(t *testing.T) {
 	res, err := m.Add("demo.test")
 	if err != nil || !res.Changed {
 		t.Fatalf("应创建文件并写入: %+v err=%v", res, err)
+	}
+}
+
+// TestManager_Elevate 直写被拒时的两条降级路径：提权成功即写入；提权失败回人话警告而不是 error（§5.7）
+func TestManager_Elevate(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 下写只读文件不会失败，提权分支不触发")
+	}
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := (&Manager{path: path, ip: "127.0.0.1", elevate: func(string) error { return nil }}).Add("demo.test")
+	if err != nil || res.Warning != "" || !res.Changed {
+		t.Fatalf("提权成功应视为已写入: %+v %v", res, err)
+	}
+
+	res, err = (&Manager{path: path, ip: "127.0.0.1", elevate: func(string) error {
+		return fmt.Errorf("polkit 提权写入失败: exit status 127")
+	}}).Add("demo.test")
+	if err != nil {
+		t.Fatalf("提权被拒是警告不是错误: %v", err)
+	}
+	if res.Changed || !strings.Contains(res.Warning, "提权写入 hosts 失败") || !strings.Contains(res.Warning, "127.0.0.1 demo.test") {
+		t.Fatalf("应回可执行的提权失败警告: %+v", res)
+	}
+
+	// 无提权器（NewAt 自定义 hosts）：保持原「无法修改 hosts」警告口径
+	res, err = NewAt(path).Add("demo.test")
+	if err != nil || res.Changed || !strings.Contains(res.Warning, "无法修改 hosts") {
+		t.Fatalf("无提权器应降级为警告: %+v %v", res, err)
+	}
+	b, _ := os.ReadFile(path)
+	if Has(string(b), "127.0.0.1", "demo.test") {
+		t.Fatalf("三次写入均未真正落盘（只读文件）:\n%s", b)
 	}
 }

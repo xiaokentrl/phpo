@@ -11,6 +11,9 @@ import { usePortSuggest } from '@/composables/usePortSuggest'
 import type { Site } from '@/types'
 import { cmpVer, siteUrl } from '@/utils/format'
 import { hostToContainer } from '@/utils/path'
+import { addSiteHosts, hasBackend } from '@/api/site'
+import { toast } from '@/composables/useToast'
+import { runTask } from '@/composables/useTask'
 
 const { t } = useI18n()
 const state = useAppState()
@@ -24,6 +27,8 @@ const healthy = computed(() => state.sites.filter((s) => s.health === 'up').leng
 
 const menuDomain = ref<string | null>(null)
 const menuPos = ref<{ left: number; top: number }>({ left: 0, top: 0 })
+// 加 hosts 进行中的域名：提权弹窗可能停在系统侧，期间禁止重复点击
+const hostsBusy = ref('')
 
 // T404：端口行内编辑；改端口走 usePortSuggest（占用则顺延 + DangerConfirm）
 const editingPort = ref<string | null>(null)
@@ -55,10 +60,24 @@ function healthLabel(h: Site['health']) {
   return t('sites.health.' + h)
 }
 function phpOptions(site: Site): string[] {
-  return [...new Set([...phpVers.value, site.php])].sort(cmpVer)
+  return [...new Set([...phpVers.value, site.php].filter(Boolean))].sort(cmpVer)
 }
 function isUninstalled(v: string): boolean {
-  return !phpVers.value.includes(v)
+  return !!v && !phpVers.value.includes(v)
+}
+
+// 「加 hosts」：写系统 hosts 走后端三段式；Hosts 列由快照真值回流，此处不做乐观更新（硬红线 4）
+function onAddHosts(site: Site): void {
+  if (hostsBusy.value) return
+  if (!hasBackend()) {
+    runTask(['site', 'hosts', site.domain], `${t('sites.hosts.add')} ${site.domain}`, { type: 'site-hosts', domain: site.domain })
+    return
+  }
+  hostsBusy.value = site.domain
+  addSiteHosts(site.domain)
+    .then((warn) => toast(warn || t('sites.hosts.toast', { domain: site.domain }), warn ? 'err' : 'ok', warn ? 6000 : 2400))
+    .catch((e: unknown) => toast(String(e), 'err', 4600))
+    .finally(() => { hostsBusy.value = '' })
 }
 
 function closeRowMenu(): void {
@@ -173,7 +192,9 @@ onBeforeUnmount(() => {
               </td>
               <td>
                 <select class="php-select" :data-domain="site.domain" @change="onPhpChange(site, $event)">
-                  <option v-for="v in phpOptions(site)" :key="v" :value="v" :selected="v === site.php">{{ v }}{{ isUninstalled(v) ? ' (uninstalled)' : '' }}</option>
+                  <!-- 未选 PHP 的降级站点：以「未选择」占位，不把空值伪装成某个版本 -->
+                  <option v-if="!site.php" value="" selected>{{ t('sites.php.none') }}</option>
+                  <option v-for="v in phpOptions(site)" :key="v" :value="v" :selected="v === site.php">{{ v }}{{ isUninstalled(v) ? t('sites.php.uninstalled') : '' }}</option>
                 </select>
               </td>
               <td>
@@ -187,7 +208,7 @@ onBeforeUnmount(() => {
               </td>
               <td>
                 <span v-if="site.hosts" class="chip chip-accent">{{ t('sites.hosts.resolved') }}</span>
-                <button v-else class="btn btn-sm" data-action="hosts-add" :data-domain="site.domain">{{ t('sites.hosts.add') }}</button>
+                <button v-else class="btn btn-sm" data-action="hosts-add" :data-domain="site.domain" :disabled="!!hostsBusy" @click="onAddHosts(site)">{{ t('sites.hosts.add') }}</button>
               </td>
               <td class="col-actions">
                 <div class="row-actions">

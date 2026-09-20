@@ -87,11 +87,18 @@ func (m *Manager) mutate(domain string, add bool) (Result, error) {
 	if !changed {
 		return Result{Changed: false}, nil
 	}
-	if err := m.write(next); err != nil {
-		if isPermission(err) {
+	if err := m.writeDirect(next); err != nil {
+		if !isPermission(err) {
+			return Result{}, err
+		}
+		// 直写被拒：有提权器则经 polkit / UAC / osascript 重写整份；被拒或无提权器降级为人话警告，
+		// 不阻断调用方（§5.7 doctor 口径「无法修改 hosts。请以管理员身份运行」）
+		if m.elevate == nil {
 			return Result{Warning: fmt.Sprintf("无法修改 hosts（%s）。请以管理员身份运行后手动添加：%s %s", m.path, m.ip, domain)}, nil
 		}
-		return Result{}, err
+		if e := m.elevate(next); e != nil {
+			return Result{Warning: fmt.Sprintf("提权写入 hosts 失败（%s）：%v。请以管理员身份运行后手动添加：%s %s", m.path, e, m.ip, domain)}, nil
+		}
 	}
 	return Result{Changed: true}, nil
 }
@@ -107,13 +114,9 @@ func (m *Manager) read() (string, error) {
 	return string(b), nil
 }
 
-// write 优先直写；权限不足且有提权器时经提权重写整文件
-func (m *Manager) write(content string) error {
-	err := os.WriteFile(m.path, []byte(content), 0o644)
-	if err == nil || !isPermission(err) || m.elevate == nil {
-		return err
-	}
-	return m.elevate(content)
+// writeDirect 以普通权限直写整份内容；被拒（权限）由 mutate 决定是否提权或降级警告
+func (m *Manager) writeDirect(content string) error {
+	return os.WriteFile(m.path, []byte(content), 0o644)
 }
 
 func isPermission(err error) bool {

@@ -1,8 +1,12 @@
 // 快照读写：状态表 ⇄ model.Snapshot 的完整物化（后端唯一权威的持久形态）
 // dirReady 不落库：由 EnvProvider.RootsReady（config.yaml 两根 + 目录存在性）派生进快照。
+// sites 的 health/hosts 同样不落库：由快照出口按宿主真值派生（见 enrichSites）。
 package store
 
 import (
+	"os"
+	"path/filepath"
+
 	"phpo/internal/model"
 )
 
@@ -41,6 +45,7 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	if snap.Sites, err = s.ListSites(); err != nil {
 		return nil, err
 	}
+	s.enrichSites(snap)
 	snap.PHPExtensions = map[string][]string{}
 	extRows, err := db.Query(`SELECT version, ext FROM php_extensions ORDER BY rowid`)
 	if err != nil {
@@ -58,6 +63,43 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 }
 
 // env / dirReady 已迁出：配置真相与就绪判定唯一来自 ConfigStore（internal/config，YAML）；SQLite 不再持有 env 表与 dir_ready 表。
+
+// enrichSites 在快照出口逐站点补齐展示用运行态（health/hosts）。
+// 硬红线 4：这两列只由后端按宿主真值给出，前端不得自行推断；BuildSnapshot 是全部 state:changed
+// 与 GetState 的唯一快照来源，故在此一处落地即处处一致。
+func (s *Store) enrichSites(snap *model.Snapshot) {
+	if len(snap.Sites) == 0 {
+		return
+	}
+	nginxUp := len(snap.Running["nginx"]) > 0
+	phpUp := snap.Running["php"]
+	sitesRoot := snap.Env["NGINX_SITES_ROOT"]
+	for i := range snap.Sites {
+		st := &snap.Sites[i]
+		st.Hosts = s.hosts != nil && s.hosts(st.Domain)
+		st.Health = model.SiteRuntime{
+			NginxRunning: nginxUp,
+			VHostOnDisk:  sitesRoot != "" && pathExists(filepath.Join(sitesRoot, st.Domain+".conf")),
+			PHPRunning:   st.PHP != "" && contains(phpUp, st.PHP),
+			RootExists:   st.Root != "" && pathExists(st.Root),
+		}.Health()
+	}
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// pathExists 路径存在即为真（读错误按不存在处理：宁可显示降级，也不虚报正常）
+func pathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
 
 // sites
 func (s *Store) ListSites() ([]model.Site, error) {

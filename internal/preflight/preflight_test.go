@@ -243,21 +243,18 @@ func TestSiteAddDomainExists(t *testing.T) {
 	}
 }
 
-// TestSiteAddWithoutNginxWarn nginx 缺席不再是建站门禁：只降级告警，站点照常创建（vhost 暂不落盘、端口暂不发布）
-func TestSiteAddWithoutNginxWarn(t *testing.T) {
+// TestSiteAddNeedsNginx nginx 未安装是建站的唯一服务门禁：阻断，站点不得创建
+func TestSiteAddNeedsNginx(t *testing.T) {
 	w := readyWorld()
 	w.Snap.Installed["nginx"] = nil
 	w.Snap.Running["nginx"] = nil
 	res := Run(ActSiteAdd, Ctx{Domain: "z.test", Port: "8082", PHP: "8.4"}, w)
-	if !res.Ok {
-		t.Fatalf("未装 Nginx 应放行建站，实得错误 %+v", res.Errors)
-	}
-	if !contains(res.Warnings, wantNginxWarn(errs.NotInstalled)) {
-		t.Fatalf("应含 nginx 未装的降级告警，实得 %+v", res.Warnings)
+	if firstErr(res) != errs.NginxNeeded {
+		t.Fatalf("未装 Nginx 应报 nginxNeeded，实得 %q / %+v", firstErr(res), res.Errors)
 	}
 }
 
-// TestSiteAddNginxNotRunningWarn nginx 已装但未运行：同样只告警降级（写 vhost 会因 docker exec 失败）
+// TestSiteAddNginxNotRunningWarn nginx 已装但未运行：只告警降级（写 vhost 会因 docker exec 失败），站点照常创建
 func TestSiteAddNginxNotRunningWarn(t *testing.T) {
 	w := readyWorld()
 	w.Snap.Running["nginx"] = nil
@@ -265,13 +262,13 @@ func TestSiteAddNginxNotRunningWarn(t *testing.T) {
 	if !res.Ok {
 		t.Fatalf("Nginx 未运行应放行建站，实得错误 %+v", res.Errors)
 	}
-	if !contains(res.Warnings, wantNginxWarn(errs.NotRunning)) {
+	if !contains(res.Warnings, wantNginxNotRunningWarn()) {
 		t.Fatalf("应含 nginx 未运行的降级告警，实得 %+v", res.Warnings)
 	}
 }
 
-// TestSiteAddNeedsNoService 建站不设任何服务门禁：未装 PHP/MySQL 等其余服务只告警，不阻断（最小限制原则）
-func TestSiteAddNeedsNoService(t *testing.T) {
+// TestSiteAddNeedsOnlyNginx nginx 是唯一服务门禁：未装 PHP/MySQL 等其余服务只告警，不阻断（最小限制原则）
+func TestSiteAddNeedsOnlyNginx(t *testing.T) {
 	w := readyWorld()
 	w.Snap.Installed["php"] = nil
 	w.Snap.Installed["mysql"] = nil
@@ -308,13 +305,9 @@ func portDegradeWarn(msg string) string {
 	return msg + "（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）"
 }
 
-// wantNginxWarn 测试侧锁死 nginx 未就绪的降级告警文案（与 rules_site.go#nginxPendingWarn、前端 usePreflight.ts 逐字对齐）
-func wantNginxWarn(code string) string {
-	act := "安装"
-	if code == errs.NotRunning {
-		act = "启动"
-	}
-	return code + ": Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；" + act + " Nginx 后自动补齐）"
+// wantNginxNotRunningWarn 测试侧锁死 nginx 已装未运行的降级告警文案（与 rules_site.go#nginxNotRunningWarn、前端 usePreflight.ts 逐字对齐）
+func wantNginxNotRunningWarn() string {
+	return errs.NotRunning + ": Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；启动 Nginx 后自动补齐）"
 }
 
 // —— site-port（排除自身域名与当前端口）——

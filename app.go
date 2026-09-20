@@ -204,6 +204,14 @@ func (a *App) SiteSetVhostContent(ctx context.Context, domain, content string) e
 	return a.container.SiteService.SetVhostContent(ctx, domain, content)
 }
 
+// SiteAddHosts 手动补写系统 hosts（站点列表「加 hosts」）；返回需要提示给用户的人话警告，空串即已生效
+func (a *App) SiteAddHosts(ctx context.Context, domain string) (string, error) {
+	if a.container.SiteService == nil {
+		return "", errNotReady
+	}
+	return a.container.SiteService.AddHosts(ctx, domain)
+}
+
 // ---- M5 数据服务 env 绑定：密码/端口明文落库（§1.5 零校验），写入后 state:changed 回流（硬红线 4）----
 
 // GetServicePassword 读某服务版本明文密码供 UI 回显；未设置回落默认 123456

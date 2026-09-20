@@ -77,3 +77,8 @@ export function setSiteRewrite(domain: string, preset: string, rule = ''): Promi
 export function setSiteVhostContent(domain: string, content: string): Promise<void> {
   return app.SiteSetVhostContent(domain, content)
 }
+
+// addSiteHosts 手动补写系统 hosts；后端回空串表示已生效，非空是需转达给用户的人话警告（如要以管理员身份运行）
+export function addSiteHosts(domain: string): Promise<string> {
+  return app.SiteAddHosts(domain)
+}

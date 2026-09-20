@@ -173,6 +173,12 @@ td.col-actions::before,th.col-actions::before{content:'';position:absolute;left:
 .modal{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:480px;max-height:88vh;box-shadow:var(--shadow);animation:popIn var(--motion-base) cubic-bezier(.2,.9,.3,1.15);display:flex;flex-direction:column;overflow:hidden}
 .modal-lg{max-width:620px}
 .modal-xl{max-width:900px}
+/* 代码编辑类弹窗：默认铺到主窗口 80% 高（百分比随 .modal-root 与 zoom 一起缩放，不用 vh） */
+.modal-tall{min-height:80%}
+/* 校验失败弹框：盖在编辑弹窗之上（modal-root 100 < 160 < toast 200），保证草稿不丢 */
+.modal-err{z-index:160}
+.modal-err .modal{max-width:560px}
+.modal-err-text{margin:0;padding:12px 14px;background:var(--bg);border:1px solid var(--border-2);border-radius:var(--r-sm);font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--danger);white-space:pre-wrap;word-break:break-all;max-height:40vh;overflow-y:auto}
 @keyframes popIn{from{opacity:0;transform:scale(.96) translateY(6px)}to{opacity:1;transform:none}}
 .modal-head{padding:20px 22px 6px;flex-shrink:0}
 .modal-head h3{font-size:17px;font-weight:620;letter-spacing:-.2px}

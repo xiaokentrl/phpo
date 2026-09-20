@@ -2,11 +2,12 @@
 // 模态外壳：1:1 对应原型 openModalShell + setupModalResize（1502–1532）
 // 遮罩点击关闭 / ESC 关闭（danger/locked 时禁用）/ 右下角拖拽 resize（缩放补偿）
 // locked：首启硬门禁用——隐藏右上角 X、禁 ESC、禁遮罩点击，只能经组件内显式动作关闭
+// tall：代码编辑类弹窗——默认高度铺到主窗口的 80%（百分比而非 vh，随 zoom 缩放同步）
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useResize } from '@/composables/useResize'
 import { useI18n } from '@/composables/useI18n'
 
-const props = withDefaults(defineProps<{ size?: '' | 'lg' | 'xl'; danger?: boolean; bodyConfig?: boolean; locked?: boolean }>(), { size: '', danger: false, bodyConfig: false, locked: false })
+const props = withDefaults(defineProps<{ size?: '' | 'lg' | 'xl'; danger?: boolean; bodyConfig?: boolean; locked?: boolean; tall?: boolean }>(), { size: '', danger: false, bodyConfig: false, locked: false, tall: false })
 const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 
@@ -20,8 +21,9 @@ const { startResize } = useResize({
     const el = modalEl.value
     return { w: el?.offsetWidth ?? 480, h: el?.offsetHeight ?? 320 }
   },
+  // 拖拽后即由显式尺寸接管：放开 CSS 的 min/max，用户才能往小里拖
   setSize: (w, h) => {
-    sizeStyle.value = { width: w + 'px', height: h + 'px', maxWidth: 'none', maxHeight: 'none' }
+    sizeStyle.value = { width: w + 'px', height: h + 'px', minWidth: '0', minHeight: '0', maxWidth: 'none', maxHeight: 'none' }
   },
 })
 
@@ -39,7 +41,7 @@ function onMask(e: MouseEvent) {
 
 <template>
   <div class="modal-root open" @click="onMask">
-    <div ref="modalEl" class="modal" :class="{ 'modal-lg': size === 'lg', 'modal-xl': size === 'xl' }" role="dialog" aria-modal="true" :style="sizeStyle">
+    <div ref="modalEl" class="modal" :class="{ 'modal-lg': size === 'lg', 'modal-xl': size === 'xl', 'modal-tall': tall }" role="dialog" aria-modal="true" :style="sizeStyle">
       <button v-if="!locked" class="modal-close-x" type="button" :aria-label="t('common.cancel')" @click="emit('close')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
       </button>

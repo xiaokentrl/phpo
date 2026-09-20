@@ -117,10 +117,12 @@ func (c *Container) Build() *Assembly {
 			return err
 		}
 		nginxContainer := dockerutil.ContainerName(string(model.KindNginx), "alpine")
+		vh := vhost.New(env)
+		hm := hosts.New()
 		c.SiteService = service.NewSiteService(
 			st,
-			vhost.New(env),
-			hosts.New(),
+			vh,
+			hm,
 			engine.NewTrash(trashRoot),
 			vhost.NewNginxTValidator(nginxContainer),
 			vhost.NewNginxReloader(nginxContainer),
@@ -128,8 +130,13 @@ func (c *Container) Build() *Assembly {
 		)
 		// 站点端口并集发布到 nginx（增删改站点端口后重建 nginx 容器以重绑宿主端口）
 		c.SiteService.SetNginxPublisher(lc)
-		// 建站已不以 nginx 为门禁：装好/启动 nginx 后补齐降级站点的 vhost 与端口发布
+		// nginx 由停到起后补齐降级站点的 vhost 与端口发布（建站门禁在 preflight：nginx 未装即阻断）
 		c.AppService.SetSiteHealer(c.SiteService)
+		// 快照站点 hosts 真值探针（列表 Hosts 列）：store 不反向依赖 hosts 包，由装配层注入
+		st.SetHostsProbe(func(domain string) bool {
+			ok, err := hm.Has(domain)
+			return err == nil && ok
+		})
 
 		// M6 扩展门面（T601）：容器内内置工具编译 → commit 固化 phpo/php:{version} → save 提升离线缓存 → 重建
 		c.ExtensionService = service.NewExtensionService(

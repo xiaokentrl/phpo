@@ -28,10 +28,11 @@ type EnvProvider interface {
 }
 
 type Store struct {
-	mu   sync.Mutex // 保护 db 的一次性打开（多任务并发访问）
-	path string     // phpo.db 绝对路径（延迟打开用）
-	db   *sql.DB    // nil 表示尚未打开
-	env  EnvProvider
+	mu    sync.Mutex // 保护 db 的一次性打开（多任务并发访问）
+	path  string     // phpo.db 绝对路径（延迟打开用）
+	db    *sql.DB    // nil 表示尚未打开
+	env   EnvProvider
+	hosts HostsProbe
 }
 
 // New 返回延迟打开的运行态存储：不建目录、不建库、不迁移。装配期用它注入各服务门面。
@@ -39,6 +40,13 @@ func New(path string) *Store { return &Store{path: path} }
 
 // SetEnvProvider 注入配置真相源（装配期一次性调用，先于任何并发访问）
 func (s *Store) SetEnvProvider(p EnvProvider) { s.env = p }
+
+// HostsProbe 查询域名是否已被系统 hosts 解析到 127.0.0.1（快照 sites.hosts 的唯一来源）。
+// store 不得反向依赖 vhost/hosts 包，故由装配层注入实现（*hosts.Manager.Has）。未注入按未解析处理。
+type HostsProbe func(domain string) bool
+
+// SetHostsProbe 注入 hosts 探针（装配期一次性调用）
+func (s *Store) SetHostsProbe(p HostsProbe) { s.hosts = p }
 
 func (s *Store) Close() error {
 	s.mu.Lock()

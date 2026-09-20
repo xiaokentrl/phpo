@@ -294,6 +294,56 @@ func (s *SiteService) SetVhostContent(ctx context.Context, domain, content strin
 	}, domain)
 }
 
+// AddHosts 手动补写系统 hosts（站点列表「加 hosts」按钮）：建站时提权被拒的站点靠此自愈。
+// 返回值是给 UI 的人话警告：空串 = 已生效或本就幂等；非空 = 未生效原因（如需以管理员身份运行），
+// 按 §3.2 原则 7「能警告的不要阻止」不作为 error。
+// 不新增 preflight action（§0.3 冻结 17 条）：此处唯一前置是站点存在，无端口/路径/版本可裁决；
+// 仍走 task 三段式（硬红线 5），Apply 段广播快照，hosts 列由后端探针回流（硬红线 4）。
+func (s *SiteService) AddHosts(ctx context.Context, domain string) (string, error) {
+	sites, err := s.store.ListSites()
+	if err != nil {
+		return "", err
+	}
+	found := false
+	for _, st := range sites {
+		if st.Domain == domain {
+			found = true
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("站点不存在: %s", domain)
+	}
+	warning := ""
+	t := &task.Task{
+		ID:    s.newID("hosts"),
+		Label: "加 hosts · " + domain,
+		Meta:  model.TaskMeta{Type: "hosts-add", Domain: domain},
+		Steps: []task.Step{&task.FuncStep{StepName: "写入 hosts", Exec: func(_ context.Context, log task.StepLog) error {
+			res, e := s.hosts.Add(domain)
+			if e != nil {
+				log.Log("err", "hosts 写入失败: "+e.Error())
+				return e
+			}
+			if res.Warning != "" {
+				log.Log("err", res.Warning)
+				warning = res.Warning
+				return nil
+			}
+			if res.Changed {
+				log.Log("ok", "已添加 hosts: 127.0.0.1 "+domain)
+			} else {
+				log.Log("dim", "hosts 已存在，跳过")
+			}
+			return nil
+		}}},
+		Apply: func() error { return s.emit() },
+	}
+	if _, err := s.tasks.Run(ctx, t); err != nil {
+		return "", err
+	}
+	return warning, nil
+}
+
 // writeVHost 通用编排：把权威站点灌入管理器→mutate 得新正文→写盘(校验)+reload→落库+广播
 func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate func(*vhost.Manager) string, domain string) error {
 	sites, _ := s.store.ListSites()

@@ -345,3 +345,111 @@ func TestDeferredOpen_PersistedButMissingDirStillOpens(t *testing.T) {
 		t.Fatalf("库文件应已建立: %v", err)
 	}
 }
+
+// TestSnapshotSitesEnriched 快照在出口逐站点派生 health/hosts（不落库、前端不推断，硬红线 4）：
+// vhost 是否已落盘 / 站点目录是否存在 / 所选 PHP 是否运行 / hosts 探针命中与否，共同决定列表两列。
+func TestSnapshotSitesEnriched(t *testing.T) {
+	dir := t.TempDir()
+	sitesRoot := filepath.Join(dir, "nginx", "sites")
+	wwwRoot := filepath.Join(dir, "www")
+	if err := os.MkdirAll(sitesRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wwwRoot, "ok.test"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 只有 ok.test 的 vhost 已落盘（其余站点为降级态：暂不落盘）
+	if err := os.WriteFile(filepath.Join(sitesRoot, "ok.test.conf"), []byte("server{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(filepath.Join(dir, "phpo.db"))
+	s.SetEnvProvider(fakeEnv{m: map[string]string{"NGINX_SITES_ROOT": sitesRoot, "WWW_ROOT": wwwRoot}, persisted: true, home: true, www: true})
+	s.SetHostsProbe(func(domain string) bool { return domain == "ok.test" })
+	t.Cleanup(func() { s.Close() })
+
+	for _, kind := range []struct {
+		kind, version string
+		running       bool
+	}{
+		{"nginx", "alpine", true}, {"php", "8.4", true}, {"php", "8.0", false},
+	} {
+		if err := s.SetInstalled(kind.kind, kind.version, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SetRunning(kind.kind, kind.version, kind.running); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sites := []model.Site{
+		{Domain: "ok.test", Port: 80, PHP: "8.4", Root: filepath.Join(wwwRoot, "ok.test")},
+		{Domain: "degraded.test", Port: 81, PHP: "", Root: wwwRoot},  // 未选 PHP：vhost 未落盘 → 降级
+		{Domain: "nostop.test", Port: 82, PHP: "8.0", Root: wwwRoot}, // PHP 已装未运行，且无 conf → 降级
+		{Domain: "gone.test", Port: 83, PHP: "8.4", Root: filepath.Join(wwwRoot, "gone.test")},
+	}
+	for _, st := range sites {
+		if err := s.UpsertSite(st); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// gone.test：conf 在位但站点目录不存在 → 未响应
+	if err := os.WriteFile(filepath.Join(sitesRoot, "gone.test.conf"), []byte("server{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]struct {
+		health string
+		hosts  bool
+	}{
+		"ok.test":       {model.HealthUp, true},
+		"degraded.test": {model.HealthWarn, false},
+		"nostop.test":   {model.HealthWarn, false},
+		"gone.test":     {model.HealthDown, false},
+	}
+	if len(got.Sites) != len(want) {
+		t.Fatalf("站点数不符: %+v", got.Sites)
+	}
+	for _, st := range got.Sites {
+		w, ok := want[st.Domain]
+		if !ok {
+			t.Fatalf("意外站点: %s", st.Domain)
+		}
+		if st.Health != w.health || st.Hosts != w.hosts {
+			t.Errorf("%s: health=%s hosts=%v，期望 health=%s hosts=%v", st.Domain, st.Health, st.Hosts, w.health, w.hosts)
+		}
+	}
+
+	// 落库不受派生字段影响：重读库仍为空运行态（health/hosts 不落库）
+	raw, err := s.ListSites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range raw {
+		if st.Health != "" || st.Hosts {
+			t.Errorf("%s: health/hosts 不应落库，实得 health=%q hosts=%v", st.Domain, st.Health, st.Hosts)
+		}
+	}
+}
+
+// TestSnapshotSitesWithoutHostsProbe 未注入探针（归档快照、单测）时 hosts 一律按未解析，不得虚报已解析
+func TestSnapshotSitesWithoutHostsProbe(t *testing.T) {
+	s := openStore(t)
+	s.SetEnvProvider(fakeEnv{persisted: true, home: true, www: true})
+	if err := s.UpsertSite(model.Site{Domain: "a.test", Port: 80, PHP: "8.4", Root: "/nope"}); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Sites[0].Hosts {
+		t.Error("未注入 hosts 探针时应为未解析")
+	}
+	if snap.Sites[0].Health != model.HealthWarn {
+		t.Errorf("无 nginx、无 conf 应为降级，实得 %s", snap.Sites[0].Health)
+	}
+}

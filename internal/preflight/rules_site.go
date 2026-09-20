@@ -10,11 +10,13 @@ import (
 
 func (r *run) siteAdd() {
 	c := r.c
-	// 建站不设任何服务门禁：nginx 未就绪（未装或未运行）只降级告警，站点照常创建（§5.8）
+	// 建站的唯一服务门禁是 nginx（未装则无法发布站点）；未运行只降级，PHP/MySQL 等其余服务缺失也只降级不阻断
 	if len(r.w.Snap.Installed["nginx"]) == 0 {
-		r.warnf("%s", nginxPendingWarn(errs.NotInstalled))
-	} else if len(r.w.Snap.Running["nginx"]) == 0 {
-		r.warnf("%s", nginxPendingWarn(errs.NotRunning))
+		r.errf("%s", errs.NginxNeeded)
+		return
+	}
+	if len(r.w.Snap.Running["nginx"]) == 0 {
+		r.warnf("%s", nginxNotRunningWarn())
 	}
 	dd := config.ValidateDomain(c.Domain)
 	if !dd.Ok {
@@ -137,13 +139,9 @@ type siteView struct {
 	Root   string
 }
 
-// nginxPendingWarn nginx 未就绪（未装 / 未运行）的建站降级告警；文案与前端 usePreflight.ts 逐字对齐
-func nginxPendingWarn(code string) string {
-	act := "安装"
-	if code == errs.NotRunning {
-		act = "启动"
-	}
-	return code + ": Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；" + act + " Nginx 后自动补齐）"
+// nginxNotRunningWarn nginx 已装但未运行的建站降级告警；文案与前端 usePreflight.ts 逐字对齐
+func nginxNotRunningWarn() string {
+	return errs.NotRunning + ": Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；启动 Nginx 后自动补齐）"
 }
 
 func advanceMsg(from, to int) string {

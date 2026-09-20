@@ -388,9 +388,10 @@ func TestSiteService_SwitchPHP_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestSiteService_Add_DegradesWithoutNginx nginx 缺席不再是建站门禁：站点照常建目录 + 写 hosts + 落库，
-// 仅暂不写 vhost、暂不发布端口（否则 docker exec nginx -t 必失败，硬红线 2）；端口保留用户所填值。
-func TestSiteService_Add_DegradesWithoutNginx(t *testing.T) {
+// TestSiteService_Add_DegradesWhenNginxNotReady 门禁在 preflight（未装 nginx 直接阻断建站）；服务层是兜底：
+// nginx 不就绪（未装 / 未运行）一律降级——照常建目录 + 写 hosts + 落库，仅暂不写 vhost、暂不发布端口
+// （否则 docker exec nginx -t 必失败，硬红线 2）；端口保留用户所填值。
+func TestSiteService_Add_DegradesWhenNginxNotReady(t *testing.T) {
 	ctx := context.Background()
 	svc, st, env, _ := newSiteSvc(t, nil)
 	st.snap.Installed["nginx"] = nil
@@ -420,12 +421,12 @@ func TestSiteService_Add_DegradesWithoutNginx(t *testing.T) {
 	}
 }
 
-// TestSiteService_ReconcileServe_HealsAfterNginxReady 装/启 nginx 后自动补齐降级站点：
+// TestSiteService_ReconcileServe_HealsAfterNginxReady 启动 nginx 后自动补齐降级站点：
 // 补写 vhost（上游与监听端口精确）、把端口发布给 nginx；幂等且不动仍降级的站点。
 func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
 	ctx := context.Background()
 	svc, st, env, _ := newSiteSvc(t, nil)
-	st.snap.Installed["nginx"] = nil
+	// nginx 已装但停着（建站门禁已过，站点落为降级）
 	st.snap.Running["nginx"] = nil
 	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
@@ -467,4 +468,102 @@ func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
 	if len(pub.calls) != 0 {
 		t.Fatalf("无待补站点时不应重发布，实得 %v", pub.calls)
 	}
+}
+
+// hostsFake 可编排的 HostsOps：记录调用次数，按预设返回 Result/error
+type hostsFake struct {
+	res   hosts.Result
+	err   error
+	calls int
+}
+
+func (f *hostsFake) Add(string) (hosts.Result, error) {
+	f.calls++
+	return f.res, f.err
+}
+
+// TestSiteService_AddHosts 手动补写 hosts 走真实 Manager：缺失→补上→再点幂等，且广播快照
+func TestSiteService_AddHosts(t *testing.T) {
+	ctx := context.Background()
+	svc, _, env, em := newSiteSvc(t, nil)
+	hostsPath := filepath.Join(filepath.Dir(env.PHPOHome), "hosts")
+	if err := svc.Add(ctx, AddInput{Domain: "demo.test", Port: 80, PHP: "8.4", Rewrite: "laravel"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 模拟建站时 hosts 未落上（如提权被拒）：文件回到无条目态
+	if err := os.WriteFile(hostsPath, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	warn, err := svc.AddHosts(ctx, "demo.test")
+	if err != nil || warn != "" {
+		t.Fatalf("补写应成功且无警告: warn=%q err=%v", warn, err)
+	}
+	b, e := os.ReadFile(hostsPath)
+	if e != nil || !hosts.Has(string(b), "127.0.0.1", "demo.test") {
+		t.Fatalf("hosts 应已写入条目:\n%s %v", b, e)
+	}
+	if !em.has("state:changed") {
+		t.Fatalf("补写后应广播 state:changed，实得 %v", em.events)
+	}
+
+	// 幂等：重复点击不再追加、不报错
+	if _, err := svc.AddHosts(ctx, "demo.test"); err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := os.ReadFile(hostsPath)
+	if strings.Count(string(b2), "demo.test") != 1 {
+		t.Fatalf("重复补写应幂等:\n%s", b2)
+	}
+}
+
+// TestSiteService_AddHosts_Errors 「加 hosts」的三种未生效路径：站点不存在 / 需提权 / 写失败
+func TestSiteService_AddHosts_Errors(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("站点不存在不得触写", func(t *testing.T) {
+		svc, _, _, _ := newSiteSvc(t, nil)
+		hf := &hostsFake{}
+		svc.hosts = hf
+		if _, err := svc.AddHosts(ctx, "ghost.test"); err == nil {
+			t.Fatal("站点不存在应报错")
+		}
+		if hf.calls != 0 {
+			t.Fatalf("站点不存在时不得写 hosts，实得 %d 次", hf.calls)
+		}
+	})
+
+	t.Run("需提权返回警告不当作错误", func(t *testing.T) {
+		svc, st, _, _ := newSiteSvc(t, nil)
+		if err := svc.Add(ctx, AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+			t.Fatal(err)
+		}
+		want := "无法修改 hosts（/etc/hosts）。请以管理员身份运行后手动添加：127.0.0.1 demo.test"
+		svc.hosts = &hostsFake{res: hosts.Result{Warning: want}}
+		warn, err := svc.AddHosts(ctx, "demo.test")
+		if err != nil {
+			t.Fatalf("提权被拒是警告不是错误: %v", err)
+		}
+		if warn != want {
+			t.Fatalf("应原样回传 hosts 的人话警告，实得 %q", warn)
+		}
+		if len(st.sites) != 1 {
+			t.Fatalf("补写 hosts 不得改动站点: %+v", st.sites)
+		}
+	})
+
+	t.Run("写入失败必须报错不静默", func(t *testing.T) {
+		svc, _, _, em := newSiteSvc(t, nil)
+		if err := svc.Add(ctx, AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+			t.Fatal(err)
+		}
+		svc.hosts = &hostsFake{err: errors.New("读取 hosts 失败: permission denied")}
+		em.events = nil
+		if _, err := svc.AddHosts(ctx, "demo.test"); err == nil {
+			t.Fatal("hosts 写入失败不得被吞掉")
+		}
+		if em.has("state:changed") {
+			t.Fatalf("失败的任务不得走 Apply 广播，实得 %v", em.events)
+		}
+	})
 }

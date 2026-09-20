@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 站点 nginx 配置弹窗：忠实迁移原型 openSiteConfigModal（2849–2875）
 // 编辑 vhost 正文；脏态启用保存/重置；保存走 preflight('site-vhost')
-import { computed, ref } from 'vue'
+// 保存 = 后端 writeVHost（写入 → nginx -t → 失败自动回滚 → 才 reload），故校验在落盘与重载之前
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ModalShell from '@/components/common/ModalShell.vue'
 import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
@@ -24,6 +25,9 @@ const sitesRoot = computed(() => app.env.NGINX_SITES_ROOT || `${app.env.PHPO_HOM
 const confPath = computed(() => `${sitesRoot.value}/${props.domain}.conf`)
 
 const dirty = computed(() => content.value !== original.value)
+const saving = ref(false)
+// 校验失败详情：非空即弹框。草稿必须留在编辑器里，故不能沿用「先关窗再写」的路径
+const errText = ref('')
 
 function onTab(e: KeyboardEvent): void {
   if (e.key !== 'Tab') return
@@ -37,21 +41,42 @@ function onTab(e: KeyboardEvent): void {
 
 function onSave(): void {
   const check = preflight('site-vhost', { domain: props.domain, content: content.value, php: site.value?.php })
-  if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-  emit('close')
+  if (!check.ok) { errText.value = check.errors.join('\n'); return }
   if (!hasBackend()) {
+    emit('close')
     runTask(['site', 'vhost', 'save', props.domain], `${props.domain} · nginx 配置`, { type: 'site-vhost', domain: props.domain, content: content.value })
     toast(t('siteConfig.saved', { domain: props.domain }), 'ok', 2400)
     return
   }
+  saving.value = true
   setSiteVhostContent(props.domain, content.value)
-    .then(() => toast(t('siteConfig.saved', { domain: props.domain }), 'ok', 2400))
-    .catch((e) => toast(String(e), 'err', 4600))
+    .then(() => {
+      emit('close')
+      toast(t('siteConfig.saved', { domain: props.domain }), 'ok', 2400)
+    })
+    .catch((e: unknown) => {
+      errText.value = String(e)
+    })
+    .finally(() => {
+      saving.value = false
+    })
 }
+
+// 弹框开着时接管 ESC：只关弹框，不冒泡到外壳（否则整窗关闭、草稿丢失）
+function onEsc(e: KeyboardEvent): void {
+  if (e.key !== 'Escape') return
+  e.stopPropagation()
+  errText.value = ''
+}
+watch(errText, (v) => {
+  if (v) document.addEventListener('keydown', onEsc, true)
+  else document.removeEventListener('keydown', onEsc, true)
+})
+onBeforeUnmount(() => document.removeEventListener('keydown', onEsc, true))
 </script>
 
 <template>
-  <ModalShell size="xl" @close="emit('close')">
+  <ModalShell size="xl" tall body-config @close="emit('close')">
     <template #head>
       <h3>{{ domain }} · {{ t('siteConfig.title') }}</h3>
       <p>{{ t('siteConfig.subtitle') }}</p>
@@ -70,9 +95,26 @@ function onSave(): void {
     </template>
     <template #foot>
       <span class="foot-status" :class="{ dirty }">{{ dirty ? t('siteConfig.unsaved') : '' }}</span>
-      <button class="btn" type="button" :disabled="!dirty" @click="content = original">{{ t('siteConfig.reset') }}</button>
-      <button class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
-      <button class="btn btn-primary" type="button" :disabled="!dirty" @click="onSave">{{ t('siteConfig.save') }}</button>
+      <button class="btn" type="button" :disabled="!dirty || saving" @click="content = original">{{ t('siteConfig.reset') }}</button>
+      <button class="btn" type="button" :disabled="saving" @click="emit('close')">{{ t('common.cancel') }}</button>
+      <button class="btn btn-primary" type="button" :disabled="!dirty || saving" @click="onSave">{{ saving ? t('siteConfig.saving') : t('siteConfig.save') }}</button>
     </template>
   </ModalShell>
+
+  <Teleport to="body">
+    <div v-if="errText" class="modal-root open modal-err" @click.self="errText = ''">
+      <div class="modal" role="alertdialog" aria-modal="true">
+        <div class="modal-head">
+          <h3>{{ t('siteConfig.error.title') }}</h3>
+          <p>{{ t('siteConfig.error.desc') }}</p>
+        </div>
+        <div class="modal-body">
+          <pre class="modal-err-text">{{ errText }}</pre>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-primary" type="button" data-action="vhost-error-dismiss" @click="errText = ''">{{ t('siteConfig.error.back') }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
