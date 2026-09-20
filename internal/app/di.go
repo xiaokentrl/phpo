@@ -128,6 +128,8 @@ func (c *Container) Build() *Assembly {
 		)
 		// 站点端口并集发布到 nginx（增删改站点端口后重建 nginx 容器以重绑宿主端口）
 		c.SiteService.SetNginxPublisher(lc)
+		// 建站已不以 nginx 为门禁：装好/启动 nginx 后补齐降级站点的 vhost 与端口发布
+		c.AppService.SetSiteHealer(c.SiteService)
 
 		// M6 扩展门面（T601）：容器内内置工具编译 → commit 固化 phpo/php:{version} → save 提升离线缓存 → 重建
 		c.ExtensionService = service.NewExtensionService(

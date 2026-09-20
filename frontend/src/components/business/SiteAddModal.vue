@@ -7,6 +7,7 @@ import ModalShell from '@/components/common/ModalShell.vue'
 import DangerConfirm from '@/components/business/DangerConfirm.vue'
 import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
+import { syncState } from '@/composables/useStateSync'
 import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
 import { addSite, hasBackend } from '@/api/site'
@@ -42,6 +43,11 @@ function fullPath(): string {
 }
 function containerPath(): string {
   return hostToContainer(app.env, fullPath())
+}
+// vhostPath vhost 落盘的宿主绝对路径：{NGINX_SITES_ROOT}/{域名}.conf（与后端 vhost.Manager#Path 同口径）
+function vhostPath(): string {
+  const d = domain.value.trim().toLowerCase() || '<domain>'
+  return `${app.env.NGINX_SITES_ROOT.replace(/\/+$/, '')}/${d}.conf`
 }
 function previewText(): string {
   const d = domain.value.trim() || '<domain>'
@@ -89,10 +95,13 @@ function onOk(): void {
   const finalArgs = ['site', 'add', d, '--port', String(portNum), '--php', php.value, '--rewrite', rewrite.value, '--root', rootPath]
   const finalMeta = { type: 'site-add', domain: d, port: portNum, php: php.value, rewrite: rewrite.value, root: rootPath }
   const label = `${t('siteAdd.title')} ${d}`
-  const submit = (): void => {
+  const submit = async (): Promise<void> => {
     if (!hasBackend()) { runTask(finalArgs, label, finalMeta); return }
-    addSite({ domain: d, port: portNum, php: php.value, root: rootPath, rewrite: rewrite.value })
-      .catch((e: unknown) => toast(String(e), 'err', 4600))
+    try {
+      await addSite({ domain: d, port: portNum, php: php.value, root: rootPath, rewrite: rewrite.value })
+      // 建站成功后立刻拉一次权威快照，列表当场见新站点（不依赖事件时序）
+      await syncState()
+    } catch (e: unknown) { toast(String(e), 'err', 4600) }
   }
   if (check.warnings.length) {
     emit('close')
@@ -128,6 +137,10 @@ function onOk(): void {
           <span class="rp-value" :title="fullPath()">{{ fullPath() }}</span>
           <span class="rp-arrow">→</span>
           <span class="rp-container" :title="containerPath()">{{ containerPath() }}</span>
+        </div>
+        <div class="root-full-path" :title="t('siteAdd.vhostPath')">
+          <span class="rp-label">{{ t('siteAdd.vhostPath') }}:</span>
+          <span class="rp-value" :title="vhostPath()">{{ vhostPath() }}</span>
         </div>
       </div>
       <div class="field">

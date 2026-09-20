@@ -49,6 +49,12 @@ function phpPendingWarn(php?: string): string {
   return `${PF.notInstalled}: PHP ${php || '未指定'}（站点仍会创建，安装或切换到可用 PHP 版本后生效）`
 }
 
+// Nginx 未就绪（未装 / 未运行）的降级告警：与后端 rules_site.go#nginxPendingWarn 文案逐字对齐
+function nginxPendingWarn(code: string): string {
+  const act = code === PF.notRunning ? '启动' : '安装'
+  return `${code}: Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；${act} Nginx 后自动补齐）`
+}
+
 // 端口占用的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐（§5.8：不改用户所填端口，仅暂不发布端口、暂不落盘 vhost）
 function portDegradeWarn(msg: string): string {
   return `${msg}（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）`
@@ -207,8 +213,9 @@ export function usePreflight() {
       }
       case 'site-add': {
         const { domain, port, php, root } = c
-        // 建站唯一的服务门禁是 nginx 已安装；PHP 等其余服务缺失只降级告警，不阻断
-        if (!installed('nginx').length) { errors.push(PF.nginxNeeded); break }
+        // 建站不设任何服务门禁（§5.8）：nginx 未装/未运行只降级告警，站点照常创建，装好或启动 nginx 后自动补齐 vhost
+        if (!installed('nginx').length) warnings.push(nginxPendingWarn(PF.notInstalled))
+        else if (!installed('nginx').some((v) => app.isServiceRunning('nginx', v))) warnings.push(nginxPendingWarn(PF.notRunning))
         const dd = validateDomain(domain)
         if (!dd.ok) { errors.push(dd.msg!); break }
         if (app.sites.some((s) => s.domain === dd.value)) errors.push(`${PF.domainExists}: ${dd.value}`)

@@ -392,6 +392,7 @@ const messages: Record<string, string> = {
   "siteAdd.root.hint": "相对 {root} 的子目录 · 默认与域名相同，可手动修改或点击「浏览」",
   "siteAdd.root.full": "宿主路径",
   "siteAdd.root.container": "容器路径",
+  "siteAdd.vhostPath": "vhost 宿主路径",
   "siteAdd.browse": "浏览",
   "siteAdd.browse.outsideRoot": "站点目录需位于 {root} 内",
   "docker.gateTitle": "需要 Docker 运行时",

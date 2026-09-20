@@ -190,3 +190,36 @@ func TestAppService_DockerStatus(t *testing.T) {
 		})
 	}
 }
+
+// healRecorder 记录「nginx 就绪后补齐降级站点」的调用次数
+type healRecorder struct{ calls int }
+
+func (h *healRecorder) ReconcileServe(context.Context) error { h.calls++; return nil }
+
+// TestAppService_NginxReadyHealsSites 建站已不以 nginx 为门禁，降级站点必须能自愈：
+// 安装 / 启动 nginx 后各补齐一次；其余服务（PHP 等）不触发该步骤。
+func TestAppService_NginxReadyHealsSites(t *testing.T) {
+	a, _, _, _, _, _ := newApp(t, nil)
+	h := &healRecorder{}
+	a.SetSiteHealer(h)
+	ctx := context.Background()
+
+	if err := a.Install(ctx, model.KindNginx, "alpine"); err != nil {
+		t.Fatal(err)
+	}
+	if h.calls != 1 {
+		t.Fatalf("安装 nginx 后应补齐站点一次，实得 %d", h.calls)
+	}
+	if err := a.Start(ctx, model.KindNginx, "alpine"); err != nil {
+		t.Fatal(err)
+	}
+	if h.calls != 2 {
+		t.Fatalf("启动 nginx 后应再补齐一次，实得 %d", h.calls)
+	}
+	if err := a.Install(ctx, model.KindPHP, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if h.calls != 2 {
+		t.Fatalf("非 nginx 的操作不应触发站点补齐，实得 %d", h.calls)
+	}
+}

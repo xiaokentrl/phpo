@@ -28,7 +28,9 @@ type fakeSiteStore struct {
 
 func newFakeSiteStore() *fakeSiteStore {
 	snap := model.NewSnapshot()
-	snap.Installed["php"] = []string{"8.4"} // vhost 可写的判定依据：所选 PHP 已安装
+	snap.Installed["php"] = []string{"8.4"}      // vhost 可写的判定依据之一：所选 PHP 已安装
+	snap.Installed["nginx"] = []string{"alpine"} // vhost 可写的判定依据之二：nginx 已装且在运行
+	snap.Running["nginx"] = []string{"alpine"}
 	return &fakeSiteStore{snap: snap}
 }
 func (f *fakeSiteStore) ListSites() ([]model.Site, error) {
@@ -383,5 +385,86 @@ func TestSiteService_SwitchPHP_RoundTrip(t *testing.T) {
 		if st.sites[0].PHP != php {
 			t.Fatalf("库 PHP 应为 %s，实得 %s", php, st.sites[0].PHP)
 		}
+	}
+}
+
+// TestSiteService_Add_DegradesWithoutNginx nginx 缺席不再是建站门禁：站点照常建目录 + 写 hosts + 落库，
+// 仅暂不写 vhost、暂不发布端口（否则 docker exec nginx -t 必失败，硬红线 2）；端口保留用户所填值。
+func TestSiteService_Add_DegradesWithoutNginx(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	st.snap.Installed["nginx"] = nil
+	st.snap.Running["nginx"] = nil
+
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatalf("nginx 缺席应放行建站，实得 %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "a.test.conf")); !os.IsNotExist(e) {
+		t.Fatal("nginx 未就绪时不得写 vhost")
+	}
+	if len(st.sites) != 1 || st.sites[0].Port != 8081 {
+		t.Fatalf("站点应落库并保留端口 8081，实得 %+v", st.sites)
+	}
+	if _, e := os.Stat(filepath.Join(env.WWWRoot, "a.test")); e != nil {
+		t.Fatalf("站点目录仍应创建: %v", e)
+	}
+
+	// 已装但未运行同样降级（docker exec 打不通）
+	st.snap.Installed["nginx"] = []string{"alpine"}
+	st.snap.Running["nginx"] = nil
+	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8082, PHP: "8.4"}); err != nil {
+		t.Fatalf("nginx 未运行应放行建站，实得 %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "b.test.conf")); !os.IsNotExist(e) {
+		t.Fatal("nginx 未运行时不得写 vhost")
+	}
+}
+
+// TestSiteService_ReconcileServe_HealsAfterNginxReady 装/启 nginx 后自动补齐降级站点：
+// 补写 vhost（上游与监听端口精确）、把端口发布给 nginx；幂等且不动仍降级的站点。
+func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	st.snap.Installed["nginx"] = nil
+	st.snap.Running["nginx"] = nil
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	// c.test 的端口被 mysql 占用：nginx 就绪后仍应维持降级，不得抢绑
+	st.snap.Installed["mysql"] = []string{"8.4"}
+	st.snap.Env[config.EnvKeyPort("mysql", "8.4")] = "3306"
+	if err := svc.Add(ctx, AddInput{Domain: "c.test", Port: 3306, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+
+	pub := &recordingPublisher{}
+	svc.SetNginxPublisher(pub)
+	st.snap.Installed["nginx"] = []string{"alpine"}
+	st.snap.Running["nginx"] = []string{"alpine"}
+
+	if err := svc.ReconcileServe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "a.test.conf"))
+	if e != nil {
+		t.Fatalf("nginx 就绪后应补写 a.test 的 vhost: %v", e)
+	}
+	if !strings.Contains(string(b), "listen 8081;") || !strings.Contains(string(b), "set $php_upstream php-8.4-fpm:9000;") {
+		t.Fatalf("补写的 vhost 端口/上游应精确:\n%s", b)
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "c.test.conf")); !os.IsNotExist(e) {
+		t.Fatal("端口仍被占用的站点应保持降级，不得写 vhost")
+	}
+	if len(pub.calls) != 1 || !containsInt(pub.calls[0], 8081) || containsInt(pub.calls[0], 3306) {
+		t.Fatalf("补齐后应发布 {8081}，实得 %v", pub.calls)
+	}
+
+	// 幂等：再次补齐不重复发布（无待补站点）
+	pub.calls = nil
+	if err := svc.ReconcileServe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.calls) != 0 {
+		t.Fatalf("无待补站点时不应重发布，实得 %v", pub.calls)
 	}
 }

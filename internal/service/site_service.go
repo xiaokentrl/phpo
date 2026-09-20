@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 	"sync/atomic"
 
 	"phpo/internal/config"
@@ -134,6 +135,64 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 	return err
 }
 
+// ReconcileServe 补齐降级站点：nginx 就绪（安装/启动）后，把「本应对外服务但 conf 缺失」的站点正文写盘、
+// 重载 nginx 并重发布站点端口。幂等：已落盘或仍不就绪（PHP 缺失 / 端口被占）的站点跳过，不重复触发发布。
+// 单站写失败不阻断其余站点，失败域名聚合为一个错误交由调用方记日志——站点维持降级，后续任一站点写操作仍可自愈。
+// 由 nginx 安装/启动任务内联调用，故自身不再产出 task（task.Manager 单飞，嵌套运行会 ErrBusy）。
+func (s *SiteService) ReconcileServe(ctx context.Context) error {
+	sites, err := s.store.ListSites()
+	if err != nil {
+		return err
+	}
+	snap, err := s.store.BuildSnapshot()
+	if err != nil {
+		return err
+	}
+	s.vhosts.Sync(sites)
+
+	var healed, failed []string
+	for _, st := range sites {
+		if !siteServeReady(snap, st) {
+			continue
+		}
+		if _, e := os.Stat(s.vhosts.Path(st.Domain)); e == nil {
+			continue // 已落盘，无需补齐
+		}
+		content := s.vhosts.Get(st.Domain) // 取缓存正文（保留手改），无缓存则按站点重算
+		if content == "" {
+			continue
+		}
+		if e := s.vhosts.Save(ctx, s.validate, st.Domain, content); e != nil {
+			failed = append(failed, st.Domain)
+			continue
+		}
+		healed = append(healed, st.Domain)
+	}
+	if len(healed) == 0 {
+		if len(failed) > 0 {
+			return fmt.Errorf("部分站点 vhost 补齐失败: %s", strings.Join(failed, ", "))
+		}
+		return nil
+	}
+	if s.reload != nil {
+		if err := s.reload.Reload(ctx); err != nil {
+			return fmt.Errorf("补齐 %d 个站点后重载 nginx 失败: %w", len(healed), err)
+		}
+	}
+	if s.publisher != nil {
+		if err := s.publisher.RepublishNginx(ctx, s.publishPorts(sites, "", 0)); err != nil {
+			return err
+		}
+	}
+	if err := s.emit(); err != nil {
+		return err
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("已补齐 %s，但部分站点 vhost 补齐失败: %s", strings.Join(healed, ", "), strings.Join(failed, ", "))
+	}
+	return nil
+}
+
 // ---- 内部助手 ----
 
 // normalize 填充默认根路径与端口，并归一化域名（零限制：不校验字符集）
@@ -170,12 +229,20 @@ func (s *SiteService) vhostContent(site model.Site) string {
 	return s.vhosts.Get(site.Domain)
 }
 
-// serveReady 判定新建站点能否立即对外服务：所选 PHP 已安装（否则 nginx -t 必失败，硬红线 2）
-// 且所选端口未被占用（占用判据与 preflight 同源——store.CollectUsedPorts，排除自身域名）。
+// serveReady 判定站点能否立即对外服务：nginx 已装且在运行、所选 PHP 已安装（否则 nginx -t 必失败，
+// 硬红线 2）、所选端口未被占用（占用判据与 preflight 同源——store.CollectUsedPorts，排除自身域名）。
 // 权威快照不可读按未就绪处理（宁可降级也不写出跑不通的 vhost）。
 func (s *SiteService) serveReady(site model.Site) bool {
 	snap, err := s.store.BuildSnapshot()
 	if err != nil {
+		return false
+	}
+	return siteServeReady(snap, site)
+}
+
+// siteServeReady 就绪判定的纯函数版：复用同一份快照，供建站与补齐共用
+func siteServeReady(snap *model.Snapshot, site model.Site) bool {
+	if len(snap.Installed["nginx"]) == 0 || len(snap.Running["nginx"]) == 0 {
 		return false
 	}
 	if !snap.HasVersion("php", site.PHP) {

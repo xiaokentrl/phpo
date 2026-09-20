@@ -18,6 +18,7 @@ func readyWorld() *World {
 	snap.Installed["nginx"] = []string{"alpine"}
 	snap.Installed["mysql"] = []string{"8.4"}
 	snap.Running["php"] = []string{"8.4"}
+	snap.Running["nginx"] = []string{"alpine"}
 	snap.Sites = []model.Site{{Domain: "demo.test", Port: 80, PHP: "8.4", Root: "/www/demo.test"}}
 	return &World{Snap: snap, Backups: []string{"backup-a.tar.gz"},
 		Offline: []model.CacheEntry{{Kind: "php", Version: "8.4"}}}
@@ -242,17 +243,35 @@ func TestSiteAddDomainExists(t *testing.T) {
 	}
 }
 
-func TestSiteNeedNginx(t *testing.T) {
+// TestSiteAddWithoutNginxWarn nginx 缺席不再是建站门禁：只降级告警，站点照常创建（vhost 暂不落盘、端口暂不发布）
+func TestSiteAddWithoutNginxWarn(t *testing.T) {
 	w := readyWorld()
 	w.Snap.Installed["nginx"] = nil
-	res := Run(ActSiteAdd, Ctx{Domain: "z.test", Port: "8082"}, w)
-	if firstErr(res) != errs.NginxNeeded {
-		t.Fatalf("缺 Nginx 应报 nginxNeeded，得 %q", firstErr(res))
+	w.Snap.Running["nginx"] = nil
+	res := Run(ActSiteAdd, Ctx{Domain: "z.test", Port: "8082", PHP: "8.4"}, w)
+	if !res.Ok {
+		t.Fatalf("未装 Nginx 应放行建站，实得错误 %+v", res.Errors)
+	}
+	if !contains(res.Warnings, wantNginxWarn(errs.NotInstalled)) {
+		t.Fatalf("应含 nginx 未装的降级告警，实得 %+v", res.Warnings)
 	}
 }
 
-// TestSiteAddNeedsOnlyNginx 建站唯一硬门禁是 nginx 已安装：未装 PHP 等其余服务只告警，不阻断（最小限制原则）
-func TestSiteAddNeedsOnlyNginx(t *testing.T) {
+// TestSiteAddNginxNotRunningWarn nginx 已装但未运行：同样只告警降级（写 vhost 会因 docker exec 失败）
+func TestSiteAddNginxNotRunningWarn(t *testing.T) {
+	w := readyWorld()
+	w.Snap.Running["nginx"] = nil
+	res := Run(ActSiteAdd, Ctx{Domain: "z.test", Port: "8082", PHP: "8.4"}, w)
+	if !res.Ok {
+		t.Fatalf("Nginx 未运行应放行建站，实得错误 %+v", res.Errors)
+	}
+	if !contains(res.Warnings, wantNginxWarn(errs.NotRunning)) {
+		t.Fatalf("应含 nginx 未运行的降级告警，实得 %+v", res.Warnings)
+	}
+}
+
+// TestSiteAddNeedsNoService 建站不设任何服务门禁：未装 PHP/MySQL 等其余服务只告警，不阻断（最小限制原则）
+func TestSiteAddNeedsNoService(t *testing.T) {
 	w := readyWorld()
 	w.Snap.Installed["php"] = nil
 	w.Snap.Installed["mysql"] = nil
@@ -287,6 +306,15 @@ func phpPendingWarn(php string) string {
 // portDegradeWarn 端口占用降级告警文案（与 rules_site.go#siteAdd 逐字对齐，前后端同口径）
 func portDegradeWarn(msg string) string {
 	return msg + "（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）"
+}
+
+// wantNginxWarn 测试侧锁死 nginx 未就绪的降级告警文案（与 rules_site.go#nginxPendingWarn、前端 usePreflight.ts 逐字对齐）
+func wantNginxWarn(code string) string {
+	act := "安装"
+	if code == errs.NotRunning {
+		act = "启动"
+	}
+	return code + ": Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；" + act + " Nginx 后自动补齐）"
 }
 
 // —— site-port（排除自身域名与当前端口）——

@@ -392,6 +392,7 @@ const messages: Record<string, string> = {
   "siteAdd.root.hint": "Subdirectory under {root} · Defaults to domain, edit or click Browse",
   "siteAdd.root.full": "Host path",
   "siteAdd.root.container": "Container path",
+  "siteAdd.vhostPath": "vhost host path",
   "siteAdd.browse": "Browse",
   "siteAdd.browse.outsideRoot": "Site directory must be inside {root}",
   "docker.gateTitle": "Docker runtime required",
