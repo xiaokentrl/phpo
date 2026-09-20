@@ -33,13 +33,13 @@ export function useModals() {
   const kindMeta = (k: string) => SVC_META[k as ServiceKind]
 
   function openInstallModal(kind: string): void {
-    // 原型 2879：工作目录未就绪 → 先走装机向导，完成后再接续安装
-    if (!app.dirReady.PHPO_HOME) { openHomeSetupWizard(() => modal.open(InstallModal, { kind })); return }
+    // 原型 2879：主目录/网站目录未就绪 → 先走装机向导，完成后再接续安装
+    if (!app.homeReady) { openHomeSetupWizard(() => modal.open(InstallModal, { kind })); return }
     modal.open(InstallModal, { kind })
   }
   function openSiteAddModal(): void {
-    // 原型 3103：工作目录未就绪 → 先走装机向导，完成后再接续建站
-    if (!app.dirReady.PHPO_HOME) { openHomeSetupWizard(() => modal.open(SiteAddModal, {})); return }
+    // 原型 3103：主目录/网站目录未就绪 → 先走装机向导，完成后再接续建站
+    if (!app.homeReady) { openHomeSetupWizard(() => modal.open(SiteAddModal, {})); return }
     modal.open(SiteAddModal, {})
   }
   function openRewriteModal(domain: string): void {

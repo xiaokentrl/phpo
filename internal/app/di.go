@@ -58,12 +58,16 @@ type Container struct {
 	UpdateService *service.UpdateService
 }
 
+// Version 应用版本单一真实来源；默认值供 `go run`/单测使用，打包时由 Taskfile 经
+// `-ldflags "-X phpo/internal/app.Version=$(version)"` 从 wails.json 注入，使运行时/升级比较基准与安装包版本一致。
+var Version = "0.1.0"
+
 func NewContainer() *Container {
 	return &Container{
 		Emitter:        NopEmitter{},
 		Lifecycle:      NewLifecycle(),
 		Env:            config.DerivePaths(config.DefaultHome, config.DefaultWWW),
-		CurrentVersion: "0.1.0", // 与 app.go AppInfo 一致；升级比较基准
+		CurrentVersion: Version, // 与安装包版本同源（见 scripts/bump-version.sh）
 	}
 }
 
@@ -92,18 +96,22 @@ func (c *Container) Build() *Assembly {
 			st.Close()
 			return err
 		}
-		// T607：装机向导已持久化 PHPO_HOME/WWW_ROOT 时优先于默认，使自定义工作目录跨会话生效
-		// （后端 Container.Env 与前端 env 快照同源，避免状态漂移；首启无记录则维持默认，向导完成后再落库）
-		if h, ok, err := st.GetEnv("PHPO_HOME"); err == nil && ok && h != "" {
-			w, _, _ := st.GetEnv("WWW_ROOT")
-			c.Env = config.DerivePaths(h, w)
-			env = config.ExpandEnvHomes(c.Env)
+		// 配置唯一权威：载入 XDG config.yaml（缺失即首启空配置，回落默认根目录）；SQLite 退居纯运行态。
+		// 后端 Container.Env 与前端 snapshot.env 同源于此，杜绝分散/不同步。
+		cfg, err := config.LoadConfigStore()
+		if err != nil {
+			st.Close()
+			_ = cli.Close()
+			return err
 		}
+		st.SetEnvProvider(cfg)
+		c.Env = cfg.Env()       // 原始根派生（含 `~`，供展示/快照）
+		env = cfg.ExpandedEnv() // 展开 `~` 供真实 IO / 容器挂载
 		tm := task.NewManager(c.Emitter)
-		lc := service.NewLifecycle(cli, st, c.Emitter, env)
+		lc := service.NewLifecycle(cli, st, c.Emitter, env, cfg)
 		cacheMgr := steps.NewCacheManager(env, c.Emitter, cli)
 		c.AppService = service.NewAppService(lc, tm, cacheMgr, cli, env)
-		c.EnvService = service.NewEnvService(st, c.Emitter)
+		c.EnvService = service.NewEnvService(cfg, st, c.Emitter)
 		c.ConfigService = service.NewConfigService(env, tm)
 
 		// M4 站点对象图：vhost 管理器 + hosts + 回收站 + 真实 nginx -t/ reload（走 phpo-nginx 容器）
@@ -135,7 +143,7 @@ func (c *Container) Build() *Assembly {
 		c.BackupService = service.NewBackupService(
 			st, lc, cacheMgr, cli,
 			func(path string) (service.SnapshotReader, error) { return store.Open(path) },
-			c.Emitter, env, tm,
+			c.Emitter, env, cfg, tm,
 		)
 
 		// M6 诊断门面（T603）：§5.7 十五项纯读诊断 + 状态校准/清临时目录两类一键修复
@@ -150,8 +158,12 @@ func (c *Container) Build() *Assembly {
 		// M6 离线缓存门面（T606）：§5.14.10 统计/校验/三模式清理/单条删除/lookup/promote/临时目录全接真
 		c.OfflineService = service.NewOfflineService(cacheMgr, st, engine.NewAudit(auditPath), c.Emitter, tm)
 
-		// M6 装机向导门面（T607）：创建工作目录子树 + 落地派生 env + dirReady，广播 state:changed
-		c.WizardService = service.NewWizardService(st, c.Emitter, tm)
+		// M6 装机向导门面（T607）：创建工作目录子树 + 落地两根目录到 config.yaml + dirReady，广播 state:changed
+		c.WizardService = service.NewWizardService(cfg, st, c.Emitter, tm)
+
+		// 首启先决门禁：按 config.yaml 两根是否持久化 + 主目录/网站目录是否实际存在重算双就绪标记（缺失则前端永久阻断写操作）
+		// DB 失败时维持原标记（首启默认未就绪 → 仍安全阻断），不引入冻结协议外事件
+		_, _ = c.WizardService.RefreshDirReady()
 
 		// M6 升级门面（T604 / 硬红线 5/6）：编排器 + 三段式 UpdateService；无发布源时 Check 返回错误而非 panic
 		// §5.9 中断升级下次启动自动回滚：pending 标记存在且运行版本≠目标 → 恢复旧二进制（失败不阻断 GUI）

@@ -40,7 +40,7 @@ func newApp(t *testing.T, probeErr error) (*AppService, *fakeDocker, *fakeStore,
 	home := t.TempDir()
 	d, s, em := newFakeDocker(), newFakeStore(), &fakeEmitter{}
 	env := config.DerivePaths(home, home+"/www")
-	lc := NewLifecycle(d, s, em, env)
+	lc := NewLifecycle(d, s, em, env, s)
 	ens := &fakeEnsurer{}
 	tm := task.NewManager(em)
 	return NewAppService(lc, tm, ens, okProbe{err: probeErr}, env), d, s, em, ens, env
@@ -129,8 +129,8 @@ func TestAppService_StartStopRemove_ViaTask(t *testing.T) {
 
 func TestAppService_UnknownKindFailsInsideTask(t *testing.T) {
 	a, _, _, _, _, _ := newApp(t, nil)
-	// redis 未在 M3 注册装配策略：容器步内 lifecycle.Install 报错 → 任务失败
-	if err := a.Install(context.Background(), model.KindRedis, "8"); err == nil {
+	// mongodb 从未注册装配策略：容器步内 lifecycle.Install 报错 → 任务失败
+	if err := a.Install(context.Background(), model.ServiceKind("mongodb"), "1"); err == nil {
 		t.Fatal("未注册服务种类应报错")
 	}
 }

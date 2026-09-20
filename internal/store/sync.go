@@ -2,8 +2,6 @@
 package store
 
 import (
-	"database/sql"
-
 	"phpo/internal/model"
 )
 
@@ -14,7 +12,7 @@ func (s *Store) ApplyTaskResult(meta model.TaskMeta, snap *model.Snapshot) error
 		return err
 	}
 	defer tx.Rollback()
-	// 全量物化当前快照：installed / sites / env / ext / dirReady
+	// 全量物化运行态快照：installed / sites / ext / dirReady（配置真相在 config.yaml，不在此重放）
 	if _, err := tx.Exec(`DELETE FROM installed`); err != nil {
 		return err
 	}
@@ -41,9 +39,6 @@ func (s *Store) ApplyTaskResult(meta model.TaskMeta, snap *model.Snapshot) error
 			return err
 		}
 	}
-	if err := replaceKV(tx, `env`, snap.Env); err != nil {
-		return err
-	}
 	if _, err := tx.Exec(`DELETE FROM php_extensions`); err != nil {
 		return err
 	}
@@ -68,16 +63,4 @@ func (s *Store) ApplyTaskResult(meta model.TaskMeta, snap *model.Snapshot) error
 	}
 	_ = meta // meta 的语义已由调用方反映进 snap；保留参数以便审计关联
 	return tx.Commit()
-}
-
-func replaceKV(tx *sql.Tx, table string, kv map[string]string) error {
-	if _, err := tx.Exec(`DELETE FROM ` + table); err != nil {
-		return err
-	}
-	for k, v := range kv {
-		if _, err := tx.Exec(`INSERT INTO `+table+`(key,value) VALUES(?,?)`, k, v); err != nil {
-			return err
-		}
-	}
-	return nil
 }

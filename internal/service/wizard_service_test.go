@@ -1,4 +1,4 @@
-// T607 装机向导服务单测：校验（穿越/空/同路径拒绝 + 建树可写）与落地（env 派生 + dirReady + state:changed）。
+// T607 装机向导服务单测：校验（穿越/空/同路径拒绝 + 建树可写）与落地（config.yaml 两根 + dirReady + state:changed）。
 package service
 
 import (
@@ -14,23 +14,26 @@ import (
 	"phpo/pkg/errs"
 )
 
-type fakeWizardStore struct {
-	env map[string]string
-	dir map[string]bool
+// fakeWizard 同满足 WizardConfig（SetRoots/Roots）与 WizardStore（SetDirReady/BuildSnapshot）：内存两根 + 就绪标记
+type fakeWizard struct {
+	home, www string
+	dir       map[string]bool
 }
 
-func newFakeWizardStore() *fakeWizardStore {
-	return &fakeWizardStore{env: map[string]string{}, dir: map[string]bool{}}
+func newFakeWizard() *fakeWizard { return &fakeWizard{dir: map[string]bool{}} }
+func (f *fakeWizard) SetRoots(home, www string) error {
+	f.home, f.www = home, www
+	return nil
 }
-func (f *fakeWizardStore) SetEnv(k, v string) error                { f.env[k] = v; return nil }
-func (f *fakeWizardStore) SetDirReady(k string, r bool) error      { f.dir[k] = r; return nil }
-func (f *fakeWizardStore) BuildSnapshot() (*model.Snapshot, error) { return model.NewSnapshot(), nil }
+func (f *fakeWizard) Roots() (string, string)                 { return f.home, f.www }
+func (f *fakeWizard) SetDirReady(k string, r bool) error      { f.dir[k] = r; return nil }
+func (f *fakeWizard) BuildSnapshot() (*model.Snapshot, error) { return model.NewSnapshot(), nil }
 
-func newWizardSvc(t *testing.T) (*WizardService, *fakeWizardStore, *fakeEmitter) {
+func newWizardSvc(t *testing.T) (*WizardService, *fakeWizard, *fakeEmitter) {
 	t.Helper()
-	st := newFakeWizardStore()
+	st := newFakeWizard()
 	em := &fakeEmitter{}
-	return NewWizardService(st, em, task.NewManager(em)), st, em
+	return NewWizardService(st, st, em, task.NewManager(em)), st, em
 }
 
 func TestHomeVerify_CreatesTree(t *testing.T) {
@@ -93,12 +96,12 @@ func TestHomeEnsure_PersistsAndEmits(t *testing.T) {
 	if st.dir["PHPO_HOME"] != true {
 		t.Fatalf("dirReady[PHPO_HOME] 期望 true，得 %v", st.dir)
 	}
-	want := config.DerivePaths(home, www)
-	if st.env["PHPO_HOME"] != want.PHPOHome || st.env["WWW_ROOT"] != want.WWWRoot {
-		t.Fatalf("env PHPO_HOME/WWW_ROOT 落地不符：%v / %v", st.env["PHPO_HOME"], st.env["WWW_ROOT"])
+	if st.dir["WWW_ROOT"] != true {
+		t.Fatalf("dirReady[WWW_ROOT] 期望 true，得 %v", st.dir)
 	}
-	if st.env["OFFLINE_ROOT"] != want.OfflineRoot {
-		t.Fatalf("派生 OFFLINE_ROOT 不符：期望 %s 得 %s", want.OfflineRoot, st.env["OFFLINE_ROOT"])
+	want := config.DerivePaths(home, www)
+	if st.home != want.PHPOHome || st.www != want.WWWRoot {
+		t.Fatalf("config.yaml 两根落地不符：home=%q www=%q（期望 %q / %q）", st.home, st.www, want.PHPOHome, want.WWWRoot)
 	}
 	if !em.has("state:changed") {
 		t.Fatalf("HomeEnsure 应广播 state:changed，得 %v", em.events)
@@ -110,4 +113,69 @@ func TestHomeEnsure_RejectsInvalid(t *testing.T) {
 	if err := svc.HomeEnsure(context.Background(), "~/a/../b", "~/www"); err == nil {
 		t.Fatal("期望路径穿越被拒并返回错误")
 	}
+}
+
+// RefreshDirReady 依据「env 已持久化 + 目录实际存在」重算双就绪标记：首启/缺失/被删均回落 false（永久阻断写操作）。
+func TestRefreshDirReady(t *testing.T) {
+	t.Run("env为空双false", func(t *testing.T) {
+		svc, st, _ := newWizardSvc(t)
+		changed, err := svc.RefreshDirReady()
+		if err != nil {
+			t.Fatalf("RefreshDirReady err: %v", err)
+		}
+		if !changed {
+			t.Fatal("两根全空应报告降级变化")
+		}
+		if st.dir["PHPO_HOME"] || st.dir["WWW_ROOT"] {
+			t.Fatalf("期望双 false，得 %v", st.dir)
+		}
+	})
+
+	t.Run("两根齐且目录存在双true", func(t *testing.T) {
+		svc, st, _ := newWizardSvc(t)
+		home := filepath.Join(t.TempDir(), "phpo")
+		www := filepath.Join(t.TempDir(), "www")
+		if err := os.MkdirAll(home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(www, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		st.home, st.www = home, www
+		changed, err := svc.RefreshDirReady()
+		if err != nil {
+			t.Fatalf("RefreshDirReady err: %v", err)
+		}
+		if changed {
+			t.Fatal("双就绪不应报告降级")
+		}
+		if !st.dir["PHPO_HOME"] || !st.dir["WWW_ROOT"] {
+			t.Fatalf("期望双 true，得 %v", st.dir)
+		}
+	})
+
+	t.Run("目录被删回落false", func(t *testing.T) {
+		svc, st, _ := newWizardSvc(t)
+		base := t.TempDir()
+		home := filepath.Join(base, "phpo")
+		www := filepath.Join(base, "www")
+		if err := os.MkdirAll(home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// www 目录刻意不创建 → 两根已存但目录不存在 → WWW_ROOT 回落 false
+		st.home, st.www = home, www
+		changed, err := svc.RefreshDirReady()
+		if err != nil {
+			t.Fatalf("RefreshDirReady err: %v", err)
+		}
+		if !changed {
+			t.Fatal("WWW_ROOT 缺失应报告降级")
+		}
+		if !st.dir["PHPO_HOME"] {
+			t.Fatal("PHPO_HOME 目录存在应保持 true")
+		}
+		if st.dir["WWW_ROOT"] {
+			t.Fatalf("WWW_ROOT 目录不存在应回落 false，得 %v", st.dir)
+		}
+	})
 }

@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.8.0
+> **文档版本**：v2.9.0
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -11,6 +11,7 @@
 > **核心原则**：以真实开发者工作流为标准；最小限制；用户是程序员；**离线优先**
 > **端口策略**：站点端口默认 80，被占用则在 1–65535 内顺延首个可用（不报错、无窗口上限）；服务端口占用仍报错；用户可指定任意端口
 > **应用升级**：支持版本检查和自动升级
+> **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 每服务版本的明文密码/宿主端口；SQLite 仅存运行态；不再使用 `~/phpo/.env` 或 `~/.phpo/config.json`
 > **密码策略**：明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看
 > **最小限制原则**：除 8 条硬红线外，所有限制放开或降级为警告
 > **Docker 清洁原则**：所有操作幂等、原子、可回滚、可清理
@@ -215,7 +216,7 @@
 
 | # | 规则 | 说明 |
 |---|------|------|
-| 1 | 明文存储 | 存于 `~/phpo/.env` 与 SQLite `env` 表 |
+| 1 | 明文存储 | 存于 `config.yaml`（各平台 XDG 用户配置目录内的 `phpo` 子目录）的 `services.{kind}.{version}.password`；经快照 `env` 扁平键（`{KIND}_{VER}_PASSWORD`）回显前端 |
 | 2 | 默认 `123456` | 新建服务时自动填入 |
 | 3 | 可修改 | UI 提供行内编辑 |
 | 4 | 可为空 | 空字符串是合法密码 |
@@ -357,8 +358,9 @@
 | 前端框架 | Vue 3 + TS + Vite | Vue 3.5+ / TS 5.x / Vite 5.x | 10 屏 + 12 模态的规模 |
 | 状态管理 | Pinia | 2.x | 替代原型全局 `state` |
 | 状态同步 | Wails Events | — | 事件推送替代全量 `render()` |
-| 持久化 | SQLite（pure Go） | `modernc.org/sqlite` | CGO_ENABLED=0 交叉编译 |
-| 密码存储 | 明文（`.env` + SQLite） | — | 默认 `123456`；允许为空；长度不限 |
+| 持久化 | SQLite（pure Go） | `modernc.org/sqlite` | CGO_ENABLED=0 交叉编译；**仅存运行态** |
+| 配置存储 | YAML `config.yaml` | `gopkg.in/yaml.v3` | 单一配置权威，落各平台 XDG 用户配置目录内的 `phpo` 子目录 |
+| 密码存储 | 明文（`config.yaml`） | — | 默认 `123456`；允许为空；长度不限 |
 | 容器引擎 | Docker SDK | `docker/docker/client` | 流式进度 |
 | 归档 | 标准库 | `archive/tar + compress/gzip` | 无外部依赖 |
 | 版本比较 | `Masterminds/semver` | v3 | SemVer 标准实现 |
@@ -596,7 +598,7 @@ phpo/
 ├── LICENSE
 ├── .gitignore  .editorconfig
 ├── .golangci.yml  .air.toml
-├── .env.example
+├── config.example.yaml
 │
 ├── internal/                        # 私有业务码
 │   ├── app/
@@ -608,7 +610,8 @@ phpo/
 │   ├── config/
 │   │   ├── config.go
 │   │   ├── paths.go
-│   │   ├── env.go
+│   │   ├── configstore.go              # 单一配置权威（YAML config.yaml：根目录 + 密码 + 端口）
+│   │   ├── userdata.go                 # XDG 用户配置目录解析（config.yaml / phpo.db / logs / trash 落地根）
 │   │   ├── password.go
 │   │   ├── versions.go
 │   │   └── offline.go
@@ -631,7 +634,6 @@ phpo/
 │   │   ├── sqlite.go
 │   │   ├── snapshot.go
 │   │   ├── sync.go
-│   │   ├── password.go
 │   │   ├── port.go
 │   │   ├── operation.go
 │   │   ├── trash.go
@@ -934,11 +936,9 @@ phpo/
 ### 4.2 运行时用户数据目录
 
 ```
-~/.phpo/                              # Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
-├── config.json
-├── state.json
-├── phpo.db
-├── dir-ready.json
+~/.phpo/                              # 用户数据目录 · Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
+├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + services.{kind}.{version}.{password,port}
+├── phpo.db                           # SQLite，仅存运行态（installed/running/sites/php_extensions/dir_ready/trash/operations/offline/cache_manifest）
 ├── logs/
 │   ├── phpo.log
 │   └── operations.log
@@ -971,7 +971,7 @@ phpo/
     ├── redis/8/{image.tar, manifest.json}
     └── nginx/alpine/{image.tar, manifest.json}
 
-~/phpo/.env                           # 明文密码存储
+# 注：密码/端口/工作根目录统一存于用户数据目录内的 config.yaml（见上），不再有 ~/phpo/.env。
 
 ~/www/                                # WWW_ROOT（默认，可改）
 ├── demo.test/
@@ -995,6 +995,8 @@ phpo/
 ### 5.2 密码明文存储
 
 **五项规则**：明文存储 + 默认 `123456` + 可修改 + 可为空 + 长度不校验 + UI 可查看。
+
+**存储位置**：`config.yaml` 的 `services.{kind}.{version}.password`（各平台 XDG 用户配置目录内的 `phpo` 子目录）；文件权限 `0600`。不再有 `~/phpo/.env`，SQLite 不再持有 `env` 表；前端 `app.env.*` 契约经快照 `env` 扁平键合成保持不变。
 
 ### 5.3 templates 目录
 
@@ -1465,7 +1467,7 @@ type OfflineService interface {
 | backup / restore | `internal/service/backup_service.go` | `BackupView.vue` |
 | offline 离线缓存 | `internal/cache/* + internal/service/offline_service.go` | `OfflineView.vue` + `useCache.ts` + `cacheStore.ts` |
 | 4 条旁路 | `internal/task/steps/*.go` | 统一走 TaskDrawer |
-| 密码明文存储 | `internal/config/password.go` + `internal/store/password.go` | `PasswordField.vue` |
+| 密码明文存储 | `internal/config/configstore.go`（config.yaml） | `PasswordField.vue` |
 | SVC_META.suggested | `configs/versions.json` | `useVersions.ts` |
 | php-select change | `internal/service/site_service.go#SwitchPHP` | `PhpSelect.vue + usePhpSwitch.ts` |
 | stopped 反向推导 | `internal/engine/calibrate.go` | `useStateSync.ts` |
@@ -1551,7 +1553,7 @@ type OfflineService interface {
 | 路径大小写 | 不敏感 | 默认不敏感 | 敏感 |
 | 系统托盘 | ✅ | ✅ | ⚠️ 需 libappindicator |
 | 代码签名 | EV 证书 | Developer ID + 公证 | 无 |
-| `.env` 权限 | NTFS ACL | `chmod 600` | `chmod 600` |
+| `config.yaml` 权限 | NTFS ACL | `chmod 600` | `chmod 600` |
 | 升级安装方式 | NSIS 静默安装 | .app 替换 | AppImage 替换 |
 | 缓存路径 | `%USERPROFILE%\phpo\offline\` | `~/phpo/offline/` | `~/phpo/offline/` |
 | 缓存文件权限 | NTFS ACL | `chmod 644` | `chmod 644` |
@@ -1702,11 +1704,12 @@ type OfflineService interface {
 
 ---
 
-**phpo 项目总纲 v2.8.0**
+**phpo 项目总纲 v2.9.0**
 
 - 技术栈：Wails ≥ 3 + Go ≥ 1.27 + Vue 3.5+ + TypeScript
 - 目标：Windows / macOS / Linux 三平台桌面应用
 - 形态：**仅 GUI，不提供 CLI**
+- 配置存储：**单一 `config.yaml`（YAML，各平台 XDG 用户配置目录内 `phpo` 子目录）承载根目录 + 明文密码 + 端口；SQLite 仅存运行态；不再有 `~/phpo/.env` / `~/.phpo/config.json`**
 - 密码：**明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看**
 - 版本：**不限制字符集，仅做路径安全校验**
 - 端口：**站点端口默认 80，占用则顺延 1–65535 首个可用（不报错）；服务端口占用报错；用户可指定任意端口**

@@ -1,6 +1,6 @@
 // T602 · 备份 / 恢复 / 删除备份：把 PHPO_HOME 配置/数据、WWW 站点、离线缓存与 SQLite 快照打成 tar.gz，
 // 并支持异机恢复（清空 phpo 命名空间 → 解包落盘 → 应用内逻辑重放 SQLite → 重建容器，§5.13.11）。
-// 全程三段式（硬红线 5）+ 后端权威广播（硬红线 4）；不含 Docker 镜像（原型 restore warn4）；.env/密码原样随 SQLite 快照打包（用户裁决）。
+// 全程三段式（硬红线 5）+ 后端权威广播（硬红线 4）；不含 Docker 镜像（原型 restore warn4）；config.yaml/密码原样随 SQLite 快照打包（用户裁决）。
 package service
 
 import (
@@ -56,6 +56,12 @@ type SnapshotReader interface {
 // SnapshotOpener 打开归档内 db/phpo.db 为只读快照（DI 注入 store.Open；单测注入假件）
 type SnapshotOpener func(path string) (SnapshotReader, error)
 
+// BackupConfig 配置权威门面子集（*config.ConfigStore 满足）：取 config.yaml 路径 + 落盘后热重载内存态
+type BackupConfig interface {
+	Path() string
+	Reload() error
+}
+
 // BackupService 备份门面；写操作一律经 task.Manager 三段式
 type BackupService struct {
 	store BackupStore
@@ -65,12 +71,13 @@ type BackupService struct {
 	open  SnapshotOpener
 	em    Emitter
 	env   config.Env
+	cfg   BackupConfig // config.yaml：随包携带、恢复落回并热重载
 	tasks *task.Manager
 	seq   atomic.Uint64
 }
 
-func NewBackupService(store BackupStore, lc BackupLifecycle, imgs BackupImages, dock BackupDocker, open SnapshotOpener, em Emitter, env config.Env, tm *task.Manager) *BackupService {
-	return &BackupService{store: store, lc: lc, imgs: imgs, dock: dock, open: open, em: em, env: env, tasks: tm}
+func NewBackupService(store BackupStore, lc BackupLifecycle, imgs BackupImages, dock BackupDocker, open SnapshotOpener, em Emitter, env config.Env, cfg BackupConfig, tm *task.Manager) *BackupService {
+	return &BackupService{store: store, lc: lc, imgs: imgs, dock: dock, open: open, em: em, env: env, cfg: cfg, tasks: tm}
 }
 
 // dbKinds 备份前需暂停以保证宿主数据目录一致的服务种类
@@ -169,7 +176,7 @@ func (s *BackupService) Create(ctx context.Context) (model.BackupFile, error) {
 				return s.store.BackupTo(dbSnap)
 			}, Clean: func() { _ = os.RemoveAll(tmpDir) }},
 			&task.FuncStep{StepName: "打包归档", Exec: func(_ context.Context, log task.StepLog) error {
-				tops, err := archive.Create(archivePath, backupSources(s.env, dbSnap))
+				tops, err := archive.Create(archivePath, backupSources(s.env, s.cfg.Path(), dbSnap))
 				if err != nil {
 					return err
 				}
@@ -355,10 +362,16 @@ func (s *BackupService) materialize(staging string) error {
 			return err
 		}
 	}
-	// 明文 .env 原样落回 PHPO_HOME（用户裁决：随包携带、恢复覆盖，§1.5）
-	envSrc := filepath.Join(staging, "dot-env", ".env")
-	if b, err := os.ReadFile(envSrc); err == nil {
-		if err := os.WriteFile(filepath.Join(s.env.PHPOHome, ".env"), b, 0o600); err != nil {
+	// 明文 config.yaml 原样落回 XDG 用户配置目录（用户裁决：随包携带、恢复覆盖，§1.5），并热重载内存态供后续重建读取
+	cfgSrc := filepath.Join(staging, "config", "config.yaml")
+	if b, err := os.ReadFile(cfgSrc); err == nil {
+		if err := os.MkdirAll(filepath.Dir(s.cfg.Path()), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(s.cfg.Path(), b, 0o600); err != nil {
+			return err
+		}
+		if err := s.cfg.Reload(); err != nil {
 			return err
 		}
 	}
@@ -417,9 +430,9 @@ func snapshotPayload(st BackupStore) map[string]any {
 	return map[string]any{"snapshot": snap}
 }
 
-// backupSources 归档内容清单：PHPO_HOME 五服务目录 + 离线缓存 + WWW 站点 + SQLite 快照 + 明文 .env；不含 Docker 镜像。
-// 用户裁决：.env 与密码原样打包（明文策略，§1.5），恢复时一并落回。
-func backupSources(env config.Env, dbSnap string) []archive.Source {
+// backupSources 归档内容清单：PHPO_HOME 五服务目录 + 离线缓存 + WWW 站点 + SQLite 快照 + 明文 config.yaml；不含 Docker 镜像。
+// 用户裁决：config.yaml 与密码原样打包（明文策略，§1.5），恢复时一并落回。
+func backupSources(env config.Env, cfgPath, dbSnap string) []archive.Source {
 	return []archive.Source{
 		{ArcPrefix: "php", HostPath: env.PHPRoot},
 		{ArcPrefix: "nginx", HostPath: env.NginxRoot},
@@ -429,7 +442,7 @@ func backupSources(env config.Env, dbSnap string) []archive.Source {
 		{ArcPrefix: "offline", HostPath: env.OfflineRoot},
 		{ArcPrefix: "www", HostPath: env.WWWRoot},
 		{ArcPrefix: "db/phpo.db", HostPath: dbSnap},
-		{ArcPrefix: "dot-env/.env", HostPath: filepath.Join(env.PHPOHome, ".env")},
+		{ArcPrefix: "config/config.yaml", HostPath: cfgPath},
 	}
 }
 

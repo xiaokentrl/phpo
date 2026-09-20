@@ -1,6 +1,6 @@
 -- 0001 init：核心状态表（后端唯一权威持久层）
+-- 注：配置真相（目录/密码/端口）改由 XDG config.yaml（internal/config.ConfigStore）持有；SQLite 不再设 env 表。
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE env (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE installed (
   kind    TEXT NOT NULL,
   version TEXT NOT NULL,
@@ -38,5 +38,4 @@ DROP TABLE IF EXISTS dir_ready;
 DROP TABLE IF EXISTS php_extensions;
 DROP TABLE IF EXISTS sites;
 DROP TABLE IF EXISTS installed;
-DROP TABLE IF EXISTS env;
 DROP TABLE IF EXISTS meta;

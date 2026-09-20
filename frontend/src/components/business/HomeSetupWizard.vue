@@ -2,7 +2,8 @@
 // 装机向导：忠实迁移原型 openHomeSetupWizard（1959–2132），三步 + 目录树预览 + 校验
 // 验证/确认走后端 HomeVerify / HomeEnsure（硬红线 4/5：确认后不本地乐观更新，等 state:changed 回流）
 // 无宿主（纯 Vite demo）时回退到原型动画 + 本地写 env/dirReady
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { Dialogs } from '@wailsio/runtime'
 import ModalShell from '@/components/common/ModalShell.vue'
 import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
@@ -10,21 +11,62 @@ import { useAppState } from '@/stores/appState'
 import { HOME_SUBDIRS } from '@/constants/home'
 import { DEFAULT_HOME, DEFAULT_WWW, derivePaths } from '@/utils/path'
 import { hasBackend } from '@/api/site'
-import { homeEnsure, homeVerify } from '@/api/wizard'
+import { getHomeDefaults, homeEnsure, homeVerify } from '@/api/wizard'
 
 const props = defineProps<{ onReady?: () => void; locked?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 const app = useAppState()
+const canBrowse = hasBackend() // 有宿主才提供原生目录选择器（沿用 SiteAddModal 同套 Dialogs.OpenFile）
 
 const step = ref(1)
 const verified = ref(false)
 const verifying = ref(false)
+// env 解析出的默认目录（快照 env > config.yaml 的 phpo_home > ~/phpo）：作输入框预填与浏览起始目录的兜底源
+const envHome = ref('')
+const envWww = ref('')
+// 初值取快照 env（首启为空），随后 onMounted 用后端 HomeDefaults 覆盖为 config.yaml 定义的目录
 const homeVal = ref(app.env.PHPO_HOME || DEFAULT_HOME)
 const wwwVal = ref(app.env.WWW_ROOT || DEFAULT_WWW)
+const homeDirty = ref(false)
+const wwwDirty = ref(false)
 
-const normHome = computed(() => homeVal.value.trim().replace(/\/+$/, '') || DEFAULT_HOME)
-const normWww = computed(() => wwwVal.value.trim().replace(/\/+$/, '') || DEFAULT_WWW)
+// normHome/normWww：trim 去尾斜杠；输入框为空时回落 env 定义目录，再退 DEFAULT_*
+const normHome = computed(() => homeVal.value.trim().replace(/\/+$/, '') || envHome.value || DEFAULT_HOME)
+const normWww = computed(() => wwwVal.value.trim().replace(/\/+$/, '') || envWww.value || DEFAULT_WWW)
+
+// 载入后端解析的工作目录默认值：config.yaml 预置自定义根目录时优先于硬编码 ~/phpo（需求 1）
+onMounted(async () => {
+  const d = await getHomeDefaults()
+  if (!d) return
+  envHome.value = d.home
+  envWww.value = d.www
+  if (!homeDirty.value && d.home) homeVal.value = d.home
+  if (!wwwDirty.value && d.www) wwwVal.value = d.www
+})
+
+// browseDir 打开原生选目录框，选中绝对路径回填对应输入框（home=PHPO_HOME / www=WWW_ROOT）
+// 起始目录：用户已填则打开到该目录，否则打开到 env 定义目录（需求 2）
+async function browseDir(target: 'home' | 'www'): Promise<void> {
+  const startDir = (target === 'home' ? homeVal.value.trim() : wwwVal.value.trim())
+    || (target === 'home' ? envHome.value : envWww.value)
+    || (target === 'home' ? DEFAULT_HOME : DEFAULT_WWW)
+  const picked = await Dialogs.OpenFile({
+    Title: t(target === 'home' ? 'wiz.s1.title' : 'wiz.s2.title'),
+    CanChooseDirectories: true,
+    CanChooseFiles: false,
+    Directory: startDir,
+  })
+  const abs = String(picked || '').replace(/\/+$/, '')
+  if (!abs) return
+  if (target === 'home') {
+    homeVal.value = abs
+    homeDirty.value = true
+  } else {
+    wwwVal.value = abs
+    wwwDirty.value = true
+  }
+}
 
 interface Seg { c: string; x: string }
 const pad = (p: string) => ' '.repeat(Math.max(2, 22 - p.length))
@@ -140,6 +182,7 @@ async function doConfirm(): Promise<void> {
     if (!hasBackend()) { // 无宿主：本地占位落地
       Object.assign(app.env, derivePaths(h, w))
       app.dirReady.PHPO_HOME = true
+      app.dirReady.WWW_ROOT = true
     }
     emit('close')
     props.onReady?.()
@@ -171,7 +214,10 @@ async function doConfirm(): Promise<void> {
         <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s1.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s1.desc') }}</div></div>
         <div class="field">
           <label class="mono" style="font-size: 12px">PHPO_HOME</label>
-          <input v-model="homeVal" type="text" spellcheck="false" autocomplete="off">
+          <div class="input-with-action">
+            <input v-model="homeVal" type="text" spellcheck="false" autocomplete="off" @input="homeDirty = true">
+            <button v-if="canBrowse" class="input-action-btn" type="button" @click="browseDir('home')">{{ t('siteAdd.browse') }}</button>
+          </div>
           <div class="hint">💡 {{ t('wiz.s1.hint') }}</div>
         </div>
         <div class="field"><label>{{ t('wiz.s1.tree') }}</label>
@@ -182,7 +228,10 @@ async function doConfirm(): Promise<void> {
         <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s2.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s2.desc') }}</div></div>
         <div class="field">
           <label class="mono" style="font-size: 12px">WWW_ROOT</label>
-          <input v-model="wwwVal" type="text" spellcheck="false" autocomplete="off">
+          <div class="input-with-action">
+            <input v-model="wwwVal" type="text" spellcheck="false" autocomplete="off" @input="wwwDirty = true">
+            <button v-if="canBrowse" class="input-action-btn" type="button" @click="browseDir('www')">{{ t('siteAdd.browse') }}</button>
+          </div>
           <div class="hint">💡 {{ t('wiz.s2.hint') }}</div>
         </div>
         <div class="field"><label>{{ t('wiz.s2.tree') }}</label>

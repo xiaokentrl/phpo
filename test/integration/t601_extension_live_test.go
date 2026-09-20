@@ -36,6 +36,12 @@ func TestT601_Extension_Live(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
+	cfg, err := config.LoadFromPath(home + "/config.yaml")
+	if err != nil {
+		t.Fatalf("载入 ConfigStore 失败: %v", err)
+	}
+	st.SetEnvProvider(cfg)
+
 	cli, err := engine.New()
 	if err != nil {
 		t.Fatalf("构造 Docker 客户端失败: %v", err)
@@ -46,7 +52,7 @@ func TestT601_Extension_Live(t *testing.T) {
 
 	ctx := context.Background()
 	var em nopEmitter
-	lc := service.NewLifecycle(cli, st, em, env)
+	lc := service.NewLifecycle(cli, st, em, env, cfg)
 	tm := task.NewManager(em)
 	cacheMgr := steps.NewCacheManager(env, em, cli)
 	appSvc := service.NewAppService(lc, tm, cacheMgr, cli, env)

@@ -55,6 +55,12 @@ func TestM5_PgSQL_Live(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
+	cfg, err := config.LoadFromPath(home + "/config.yaml")
+	if err != nil {
+		t.Fatalf("载入 ConfigStore 失败: %v", err)
+	}
+	st.SetEnvProvider(cfg)
+
 	cli, err := engine.New()
 	if err != nil {
 		t.Fatalf("构造 Docker 客户端失败: %v", err)
@@ -63,12 +69,12 @@ func TestM5_PgSQL_Live(t *testing.T) {
 
 	skipUnlessLive(t, cli)
 
-	// 为两个版本落库不同宿主端口，使并存不冲突（真实安装由 UI 传端口，这里直写 env 验证读取链路）
-	_ = st.SetEnv(store.EnvKeyPort("pgsql", "17"), "5432")
-	_ = st.SetEnv(store.EnvKeyPort("pgsql", "16"), "5433")
+	// 为两个版本写入不同宿主端口，使并存不冲突（真实安装由 UI 传端口，这里直写 config.yaml 验证读取链路）
+	_ = cfg.SetServicePort("pgsql", "17", 5432)
+	_ = cfg.SetServicePort("pgsql", "16", 5433)
 
 	var em nopEmitter
-	lc := service.NewLifecycle(cli, st, em, env)
+	lc := service.NewLifecycle(cli, st, em, env, cfg)
 	tm := task.NewManager(em)
 	appSvc := service.NewAppService(lc, tm, steps.NewCacheManager(env, em, cli), cli, env)
 

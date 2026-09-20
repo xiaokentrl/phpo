@@ -9,7 +9,7 @@ import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
 import { startDockerPreflight, stopDockerPreflight } from '@/composables/useDockerPreflight'
 import { useAppState } from '@/stores/appState'
 import { getState } from '@/api/state'
-import { hasBackend } from '@/api/site'
+import { hasBackend, waitForBackend } from '@/api/site'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { useModals } from '@/composables/useModals'
 import { toast } from '@/composables/useToast'
@@ -26,13 +26,17 @@ const { openThemePicker, openHomeSetupWizard } = useModals()
 useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
 
 onMounted(async () => {
+  // 先等宿主 Core 就绪（有界超时）：window._wails 的宿主字段在 WindowLoadFinished 才注入，
+  // 可能晚于本挂载钩子。未就绪时 hasBackend 误判为 false 会走 demo、跳过真实 Docker 探测。
+  await waitForBackend()
   startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
   subscribeUpdater() // 订阅 update:* 事件：后台发现新版本即时提示（硬红线 4）
   subscribeCache() // 订阅 6 类 cache:* 事件：缓存命中/未命中/提升/损坏/清理/临时目录清空落地 cacheStore
   const snap = await getState() // 启动权威快照（T607/硬红线 4）：dirReady/env 以 DB 为准；无宿主返回 null 保留占位
   if (snap) app.applySnapshot(snap)
-  // 首启硬门禁：真实宿主下工作目录未初始化 → 弹出不可关闭的装机向导，完成前不放行
-  if (hasBackend() && !app.dirReady.PHPO_HOME) openHomeSetupWizard(undefined, true)
+  // 首启引导：真实宿主下主目录/网站目录未初始化 → 弹出装机向导。可关闭（右上 X），
+  // 关闭后任何写操作仍由后端 preflight 权威拦截（目录未就绪报错），不放水；再次触发安装/建站会重新弹出。
+  if (hasBackend() && !app.homeReady) openHomeSetupWizard()
   startDockerPreflight() // 首启探测 + 定时轮询 Docker 可用性（硬红线 7 门禁，两段式引导）
   if (import.meta.env.DEV) await import('@/api/mockEvents') // 开发期 mock 发射驱动（构建产物不含）
 })

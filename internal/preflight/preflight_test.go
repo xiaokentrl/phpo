@@ -12,6 +12,7 @@ import (
 func readyWorld() *World {
 	snap := model.NewSnapshot()
 	snap.DirReady["PHPO_HOME"] = true
+	snap.DirReady["WWW_ROOT"] = true
 	snap.Env["WWW_ROOT"] = "/www"
 	snap.Installed["php"] = []string{"8.4", "8.1"}
 	snap.Installed["nginx"] = []string{"alpine"}
@@ -67,6 +68,16 @@ func TestHomeNotReadyGuard(t *testing.T) {
 	res := Run(ActInstall, Ctx{Kind: "php", Version: "8.5"}, w)
 	if res.Ok || firstErr(res) != errs.HomeNotReady {
 		t.Fatalf("HOME 未就绪应报 homeNotReady，得 %+v", res.Errors)
+	}
+}
+
+// WWW_ROOT 未就绪（目录缺失/未初始化）同样永久阻断 NEEDS_HOME 写操作
+func TestWwwRootNotReadyGuard(t *testing.T) {
+	w := readyWorld()
+	w.Snap.DirReady["WWW_ROOT"] = false
+	res := Run(ActInstall, Ctx{Kind: "php", Version: "8.5"}, w)
+	if res.Ok || firstErr(res) != errs.HomeNotReady {
+		t.Fatalf("WWW_ROOT 未就绪应报 homeNotReady，得 %+v", res.Errors)
 	}
 }
 

@@ -1,4 +1,4 @@
-// Store 全套：迁移幂等/升降级、快照物化、密码/端口键、审计、回收站、离线表
+// Store 全套：迁移幂等/升降级、快照物化（env 由 EnvProvider 合成）、端口占用、审计、回收站、离线表
 package store
 
 import (
@@ -24,7 +24,7 @@ func TestMigrateIdempotentAndTablesExist(t *testing.T) {
 	if err := s.Migrate(); err != nil { // 重复执行必须安全
 		t.Fatal(err)
 	}
-	tables := []string{"env", "installed", "sites", "php_extensions", "dir_ready", "trash",
+	tables := []string{"installed", "sites", "php_extensions", "dir_ready", "trash",
 		"offline_entries", "update_state", "operations", "cache_manifest"}
 	for _, tb := range tables {
 		var n int
@@ -53,31 +53,34 @@ func TestMigrateUpDownRoundTrip(t *testing.T) {
 	}
 }
 
-func TestEnvSnapshotRoundTrip(t *testing.T) {
+// fakeEnv 实现 EnvProvider：返回固定扁平 env，供快照合成
+type fakeEnv struct{ m map[string]string }
+
+func (f fakeEnv) FlatEnv() map[string]string { return f.m }
+
+// env 表已迁出 SQLite：迁移不应再建 env 表；BuildSnapshot.env 唯一来自注入的 EnvProvider
+func TestEnvMigratedOutAndSnapshotUsesProvider(t *testing.T) {
 	s := openStore(t)
-	if err := s.SetEnv("WWW_ROOT", "~/www"); err != nil {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='env'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("SQLite 不应有 env 表 (n=%d err=%v)", n, err)
+	}
+	// 未注入 provider：快照 env 为空
+	got, err := s.BuildSnapshot()
+	if err != nil {
 		t.Fatal(err)
 	}
-	v, ok, err := s.GetEnv("WWW_ROOT")
-	if err != nil || !ok || v != "~/www" {
-		t.Fatalf("env 读取错误: %q %v %v", v, ok, err)
+	if len(got.Env) != 0 {
+		t.Errorf("未注入 provider 时 env 应为空，实得 %v", got.Env)
 	}
-	if _, ok, _ := s.GetEnv("NOPE"); ok {
-		t.Error("不存在的键必须 exists=false")
-	}
-	// 空密码写入读回
-	if err := s.SetPassword("mysql", "8.4", ""); err != nil {
+	// 注入 provider：快照 env 逐键来自 FlatEnv
+	s.SetEnvProvider(fakeEnv{m: map[string]string{"WWW_ROOT": "~/www", "MYSQL_84_PORT": "3306"}})
+	got, err = s.BuildSnapshot()
+	if err != nil {
 		t.Fatal(err)
 	}
-	pw, ok, _ := s.GetPassword("mysql", "8.4")
-	if !ok || pw != "" {
-		t.Errorf("空密码必须原样存取, got %q ok=%v", pw, ok)
-	}
-	if key := EnvKeyPassword("mysql", "8.4"); key != "MYSQL_84_PASSWORD" {
-		t.Errorf("密码键名 = %q", key)
-	}
-	if key := EnvKeyPort("pgsql", "17.2"); key != "PGSQL_172_PORT" {
-		t.Errorf("端口键名（去点）= %q", key)
+	if got.Env["WWW_ROOT"] != "~/www" || got.Env["MYSQL_84_PORT"] != "3306" {
+		t.Errorf("快照 env 应来自 provider，实得 %v", got.Env)
 	}
 }
 

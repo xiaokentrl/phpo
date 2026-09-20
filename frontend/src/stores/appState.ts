@@ -66,9 +66,12 @@ export const useAppState = defineStore('appState', () => {
   const tray = reactive<TrayPrefs>({ enabled: true, minimizeOnClose: true })
   // 用户改过的配置正文，键 `${kind}:${version}:${fileName}`（原型 state.configs）
   const configs = reactive<Record<string, string>>({})
-  // PHPO_HOME 就绪标志（T607）：真实宿主默认未就绪，待启动权威快照（api/state bootstrap）按 DB 落地；
-  // 无宿主（纯 Vite demo）默认已就绪，保持 M1 占位数据可直接打开各模态验证。
-  const dirReady = reactive<{ PHPO_HOME: boolean }>({ PHPO_HOME: !hasBackend() })
+  // 目录就绪标志（首启硬门禁）：真实宿主默认未就绪，待启动权威快照（api/state bootstrap）按 DB 落地；
+  // 主目录 PHPO_HOME 与网站目录 WWW_ROOT 双就绪才放行写操作（preflight NEEDS_HOME 同源）。
+  // 无宿主（纯 Vite demo）默认双就绪，保持 M1 占位数据可直接打开各模态验证。
+  const dirReady = reactive<{ PHPO_HOME: boolean; WWW_ROOT: boolean }>({ PHPO_HOME: !hasBackend(), WWW_ROOT: !hasBackend() })
+  // homeReady：两道目录先决条件是否都满足（App 启动门禁 / lazy gate / preflight 统一判定源）
+  const homeReady = computed(() => dirReady.PHPO_HOME && dirReady.WWW_ROOT)
 
   // docker：Docker 可用性运行时状态（首启/轮询探测，硬红线 7）。非持久、不来自 Snapshot/事件，
   // 由 useDockerPreflight 经 setDocker 落地；checked=false 表示尚未探测（不拦截）。
@@ -114,5 +117,5 @@ export const useAppState = defineStore('appState', () => {
 
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, docker, isServiceRunning, applySnapshot, setServiceRunning, setBackups, setDocker, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, homeReady, docker, isServiceRunning, applySnapshot, setServiceRunning, setBackups, setDocker, phpVersions }
 })

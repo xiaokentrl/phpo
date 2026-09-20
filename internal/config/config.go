@@ -9,14 +9,3 @@ const (
 	MinPort         = 1
 	MaxPort         = 65535
 )
-
-// Config 持久化于 ~/.phpo/config.json（读写在 store 层）
-type Config struct {
-	PHPOHome string `json:"phpo_home"`
-	WWWRoot  string `json:"www_root"`
-}
-
-// DeriveEnv 由配置推导全部派生路径
-func (c Config) DeriveEnv() Env {
-	return DerivePaths(c.PHPOHome, c.WWWRoot)
-}

@@ -66,6 +66,12 @@ func TestM5_MySQL_Live(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
+	cfg, err := config.LoadFromPath(home + "/config.yaml")
+	if err != nil {
+		t.Fatalf("载入 ConfigStore 失败: %v", err)
+	}
+	st.SetEnvProvider(cfg)
+
 	cli, err := engine.New()
 	if err != nil {
 		t.Fatalf("构造 Docker 客户端失败: %v", err)
@@ -75,7 +81,7 @@ func TestM5_MySQL_Live(t *testing.T) {
 	skipUnlessLive(t, cli)
 
 	var em nopEmitter
-	lc := service.NewLifecycle(cli, st, em, env) // 真实 store 满足 PasswordReader → mysql/pgsql 注册
+	lc := service.NewLifecycle(cli, st, em, env, cfg) // ConfigStore 提供密码/端口 → mysql/pgsql 注册
 	tm := task.NewManager(em)
 	appSvc := service.NewAppService(lc, tm, steps.NewCacheManager(env, em, cli), cli, env)
 

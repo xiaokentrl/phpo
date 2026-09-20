@@ -17,3 +17,10 @@ export async function homeEnsure(home: string, www: string): Promise<void> {
   if (!hasBackend()) return
   await app.HomeEnsure(home, www)
 }
+
+// getHomeDefaults 取后端已解析的工作目录默认值（config.yaml 的 phpo_home > ~/phpo）；无宿主返回 null
+export async function getHomeDefaults(): Promise<{ home: string; www: string } | null> {
+  if (!hasBackend()) return null
+  const m = await app.HomeDefaults()
+  return { home: m?.['PHPO_HOME'] ?? '', www: m?.['WWW_ROOT'] ?? '' }
+}

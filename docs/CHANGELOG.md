@@ -4,6 +4,7 @@
 
 ## [未发布 / M7 收尾]
 
+- **配置存储统一为单一 YAML（AGENTS.md 授权变更至 v2.9.0）**：全部 `env` 读写迁入 `config.yaml`（落 XDG 用户配置目录 `os.UserConfigDir()/phpo/config.yaml`，Linux `~/.config/phpo`），路径/密码/端口集中一处，消除旧 `~/phpo/.env` + `~/.phpo/config.json` 双份散落与失同步；`internal/config/env.go`、`internal/store/password.go`、SQLite `env` 表移除，新增 `internal/config/configstore.go` 门面；SQLite 退居纯运行态；快照 `env` 由 `ConfigStore.FlatEnv()` 合成，前端 `app.env.*` 键名契约不变；备份恢复改经 `ConfigStore.Reload()` 热重载；clean switch，不迁移旧数据。`.env.example` → `config.example.yaml`。
 - **文档定稿（T704）**：`docs/` 全中文专项文档 + 用户手册（本目录 30 篇）。
 - **真机冒烟（T705，待办）**：三平台安装/卸载/升级/回滚端到端，交由用户/CI 环境执行。
 

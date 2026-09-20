@@ -42,7 +42,7 @@ func (f *fakeEnvStore) BuildSnapshot() (*model.Snapshot, error) { return f.snap,
 func newEnvSvc() (*EnvService, *fakeEnvStore, *fakeEmitter) {
 	st := newFakeEnvStore()
 	em := &fakeEmitter{}
-	return NewEnvService(st, em), st, em
+	return NewEnvService(st, st, em), st, em
 }
 
 func TestEnvService_GetPasswordFallsBackToDefault(t *testing.T) {

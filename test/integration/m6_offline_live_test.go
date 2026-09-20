@@ -77,6 +77,12 @@ func TestM6_Offline_FullChain_Live(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
+	cfg, err := config.LoadFromPath(home + "/config.yaml")
+	if err != nil {
+		t.Fatalf("载入 ConfigStore 失败: %v", err)
+	}
+	st.SetEnvProvider(cfg)
+
 	cli, err := engine.New()
 	if err != nil {
 		t.Fatalf("构造 Docker 客户端失败: %v", err)
@@ -86,11 +92,11 @@ func TestM6_Offline_FullChain_Live(t *testing.T) {
 	skipUnlessLive(t, cli)
 
 	rec := &recorder{}
-	lc := service.NewLifecycle(cli, st, rec, env)
+	lc := service.NewLifecycle(cli, st, rec, env, cfg)
 	tm := task.NewManager(rec)
 	cacheMgr := steps.NewCacheManager(env, rec, cli)
 	appSvc := service.NewAppService(lc, tm, cacheMgr, cli, env)
-	wizardSvc := service.NewWizardService(st, rec, tm)
+	wizardSvc := service.NewWizardService(cfg, st, rec, tm)
 
 	const phpVer = "8.3"
 	const nginxVer = "alpine"
@@ -108,7 +114,7 @@ func TestM6_Offline_FullChain_Live(t *testing.T) {
 	backupSvc := service.NewBackupService(
 		st, lc, cacheMgr, cli,
 		func(path string) (service.SnapshotReader, error) { return store.Open(path) },
-		rec, env, tm,
+		rec, env, cfg, tm,
 	)
 
 	ctx := context.Background()
@@ -121,12 +127,12 @@ func TestM6_Offline_FullChain_Live(t *testing.T) {
 		_ = os.RemoveAll(env.PHPOHome + "/offline")
 	}()
 
-	// 1) 装机：向导建目录子树 + 落 env + dirReady（T607，硬红线 3/4）
+	// 1) 装机：向导建目录子树 + 落 config.yaml 根目录 + dirReady（T607，硬红线 3/4）
 	if err := wizardSvc.HomeEnsure(ctx, env.PHPOHome, env.WWWRoot); err != nil {
 		t.Fatalf("装机向导 HomeEnsure 失败: %v", err)
 	}
-	if v, ok, err := st.GetEnv("PHPO_HOME"); err != nil || !ok || v == "" {
-		t.Fatalf("装机应落库 PHPO_HOME，实得 v=%q ok=%v err=%v", v, ok, err)
+	if h, _ := cfg.Roots(); h == "" {
+		t.Fatalf("装机应落库 PHPO_HOME，实得 %q", h)
 	}
 	if snap, _ := lc.Snapshot(); !snap.DirReady["PHPO_HOME"] {
 		t.Fatalf("装机后 dirReady[PHPO_HOME] 应为 true，实得 %+v", snap.DirReady)

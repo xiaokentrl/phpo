@@ -60,7 +60,7 @@ function buildScript(args: string[], meta: TaskMeta): TaskLine[] {
       lines.push({ t: 'ok', s: `  ✓ PHPO_HOME=${env.PHPO_HOME}` })
       lines.push({ t: 'meta', s: '[2/6] Create version dirs' })
       for (const sub of VERSION_SUBDIRS[kind] || []) lines.push({ t: 'ok', s: `  ✓ ${verRoot(env, kind, version)}/${sub}/` })
-      lines.push({ t: 'meta', s: '[3/6] Write .env' })
+      lines.push({ t: 'meta', s: '[3/6] Write config.yaml' })
       if (meta.port) {
         const key = kind === 'nginx' ? 'NGINX_PORT' : `${kind.toUpperCase()}_${version.replace(/\./g, '')}_PORT`
         lines.push({ t: 'ok', s: `  ✓ ${key}=${meta.port}` })
@@ -115,7 +115,7 @@ function buildScript(args: string[], meta: TaskMeta): TaskLine[] {
     lines.push({ t: 'meta', s: `Update ${kind} ${version} ${meta.field}` })
     if (meta.field === 'port') lines.push({ t: 'ok', s: `  ✓ port ${meta.oldValue} → ${meta.newValue}` })
     else if (meta.field === 'password') lines.push({ t: 'ok', s: `  ✓ password updated (****${String(meta.newValue).slice(-4) || 'empty'})` })
-    lines.push({ t: 'meta', s: 'Write .env' })
+    lines.push({ t: 'meta', s: 'Write config.yaml' })
     lines.push({ t: 'ok', s: '  ✓ saved' })
     lines.push({ t: 'meta', s: 'Recreate container' })
     lines.push({ t: 'ok', s: '  ✓ restarted' })
@@ -214,7 +214,7 @@ function buildScript(args: string[], meta: TaskMeta): TaskLine[] {
     lines.push({ t: 'meta', s: '[1/3] Extract archive' })
     lines.push({ t: 'ok', s: `  ✓ ${meta.file}` })
     lines.push({ t: 'meta', s: '[2/3] Restore conf/data/sites' })
-    lines.push({ t: 'ok', s: '  ✓ .env / conf / data / sites' })
+    lines.push({ t: 'ok', s: '  ✓ config.yaml / conf / data / sites' })
     lines.push({ t: 'meta', s: '[3/3] Rebuild vhosts' })
     lines.push({ t: 'ok', s: '  ✓ all vhosts regenerated' })
     lines.push({ t: 'ok', s: '✓ Restore completed' })

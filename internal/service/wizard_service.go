@@ -1,13 +1,14 @@
 // T607 · 装机向导服务：把原型 openHomeSetupWizard 的「验证 / 确认」两步真化到后端。
 // HomeVerify 纯探测（校验路径安全 + 逐级创建 PHPO_HOME 子树与 WWW_ROOT + 可写测试），不落库、不发事件；
-// HomeEnsure 走三段式任务：创建工作目录子树 → Apply 把派生路径写入 env 表并置 dirReady[PHPO_HOME]=true → 广播 state:changed。
+// HomeEnsure 走三段式任务：创建工作目录子树 → Apply 把两根目录写入 config.yaml（ConfigStore）并置 dirReady=true → 广播 state:changed。
 // 遵循硬红线 3（.. 路径穿越拒绝）、硬红线 4（前端只读快照，不本地乐观更新）、硬红线 5（写操作三段式）。
-// 幂等：重复 ensure 只是重复 MkdirAll（目录已存在即空操作）与覆盖写 env/dirReady。
+// 幂等：重复 ensure 只是重复 MkdirAll（目录已存在即空操作）与覆盖写 config.yaml/dirReady。
 package service
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 
@@ -17,23 +18,29 @@ import (
 	"phpo/pkg/errs"
 )
 
-// WizardStore 装机落库子集（*store.Store 满足）：派生路径写 env + 就绪标记 + 权威快照回流
+// WizardConfig 装机根目录落库子集（*config.ConfigStore 满足）：写两根 + 读原始根
+type WizardConfig interface {
+	SetRoots(home, www string) error
+	Roots() (home, www string)
+}
+
+// WizardStore 就绪标记 + 权威快照回流子集（*store.Store 满足）：dirReady 属运行态，仍留 SQLite
 type WizardStore interface {
-	SetEnv(key, value string) error
 	SetDirReady(key string, ready bool) error
 	BuildSnapshot() (*model.Snapshot, error)
 }
 
 // WizardService 装机向导门面
 type WizardService struct {
+	cfg   WizardConfig
 	store WizardStore
 	em    Emitter
 	tasks *task.Manager
 	seq   atomic.Uint64
 }
 
-func NewWizardService(st WizardStore, em Emitter, tm *task.Manager) *WizardService {
-	return &WizardService{store: st, em: em, tasks: tm}
+func NewWizardService(cfg WizardConfig, st WizardStore, em Emitter, tm *task.Manager) *WizardService {
+	return &WizardService{cfg: cfg, store: st, em: em, tasks: tm}
 }
 
 // HomeVerify 校验并创建工作目录子树 + 可写探测；仅返回逐条进度与错误，不做任何持久化（供向导「验证」按钮实时反馈）
@@ -117,21 +124,39 @@ func ensureTree(home, www string) (lines, errsList []string) {
 	return lines, errsList
 }
 
-// persistEnv 把规范化 home/www 派生的全部路径键写入 env 表，并置 dirReady[PHPO_HOME]=true（供 Snapshot 回流）
+// persistEnv 把规范化 home/www 写入 config.yaml（ConfigStore，仅存两根，派生路径现算），并置双 dirReady=true（供 Snapshot 回流）
 func (s *WizardService) persistEnv(home, www string) error {
-	e := config.DerivePaths(home, www)
-	keys := [][2]string{
-		{"PHPO_HOME", e.PHPOHome}, {"WWW_ROOT", e.WWWRoot}, {"PHP_ROOT", e.PHPRoot},
-		{"NGINX_ROOT", e.NginxRoot}, {"NGINX_SITES_ROOT", e.NginxSitesRoot},
-		{"MYSQL_ROOT", e.MysqlRoot}, {"PGSQL_ROOT", e.PgsqlRoot}, {"REDIS_ROOT", e.RedisRoot},
-		{"BACKUP_ROOT", e.BackupRoot}, {"OFFLINE_ROOT", e.OfflineRoot},
+	if err := s.cfg.SetRoots(home, www); err != nil {
+		return err
 	}
-	for _, kv := range keys {
-		if err := s.store.SetEnv(kv[0], kv[1]); err != nil {
-			return err
+	// 主目录与网站目录一并建树成功 → 双就绪标记（供 Snapshot 回流 + preflight NEEDS_HOME 放行）
+	if err := s.store.SetDirReady("PHPO_HOME", true); err != nil {
+		return err
+	}
+	return s.store.SetDirReady("WWW_ROOT", true)
+}
+
+// RefreshDirReady 启动时按「config.yaml 已持久化 + 目录实际存在」重算双就绪标记：任一缺失即置 false（永久阻断写操作）。
+// 首启两根为空 → 双 false → 弹装机向导；曾就绪但目录被删 → 回落 false 重新拦截。返回是否有降级变化。
+func (s *WizardService) RefreshDirReady() (bool, error) {
+	changed := false
+	roots := map[string]string{"PHPO_HOME": "", "WWW_ROOT": ""}
+	roots["PHPO_HOME"], roots["WWW_ROOT"] = s.cfg.Roots()
+	for _, key := range []string{"PHPO_HOME", "WWW_ROOT"} {
+		raw := roots[key]
+		ready := raw != "" && dirExists(config.ExpandHome(raw))
+		if err := s.store.SetDirReady(key, ready); err != nil {
+			return false, err
 		}
+		changed = changed || !ready
 	}
-	return s.store.SetDirReady("PHPO_HOME", true)
+	return changed, nil
+}
+
+// dirExists 目录存在且为目录（跟随符号链接）
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
 
 // emit 拉取权威快照并广播 state:changed（前端据此落地 env 与 dirReady，无乐观更新）

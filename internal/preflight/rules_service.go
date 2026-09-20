@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"phpo/internal/config"
-	"phpo/internal/store"
 	"phpo/pkg/errs"
 )
 
@@ -129,7 +128,7 @@ func (r *run) updateConfig() {
 		if c.Kind == "nginx" {
 			cur = r.w.Snap.Env["NGINX_PORT"]
 		} else {
-			cur = r.w.Snap.Env[store.EnvKeyPort(c.Kind, c.Version)]
+			cur = r.w.Snap.Env[config.EnvKeyPort(c.Kind, c.Version)]
 		}
 		if pp := r.validatePort(asString(c.NewValue), parseIntSlice(cur), nil, false); !pp.Ok {
 			r.errf("%s", pp.Msg)

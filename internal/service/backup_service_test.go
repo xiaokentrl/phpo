@@ -101,7 +101,7 @@ func (r *bkReader) Close() error                            { return nil }
 
 // ---- 装配 ----
 
-func newBackupSvc(t *testing.T) (*BackupService, *bkStore, *bkLC, *bkImages, *bkDocker, *fakeEmitter, config.Env) {
+func newBackupSvc(t *testing.T) (*BackupService, *bkStore, *bkLC, *bkImages, *bkDocker, *fakeEmitter, config.Env, *config.ConfigStore) {
 	t.Helper()
 	home := t.TempDir()
 	env := config.DerivePaths(home, filepath.Join(home, "www"))
@@ -117,20 +117,25 @@ func newBackupSvc(t *testing.T) (*BackupService, *bkStore, *bkLC, *bkImages, *bk
 	if err := os.WriteFile(filepath.Join(env.PHPRoot, "conf", "php.ini"), []byte("[PHP]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// 真实 ConfigStore：config.yaml 落在临时 home，Path/Reload 走真实现
+	cfg, err := config.LoadFromPath(filepath.Join(home, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	st := newBkStore()
 	lc := &bkLC{}
 	imgs := &bkImages{}
 	dock := &bkDocker{}
 	em := &fakeEmitter{}
 	open := func(string) (SnapshotReader, error) { return &bkReader{snap: st.snap}, nil }
-	svc := NewBackupService(st, lc, imgs, dock, open, em, env, task.NewManager(em))
-	return svc, st, lc, imgs, dock, em, env
+	svc := NewBackupService(st, lc, imgs, dock, open, em, env, cfg, task.NewManager(em))
+	return svc, st, lc, imgs, dock, em, env, cfg
 }
 
 // ---- Create ----
 
 func TestBackup_Create_Happy(t *testing.T) {
-	svc, st, lc, _, _, em, env := newBackupSvc(t)
+	svc, st, lc, _, _, em, env, _ := newBackupSvc(t)
 	st.snap.Running["mysql"] = []string{"8.4"} // 运行中的数据服务应被暂停并重启
 
 	bf, err := svc.Create(context.Background())
@@ -164,7 +169,7 @@ func TestBackup_Create_Happy(t *testing.T) {
 }
 
 func TestBackup_Create_ExportFailure_NoRestart(t *testing.T) {
-	svc, st, lc, _, _, em, env := newBackupSvc(t)
+	svc, st, lc, _, _, em, env, _ := newBackupSvc(t)
 	st.snap.Running["mysql"] = []string{"8.4"}
 	st.toErr = errors.New("db busy") // 导出失败 → 回滚：暂停步 RB 重启
 
@@ -186,7 +191,7 @@ func TestBackup_Create_ExportFailure_NoRestart(t *testing.T) {
 // ---- List 排序 ----
 
 func TestBackup_List_Order(t *testing.T) {
-	svc, _, _, _, _, _, env := newBackupSvc(t)
+	svc, _, _, _, _, _, env, _ := newBackupSvc(t)
 	for _, n := range []string{"backup-20260101-000000.tar.gz", "backup-20260901-000000.tar.gz", "backup-20260301-000000.tar.gz", "stray.txt"} {
 		if err := os.WriteFile(filepath.Join(env.BackupRoot, n), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
@@ -207,7 +212,7 @@ func TestBackup_List_Order(t *testing.T) {
 // ---- Delete ----
 
 func TestBackup_Delete(t *testing.T) {
-	svc, _, _, _, _, _, env := newBackupSvc(t)
+	svc, _, _, _, _, _, env, _ := newBackupSvc(t)
 	file := "backup-20260101-000000.tar.gz"
 	host := filepath.Join(env.BackupRoot, file)
 	if err := os.WriteFile(host, []byte("x"), 0o644); err != nil {
@@ -230,7 +235,7 @@ func TestBackup_Delete(t *testing.T) {
 }
 
 func TestBackup_Path(t *testing.T) {
-	svc, _, _, _, _, _, env := newBackupSvc(t)
+	svc, _, _, _, _, _, env, _ := newBackupSvc(t)
 	file := "backup-20260101-000000.tar.gz"
 	if err := os.WriteFile(filepath.Join(env.BackupRoot, file), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -250,9 +255,9 @@ func TestBackup_Path(t *testing.T) {
 // ---- Restore ----
 
 func TestBackup_Restore(t *testing.T) {
-	svc, st, lc, imgs, dock, em, env := newBackupSvc(t)
-	// 写入明文 .env，Create 应原样打包
-	if err := os.WriteFile(filepath.Join(env.PHPOHome, ".env"), []byte("MYSQL_84_ROOT_PASSWORD=123456\n"), 0o600); err != nil {
+	svc, st, lc, imgs, dock, em, _, cfg := newBackupSvc(t)
+	// 写入明文密码到 config.yaml（YAML 权威），Create 应原样打包
+	if err := cfg.SetPassword("mysql", "8.4", "123456"); err != nil {
 		t.Fatal(err)
 	}
 	// 先制造一个真实归档
@@ -260,9 +265,15 @@ func TestBackup_Restore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 抹去宿主 .env，模拟异机/丢失后恢复
-	if err := os.Remove(filepath.Join(env.PHPOHome, ".env")); err != nil {
+	// 抹去宿主 config.yaml 并清内存态，模拟异机/丢失后恢复
+	if err := os.Remove(cfg.Path()); err != nil {
 		t.Fatal(err)
+	}
+	if err := cfg.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := cfg.GetPassword("mysql", "8.4"); ok {
+		t.Fatal("清空后应无 mysql 密码")
 	}
 	// 现状：已安装 php/mysql；已有两个托管容器待清空
 	st.snap.Installed["php"] = []string{"8.4"}
@@ -287,9 +298,9 @@ func TestBackup_Restore(t *testing.T) {
 	if len(imgs.ensured) != 2 || len(lc.installed) != 2 {
 		t.Fatalf("应重建 php+mysql，实得 imgs=%v install=%v", imgs.ensured, lc.installed)
 	}
-	// 明文 .env 应随包恢复落回
-	if b, err := os.ReadFile(filepath.Join(env.PHPOHome, ".env")); err != nil || !strings.Contains(string(b), "MYSQL_84_ROOT_PASSWORD") {
-		t.Fatalf("应恢复明文 .env，实得 %q err=%v", b, err)
+	// 明文 config.yaml 应随包恢复落回，且热重载反映到内存态
+	if pw, ok, _ := cfg.GetPassword("mysql", "8.4"); !ok || pw != "123456" {
+		t.Fatalf("应恢复明文密码并热重载，实得 pw=%q ok=%v", pw, ok)
 	}
 	if !em.has("state:changed") {
 		t.Fatalf("恢复后应广播 state:changed")
@@ -297,7 +308,7 @@ func TestBackup_Restore(t *testing.T) {
 }
 
 func TestBackup_Restore_RejectsTraversal(t *testing.T) {
-	svc, _, _, _, _, _, _ := newBackupSvc(t)
+	svc, _, _, _, _, _, _, _ := newBackupSvc(t)
 	if err := svc.Restore(context.Background(), "../outside.tar.gz"); err == nil {
 		t.Fatal("穿越文件名应被拒绝且不落任务")
 	}

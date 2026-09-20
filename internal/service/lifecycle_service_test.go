@@ -115,6 +115,10 @@ func (s *fakeStore) SetRunning(kind, version string, running bool) error {
 	return nil
 }
 
+// EnvReader 子集：假件恒返回未设置，使 DBService/RedisService 回落默认密码与端口
+func (s *fakeStore) GetPassword(_, _ string) (string, bool, error) { return "", false, nil }
+func (s *fakeStore) GetServicePort(_, _ string) (int, bool, error) { return 0, false, nil }
+
 // fakeEmitter 捕获事件名序列
 type fakeEmitter struct{ events []string }
 
@@ -123,7 +127,7 @@ func (e *fakeEmitter) has(name string) bool     { return contains(e.events, name
 
 func newSvc() (*LifecycleService, *fakeDocker, *fakeStore, *fakeEmitter) {
 	d, s, em := newFakeDocker(), newFakeStore(), &fakeEmitter{}
-	return NewLifecycle(d, s, em, config.DerivePaths("~/phpo", "~/www")), d, s, em
+	return NewLifecycle(d, s, em, config.DerivePaths("~/phpo", "~/www"), s), d, s, em
 }
 
 // ---- 测试 ----
@@ -236,8 +240,9 @@ func TestRemove_PreservesVolumes(t *testing.T) {
 
 func TestInstall_UnknownKindErrors(t *testing.T) {
 	l, _, _, _ := newSvc()
-	if err := l.Install(context.Background(), model.KindRedis, "8"); err == nil {
-		t.Fatal("M3 未注册 redis 装配策略，应报错")
+	// 五类服务（php/nginx/mysql/pgsql/redis）均已注册；未注册种类应报错
+	if err := l.Install(context.Background(), model.ServiceKind("mongodb"), "1"); err == nil {
+		t.Fatal("未注册的服务种类应报错")
 	}
 }
 

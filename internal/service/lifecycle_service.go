@@ -49,20 +49,16 @@ type LifecycleService struct {
 	services map[model.ServiceKind]Service
 }
 
-func NewLifecycle(docker DockerOps, store StateStore, emitter Emitter, env config.Env) *LifecycleService {
+func NewLifecycle(docker DockerOps, store StateStore, emitter Emitter, env config.Env, reader EnvReader) *LifecycleService {
 	svc := &LifecycleService{docker: docker, store: store, emitter: emitter, env: env, services: map[model.ServiceKind]Service{}}
-	// PHP / Nginx 无需 env 读取，恒注册；MySQL / PgSQL / Redis 需读明文密码与按版本端口，仅当 store 实现 EnvReader 时注册（M5）
-	for _, s := range []Service{PHPService{}, NginxService{}} {
+	// PHP / Nginx 无需 env 读取；MySQL / PgSQL / Redis 需读明文密码与按版本端口，reader 为 ConfigStore（config.yaml）
+	for _, s := range []Service{
+		PHPService{}, NginxService{},
+		NewDBService(model.KindMySQL, reader),
+		NewDBService(model.KindPgsql, reader),
+		NewRedisService(reader),
+	} {
 		svc.services[s.Kind()] = s
-	}
-	if pr, ok := store.(EnvReader); ok {
-		for _, s := range []Service{
-			NewDBService(model.KindMySQL, pr),
-			NewDBService(model.KindPgsql, pr),
-			NewRedisService(pr),
-		} {
-			svc.services[s.Kind()] = s
-		}
 	}
 	return svc
 }

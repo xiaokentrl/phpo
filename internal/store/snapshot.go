@@ -7,9 +7,8 @@ import (
 
 func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	snap := model.NewSnapshot()
-	var err error
-	if snap.Env, err = s.AllEnv(); err != nil {
-		return nil, err
+	if s.env != nil {
+		snap.Env = s.env.FlatEnv() // 配置真相来自 ConfigStore（YAML），SQLite 不再持有 env 表
 	}
 	snap.Installed = map[string][]string{}
 	snap.Running = map[string][]string{}
@@ -62,38 +61,7 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	return snap, nil
 }
 
-// env CRUD
-func (s *Store) AllEnv() (map[string]string, error) {
-	out := map[string]string{}
-	rows, err := s.db.Query(`SELECT key, value FROM env`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			return nil, err
-		}
-		out[k] = v
-	}
-	return out, nil
-}
-
-func (s *Store) GetEnv(key string) (string, bool, error) {
-	var v string
-	err := s.db.QueryRow(`SELECT value FROM env WHERE key=?`, key).Scan(&v)
-	if err == sqlNoRows {
-		return "", false, nil
-	}
-	return v, err == nil, err
-}
-
-// SetEnv 明文写入（值可为空串——空密码合法）
-func (s *Store) SetEnv(key, value string) error {
-	_, err := s.db.Exec(`INSERT INTO env(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
-	return err
-}
+// env CRUD 已迁出：配置真相唯一来自 ConfigStore（internal/config，YAML）；SQLite 不再持有 env 表。
 
 func (s *Store) SetDirReady(key string, ready bool) error {
 	n := 0

@@ -68,7 +68,7 @@ func (a *App) assemblyLifecycleCtx() context.Context {
 func (a *App) AppInfo() map[string]string {
 	return map[string]string{
 		"name":    "phpo",
-		"version": "0.1.0",
+		"version": a.container.CurrentVersion,
 	}
 }
 
@@ -531,4 +531,13 @@ func (a *App) HomeEnsure(ctx context.Context, home, www string) error {
 		return errNotReady
 	}
 	return a.container.WizardService.HomeEnsure(ctx, home, www)
+}
+
+// HomeDefaults 返回后端已解析的工作目录默认值（config.yaml 已存根目录 > ~/phpo 默认），供装机向导预填与浏览起始目录。
+// 与快照 env 同源：首启快照为空时，前端据此拿到 config.yaml 预置的自定义根目录而非硬编码 ~/phpo。
+func (a *App) HomeDefaults() map[string]string {
+	return map[string]string{
+		"PHPO_HOME": a.container.Env.PHPOHome,
+		"WWW_ROOT":  a.container.Env.WWWRoot,
+	}
 }

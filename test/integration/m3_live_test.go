@@ -42,6 +42,12 @@ func newLiveGraph(t *testing.T) (*service.AppService, *service.LifecycleService,
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
+	cfg, err := config.LoadFromPath(home + "/config.yaml")
+	if err != nil {
+		t.Fatalf("载入 ConfigStore 失败: %v", err)
+	}
+	st.SetEnvProvider(cfg)
+
 	cli, err := engine.New()
 	if err != nil {
 		t.Fatalf("构造 Docker 客户端失败: %v", err)
@@ -49,7 +55,7 @@ func newLiveGraph(t *testing.T) (*service.AppService, *service.LifecycleService,
 	t.Cleanup(func() { _ = cli.Close() })
 
 	var em nopEmitter
-	lc := service.NewLifecycle(cli, st, em, env)
+	lc := service.NewLifecycle(cli, st, em, env, cfg)
 	tm := task.NewManager(em)
 	cacheMgr := steps.NewCacheManager(env, em, cli)
 	return service.NewAppService(lc, tm, cacheMgr, cli, env), lc, cli

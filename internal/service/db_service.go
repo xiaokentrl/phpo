@@ -10,7 +10,7 @@ import (
 	"phpo/internal/model"
 )
 
-// EnvReader store.Store 天然满足：读某服务版本的明文密码与宿主发布端口；exists=false 表示未设置（调用方回落默认值）
+// EnvReader *config.ConfigStore 天然满足：读某服务版本的明文密码与宿主发布端口；exists=false 表示未设置（调用方回落默认值）
 type EnvReader interface {
 	GetPassword(kind, version string) (string, bool, error)
 	GetServicePort(kind, version string) (int, bool, error)

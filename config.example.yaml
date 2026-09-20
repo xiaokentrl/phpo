@@ -1,0 +1,24 @@
+# phpo 统一配置示例（YAML）。真实配置文件由运行时写入 XDG 用户配置目录：
+#   Linux   ~/.config/phpo/config.yaml
+#   macOS   ~/Library/Application Support/phpo/config.yaml
+#   Windows %APPDATA%\phpo\config.yaml
+# 此处仅作格式参考与开发者本地覆盖；phpo 不读取仓库内本文件。
+
+# 目录根：数据根与站点根；`~` 在展示层解析。派生子目录（php/nginx/…/offline）由程序现算，不写进本文件。
+phpo_home: ~/phpo   # PHPO_HOME：服务配置/日志/离线缓存的数据根，默认 ~/phpo
+www_root: ~/www     # WWW_ROOT：站点根目录，默认 ~/www
+
+# 每服务版本的可配置项（按需出现；未列出的版本回落注册表默认端口与默认密码）
+# 密码策略：明文、默认 123456、可为空、长度不校验（总纲 §1.5）。
+services:
+  mysql:
+    "8.4":
+      password: "123456"
+      port: 3306
+  pgsql:
+    "17":
+      password: ""        # 空密码合法
+      port: 5432
+  redis:
+    "8":
+      password: "123456"

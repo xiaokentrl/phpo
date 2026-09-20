@@ -1,4 +1,4 @@
-// 应用用户数据目录（§4.2 / §8）：phpo.db、config.json、logs 的落地根；跨平台解析
+// 应用用户数据目录（§4.2 / §8）：phpo.db、config.yaml、logs 的落地根；跨平台解析
 // Linux ~/.config/phpo · macOS ~/Library/Application Support/phpo · Windows %APPDATA%\phpo
 // 由 os.UserConfigDir 逐平台给出规范目录，再拼 phpo 子目录。
 package config

@@ -86,6 +86,12 @@ func TestM5_WordPress_Live(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
+	cfg, err := config.LoadFromPath(home + "/config.yaml")
+	if err != nil {
+		t.Fatalf("载入 ConfigStore 失败: %v", err)
+	}
+	st.SetEnvProvider(cfg)
+
 	cli, err := engine.New()
 	if err != nil {
 		t.Fatalf("构造 Docker 客户端失败: %v", err)
@@ -95,10 +101,10 @@ func TestM5_WordPress_Live(t *testing.T) {
 	skipUnlessLive(t, cli)
 
 	var em nopEmitter
-	lc := service.NewLifecycle(cli, st, em, env)
+	lc := service.NewLifecycle(cli, st, em, env, cfg)
 	tm := task.NewManager(em)
 	appSvc := service.NewAppService(lc, tm, steps.NewCacheManager(env, em, cli), cli, env)
-	envSvc := service.NewEnvService(st, em)
+	envSvc := service.NewEnvService(cfg, st, em)
 	nginxContainer := dockerutil.ContainerName(string(model.KindNginx), "alpine")
 	siteSvc := service.NewSiteService(
 		st, vhost.New(env), &fakeHosts{},

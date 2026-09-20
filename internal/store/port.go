@@ -3,8 +3,8 @@ package store
 
 import (
 	"strconv"
-	"strings"
 
+	"phpo/internal/config"
 	"phpo/internal/model"
 	"phpo/pkg/port"
 )
@@ -18,7 +18,7 @@ func CollectUsedPorts(snap *model.Snapshot, excludeDomains []string) port.Used {
 	}
 	for _, kind := range []string{"mysql", "pgsql", "redis"} {
 		for _, v := range snap.Installed[kind] {
-			raw, ok := snap.Env[EnvKeyPort(kind, v)]
+			raw, ok := snap.Env[config.EnvKeyPort(kind, v)]
 			if !ok {
 				continue
 			}
@@ -41,25 +41,4 @@ func CollectUsedPorts(snap *model.Snapshot, excludeDomains []string) port.Used {
 		}
 	}
 	return used
-}
-
-// GetServicePort 读某服务版本的宿主发布端口（env 键 {KIND}_{VER}_PORT）；未设置 exists=false，调用方回落默认端口
-func (s *Store) GetServicePort(kind, version string) (int, bool, error) {
-	raw, ok, err := s.GetEnv(EnvKeyPort(kind, version))
-	if err != nil {
-		return 0, false, err
-	}
-	if !ok {
-		return 0, false, nil
-	}
-	p, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil {
-		return 0, false, nil
-	}
-	return p, true, nil
-}
-
-// SetServicePort 落库某服务版本的宿主发布端口（安装时用户所选端口，或内联改端口）
-func (s *Store) SetServicePort(kind, version string, port int) error {
-	return s.SetEnv(EnvKeyPort(kind, version), strconv.Itoa(port))
 }

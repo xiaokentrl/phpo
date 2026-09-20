@@ -3,9 +3,38 @@
 import * as app from '../../bindings/phpo/app.js'
 import { AddInput } from '../../bindings/phpo/internal/service/models.js'
 
-// 后端运行环境探测：Wails 宿主注入 window.runtime；纯 Vite 独立运行（pnpm dev）时缺席，退化为 mock 演示。
+// 后端运行环境探测：Wails v3 不注入 window.runtime（那是 v2 全局）。真实宿主在文档加载完成后
+// 由 runtime.Core 注入 window._wails.flags / .environment / .invoke；纯 Vite 浏览器里 @wailsio/runtime
+// 只建 window._wails 空壳、不填这些字段。故以宿主独有字段为判据，命中才走真实后端，否则退化 demo。
 export function hasBackend(): boolean {
-  return typeof (globalThis as { window?: { runtime?: unknown } }).window?.runtime !== 'undefined'
+  const w = (globalThis as { window?: { _wails?: { flags?: unknown; environment?: unknown; invoke?: unknown } } }).window
+  const bridge = w?._wails
+  return !!(bridge && (bridge.flags || bridge.environment || bridge.invoke))
+}
+
+// 宿主 Core 在 WindowLoadFinished 注入，可能晚于 Vue 挂载。挂载期门禁（向导/Docker 首探测）需等它就绪：
+// 命中 wails:runtime-config-ready 或轮询到 bridge 即放行；浏览器 demo 永不就绪，超时后按无宿主继续。
+export function waitForBackend(timeout = 1500): Promise<boolean> {
+  if (hasBackend()) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    let settled = false
+    let poll: ReturnType<typeof setInterval>
+    let timer: ReturnType<typeof setTimeout>
+    const settle = () => {
+      if (settled) return
+      settled = true
+      clearInterval(poll)
+      clearTimeout(timer)
+      window.removeEventListener('wails:runtime-config-ready', onReady)
+      resolve(hasBackend())
+    }
+    const onReady = () => settle()
+    poll = setInterval(() => {
+      if (hasBackend()) settle()
+    }, 30)
+    timer = setTimeout(settle, timeout)
+    window.addEventListener('wails:runtime-config-ready', onReady, { once: true })
+  })
 }
 
 export interface SiteAddInput {

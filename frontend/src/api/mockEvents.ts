@@ -16,7 +16,7 @@ const MOCK_SNAPSHOT: StateSnapshot = {
     BACKUP_ROOT: '~/phpo/backups', NGINX_PORT: '80', NGINX_VERSION: 'alpine',
   },
   phpExtensions: { '8.5': ['gd', 'redis', 'opcache'], '8.4': ['gd', 'redis', 'pdo_mysql'] },
-  dirReady: { PHPO_HOME: true },
+  dirReady: { PHPO_HOME: true, WWW_ROOT: true },
 }
 
 const MOCK_SAMPLES: Record<string, unknown> = {

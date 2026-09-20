@@ -135,7 +135,7 @@ export function usePreflight() {
     const adjusted: Record<string, unknown> = {}
     c = c || {}
 
-    if (NEEDS_HOME.has(action) && !app.dirReady.PHPO_HOME) errors.push(PF.homeNotReady)
+    if (NEEDS_HOME.has(action) && !app.homeReady) errors.push(PF.homeNotReady)
 
     const installed = (k: string) => (app.installed as Record<string, string[]>)[k] || []
 
