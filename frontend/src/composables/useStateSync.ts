@@ -1,7 +1,9 @@
 // useStateSync：前端订阅后端事件、按事件落地状态的唯一入口（§5.6 / 硬红线 4）
 // 取代原型 render() 全量重绘：状态变化只来自后端推送的事件，组件通过响应式 store 自动更新。
+// syncState 是同一条落地路径的「主动拉取」公共入口：启动、手动同步、装机向导完成后均复用。
 import { reactive, readonly, type DeepReadonly } from 'vue'
 import { useAppState } from '@/stores/appState'
+import { getState } from '@/api/state'
 import { ALL_EVENTS, EVENT, onEvent, type EventName } from '@/api/events'
 import type { ServiceKind } from '@/types'
 
@@ -47,6 +49,15 @@ export function startStateSync(): void {
     })
     unsubscribers.push(off)
   }
+}
+
+// syncState：主动同步状态——向后端取一次权威快照并落地（与 state:changed 走同一 applySnapshot，硬红线 4：不本地乐观更新）。
+// 返回是否取到并落地；无宿主或后端报错返回 false，调用方据此决定兜底（如装机向导刷新失败即重启）。
+export async function syncState(): Promise<boolean> {
+  const snap = await getState().catch(() => null)
+  if (!snap) return false
+  useAppState().applySnapshot(snap)
+  return true
 }
 
 // stopStateSync：反订阅（测试/热更新用）。

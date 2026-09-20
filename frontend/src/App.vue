@@ -3,12 +3,11 @@
 // T102 10 路由；T103 i18n；T104 主题应用+持久化；T110 事件订阅启动
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from '@/composables/useI18n'
-import { startStateSync, stopStateSync } from '@/composables/useStateSync'
+import { startStateSync, stopStateSync, syncState } from '@/composables/useStateSync'
 import { subscribeUpdater, unsubscribeUpdater } from '@/composables/useUpdater'
 import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
 import { startDockerPreflight, stopDockerPreflight } from '@/composables/useDockerPreflight'
 import { useAppState } from '@/stores/appState'
-import { getState } from '@/api/state'
 import { hasBackend, waitForBackend } from '@/api/site'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { useModals } from '@/composables/useModals'
@@ -32,8 +31,7 @@ onMounted(async () => {
   startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
   subscribeUpdater() // 订阅 update:* 事件：后台发现新版本即时提示（硬红线 4）
   subscribeCache() // 订阅 6 类 cache:* 事件：缓存命中/未命中/提升/损坏/清理/临时目录清空落地 cacheStore
-  const snap = await getState() // 启动权威快照（T607/硬红线 4）：dirReady/env 以 DB 为准；无宿主返回 null 保留占位
-  if (snap) app.applySnapshot(snap)
+  await syncState() // 启动权威快照（T607/硬红线 4）：dirReady/env 以 config.yaml + DB 为准；无宿主则不动占位值
   // 首启引导：真实宿主下主目录/网站目录未初始化 → 弹出装机向导。可关闭（右上 X），
   // 关闭后任何写操作仍由后端 preflight 权威拦截（目录未就绪报错），不放水；再次触发安装/建站会重新弹出。
   if (hasBackend() && !app.homeReady) openHomeSetupWizard()
@@ -70,10 +68,9 @@ const sections: { titleKey: string; items: { id: string; labelKey: string; icon:
   },
 ]
 
-// resync：手动向后端重新拉取权威快照并落地（硬红线 4：后端唯一权威，非本地乐观更新）
+// resync：手动同步权威快照（复用公共 syncState 入口；硬红线 4：后端唯一权威，非本地乐观更新）
 async function resync(): Promise<void> {
-  const snap = await getState()
-  if (snap) app.applySnapshot(snap)
+  await syncState()
   toast(t('common.refresh'), 'ok', 1400)
 }
 </script>

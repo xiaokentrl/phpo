@@ -11,7 +11,8 @@ import { useAppState } from '@/stores/appState'
 import { HOME_SUBDIRS } from '@/constants/home'
 import { DEFAULT_HOME, DEFAULT_WWW, derivePaths } from '@/utils/path'
 import { hasBackend } from '@/api/site'
-import { getHomeDefaults, homeEnsure, homeVerify } from '@/api/wizard'
+import { syncState } from '@/composables/useStateSync'
+import { getHomeDefaults, homeEnsure, homeVerify, restartApp } from '@/api/wizard'
 
 const props = defineProps<{ locked?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -32,13 +33,15 @@ const homeDirty = ref(false)
 const wwwDirty = ref(false)
 // alreadySet：后端先决检测「工作目录已设置」→ 只回显两根 + 「完成」，不提供三步设置、验证与确认并创建（禁止重复创建）
 const alreadySet = ref(false)
+// busy：'' | 'sync' | 'restart'，在弹框内同步明示「正在同步主界面 / 正在重启应用」
+const busy = ref<'' | 'sync' | 'restart'>('')
 
 // normHome/normWww：trim 去尾斜杠；输入框为空时回落 env 定义目录，再退 DEFAULT_*
 const normHome = computed(() => homeVal.value.trim().replace(/\/+$/, '') || envHome.value || DEFAULT_HOME)
 const normWww = computed(() => wwwVal.value.trim().replace(/\/+$/, '') || envWww.value || DEFAULT_WWW)
 
 // 载入后端解析的工作目录默认值：config.yaml 预置自定义根目录时优先于硬编码 ~/phpo（需求 1）
-// configured 为真即工作目录早已设置完毕：本向导不再允许重复创建，就地展示已设置态
+// configured 为真即工作目录早已设置完毕：本向导不再允许重复创建，就地展示已设置态并同步刷新主界面
 onMounted(async () => {
   const d = await getHomeDefaults()
   if (!d) return
@@ -47,7 +50,29 @@ onMounted(async () => {
   alreadySet.value = d.configured
   if (!homeDirty.value && d.home) homeVal.value = d.home
   if (!wwwDirty.value && d.www) wwwVal.value = d.www
+  if (d.configured) await syncOrRestart()
 })
+
+// syncOrRestart 走公共同步入口 syncState 拉权威快照刷新主界面（弹框与界面同一时刻归位，硬红线 4）。
+// 同步后 homeReady 仍为 false → 本会话已无法靠刷新归位（对象图按启动时的旧根展开）→ 重启按 config.yaml 重建。
+async function syncOrRestart(): Promise<void> {
+  busy.value = 'sync'
+  await syncState()
+  busy.value = ''
+  if (app.homeReady || !hasBackend()) return
+  await restart()
+}
+
+// restart 请后端重新拉起进程并退出本实例；后端拒绝（已重启过一次）时退回普通提示，不循环重启
+async function restart(): Promise<void> {
+  busy.value = 'restart'
+  try {
+    await restartApp()
+  } catch (e) {
+    busy.value = ''
+    toast(String((e as Error)?.message ?? e), 'err')
+  }
+}
 
 // browseDir 打开原生选目录框，选中绝对路径回填对应输入框（home=PHPO_HOME / www=WWW_ROOT）
 // 起始目录：用户已填则打开到该目录，否则打开到 env 定义目录（需求 2）
@@ -184,12 +209,16 @@ async function doConfirm(): Promise<void> {
   const w = normWww.value
   try {
     await homeEnsure(h, w) // 有宿主：只有这一步才真正建目录 → 写 config.yaml → 广播 state:changed（dirReady 由快照派生，硬红线 4/5）
+    busy.value = 'sync'
+    await syncState() // 目录设置完成后第一件事：立刻同步权威快照，主界面即时归位（不靠事件时序，也不本地乐观更新）
+    busy.value = ''
     if (!hasBackend()) { // 无宿主：本地占位落地
       Object.assign(app.env, derivePaths(h, w))
       app.dirReady.PHPO_HOME = true
       app.dirReady.WWW_ROOT = true
     }
     done.value = true // 成功后就地提示；不接续任何后续写操作（禁止目录设置与安装/建站连续操作）
+    if (hasBackend() && !app.homeReady) await restart() // 同步后仍未就绪：本会话无法归位，重启兜底
   } catch (e) {
     toast(String((e as Error)?.message ?? e), 'err')
   } finally {
@@ -221,6 +250,7 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
           <div class="row"><span class="k">PHPO_HOME</span><span class="v">{{ alreadySet ? envHome : normHome }}</span></div>
           <div class="row"><span class="k">WWW_ROOT</span><span class="v">{{ alreadySet ? envWww : normWww }}</span></div>
         </div>
+        <div v-if="busy" class="hint">⏳ {{ t(busy === 'restart' ? 'wiz.restarting' : 'wiz.syncing') }}</div>
       </template>
       <template v-else-if="step === 1">
         <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s1.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s1.desc') }}</div></div>
@@ -264,7 +294,7 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
       </template>
     </template>
     <template #foot>
-      <button v-if="done || alreadySet" class="btn btn-primary" type="button" @click="finish">{{ t('wiz.done.btn') }}</button>
+      <button v-if="done || alreadySet" class="btn btn-primary" type="button" :disabled="busy !== ''" @click="finish">{{ t('wiz.done.btn') }}</button>
       <template v-else>
         <button v-if="step > 1" class="btn" type="button" @click="prev">← {{ t('wiz.prev') }}</button>
         <button v-else-if="!props.locked" class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>

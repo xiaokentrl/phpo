@@ -25,3 +25,9 @@ export async function getHomeDefaults(): Promise<{ home: string; www: string; co
   const m = await app.HomeDefaults()
   return { home: m?.['PHPO_HOME'] ?? '', www: m?.['WWW_ROOT'] ?? '', configured: m?.['CONFIGURED'] === 'true' }
 }
+
+// restartApp 请后端按 config.yaml 的新根重新拉起进程并退出本实例；已重启过一次时后端拒绝（防重启循环）
+export async function restartApp(): Promise<void> {
+  if (!hasBackend()) return
+  await app.Restart()
+}

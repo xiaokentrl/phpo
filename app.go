@@ -4,6 +4,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"strconv"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -18,6 +21,9 @@ import (
 // errNotReady 前端在启动钩子完成前抢跑调用时的守卫
 var errNotReady = errors.New("服务尚未初始化")
 
+// restartMarker 重启子进程的环境标记：防「刷新失败→重启→仍失败→再重启」无限循环
+const restartMarker = "PHPO_RESTARTED"
+
 // wailsEmitter 将 internal/app.Emitter 适配到 Wails 事件系统（前端订阅唯一通道）
 type wailsEmitter struct{ app *application.App }
 
@@ -28,9 +34,10 @@ func (w wailsEmitter) Emit(event string, payload any) {
 }
 
 type App struct {
-	wails     *application.App
-	container *phpapp.Container
-	assembly  *phpapp.Assembly
+	wails          *application.App
+	container      *phpapp.Container
+	assembly       *phpapp.Assembly
+	restartPending bool // 前端已请求重启：ServiceShutdown 收尾后重新拉起自身
 }
 
 func NewApp() *App {
@@ -52,9 +59,12 @@ func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOpt
 	return a.assembly.Startup(ctx)
 }
 
-// ServiceShutdown 实现 Wails v3 服务生命周期：退出前收尾
+// ServiceShutdown 实现 Wails v3 服务生命周期：退出前收尾；若前端已请求重启，则在资源释放后重新拉起自身
 func (a *App) ServiceShutdown() error {
 	a.assembly.Shutdown(a.assemblyLifecycleCtx())
+	if a.restartPending {
+		relaunchSelf()
+	}
 	return nil
 }
 
@@ -546,4 +556,33 @@ func (a *App) HomeDefaults() map[string]string {
 		m["CONFIGURED"] = strconv.FormatBool(a.container.WizardService.Configured())
 	}
 	return m
+}
+
+// Restart 请求应用重启：装机向导刷新主界面后仍未就绪（对象图按启动时的旧根展开）时的兜底归位。
+// 重启过一次仍未就绪即拒绝，避免「刷新失败→重启」无限循环；实际拉起在 ServiceShutdown 释放资源后进行。
+func (a *App) Restart() error {
+	if os.Getenv(restartMarker) == "1" {
+		return fmt.Errorf("已重启过一次，工作目录仍未就绪：请检查 config.yaml 的根目录配置与目录权限")
+	}
+	if a.wails == nil {
+		return errNotReady
+	}
+	a.restartPending = true
+	a.wails.Quit()
+	return nil
+}
+
+// relaunchSelf 以后台子进程重新拉起当前可执行文件，并带上重启标记；与父进程脱离，失败静默（前端已提示过）
+func relaunchSelf() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd.Dir = "."
+	cmd.Env = append(os.Environ(), restartMarker+"=1")
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	cmd.Process.Release()
 }
