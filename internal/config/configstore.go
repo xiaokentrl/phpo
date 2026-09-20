@@ -1,6 +1,8 @@
 // 统一配置权威（YAML）：单一 config.yaml（XDG 用户配置目录 os.UserConfigDir()/phpo）承载目录根 + 每服务版本的明文密码/宿主端口。
 // 取代旧 ~/phpo/.env 与 ~/.phpo/config.json 双份散落存储（用户裁决：配置读写统一、YAML、不污染用户主目录）。
-// SQLite 退居纯运行态（installed/running/sites/extensions/dir_ready）；snapshot.env 由本门面合成，前端键名契约不变。
+// SQLite 退居纯运行态（installed/running/sites/extensions）；工作根的「已持久化/已就绪」由本门面派生提供，
+// 并作为运行态存储能否建库的门禁（首启未设置工作目录时不得在用户数据目录留下任何文件）。
+// snapshot.env 由本门面合成，前端键名契约不变。
 // 密码策略 §1.5：明文零校验、可空、任意长度、任意字符——YAML 原样存，绝不加密（硬约束不变）。
 package config
 
@@ -110,6 +112,27 @@ func (c *ConfigStore) Roots() (home, www string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.fc.PHPOHome, c.fc.WWWRoot
+}
+
+// RootsPersisted 报告 config.yaml 是否已写入两个工作根——即装机向导是否完成过。
+// 纯读、无副作用。这是「首启 vs 已配置」的唯一持久判据，供运行态存储决定是否创建/打开 phpo.db：
+// 未持久化即首启，不得在用户数据目录留下任何文件（含 `~` 未展开亦按原样判定）。
+func (c *ConfigStore) RootsPersisted() bool {
+	h, w := c.Roots()
+	return h != "" && w != ""
+}
+
+// RootsReady 逐根报告「已持久化且目录实际存在」，纯读、无副作用。
+// 快照 dirReady 由此派生（不再落 SQLite）：两根曾就绪但被删除时自动回落 false，重新拦截写操作。
+func (c *ConfigStore) RootsReady() (home, www bool) {
+	h, w := c.Roots()
+	return h != "" && isDir(ExpandHome(h)), w != "" && isDir(ExpandHome(w))
+}
+
+// isDir 路径存在且为目录（跟随符号链接）
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }
 
 // Env 返回由原始根派生的路径全集（含 `~`，供展示与快照；IO 用 ExpandedEnv）

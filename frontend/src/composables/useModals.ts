@@ -33,13 +33,13 @@ export function useModals() {
   const kindMeta = (k: string) => SVC_META[k as ServiceKind]
 
   function openInstallModal(kind: string): void {
-    // 原型 2879：主目录/网站目录未就绪 → 先走装机向导，完成后再接续安装
-    if (!app.homeReady) { openHomeSetupWizard(() => modal.open(InstallModal, { kind })); return }
+    // 主目录/网站目录未就绪 → 单独弹装机向导；完成后仅关闭返回主界面，不接续安装（禁止目录设置与安装连续操作）
+    if (!app.homeReady) { openHomeSetupWizard(); return }
     modal.open(InstallModal, { kind })
   }
   function openSiteAddModal(): void {
-    // 原型 3103：主目录/网站目录未就绪 → 先走装机向导，完成后再接续建站
-    if (!app.homeReady) { openHomeSetupWizard(() => modal.open(SiteAddModal, {})); return }
+    // 主目录/网站目录未就绪 → 单独弹装机向导；完成后仅关闭返回主界面，不接续建站（禁止目录设置与建站连续操作）
+    if (!app.homeReady) { openHomeSetupWizard(); return }
     modal.open(SiteAddModal, {})
   }
   function openRewriteModal(domain: string): void {
@@ -68,8 +68,8 @@ export function useModals() {
   function openTrashModal(): void {
     modal.open(TrashViewer, {})
   }
-  function openHomeSetupWizard(onReady?: () => void, locked = false): void {
-    modal.open(HomeSetupWizard, { onReady, locked })
+  function openHomeSetupWizard(locked = false): void {
+    modal.open(HomeSetupWizard, { locked })
   }
 
   function openUninstallModal(kind: string, version: string): void {

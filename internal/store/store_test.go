@@ -1,7 +1,9 @@
-// Store 全套：迁移幂等/升降级、快照物化（env 由 EnvProvider 合成）、端口占用、审计、回收站、离线表
+// Store 全套：迁移幂等/升降级、快照物化（env/dirReady 由 EnvProvider 合成）、延迟建库、端口占用、审计、回收站、离线表
 package store
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,13 +26,18 @@ func TestMigrateIdempotentAndTablesExist(t *testing.T) {
 	if err := s.Migrate(); err != nil { // 重复执行必须安全
 		t.Fatal(err)
 	}
-	tables := []string{"installed", "sites", "php_extensions", "dir_ready", "trash",
+	tables := []string{"installed", "sites", "php_extensions", "trash",
 		"offline_entries", "update_state", "operations", "cache_manifest"}
 	for _, tb := range tables {
 		var n int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tb).Scan(&n); err != nil || n != 1 {
 			t.Errorf("表 %s 不存在 (n=%d err=%v)", tb, n, err)
 		}
+	}
+	// dir_ready 已在 0007 下线：就绪判定唯一派生自 config.yaml 两根 + 目录存在性
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='dir_ready'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("SQLite 不应有 dir_ready 表 (n=%d err=%v)", n, err)
 	}
 }
 
@@ -53,10 +60,16 @@ func TestMigrateUpDownRoundTrip(t *testing.T) {
 	}
 }
 
-// fakeEnv 实现 EnvProvider：返回固定扁平 env，供快照合成
-type fakeEnv struct{ m map[string]string }
+// fakeEnv 实现 EnvProvider：固定扁平 env + 「两根已持久化且已存在」，供快照合成 env 与派生 dirReady
+type fakeEnv struct {
+	m         map[string]string
+	persisted bool
+	home, www bool
+}
 
 func (f fakeEnv) FlatEnv() map[string]string { return f.m }
+func (f fakeEnv) RootsPersisted() bool       { return f.persisted }
+func (f fakeEnv) RootsReady() (bool, bool)   { return f.home, f.www }
 
 // env 表已迁出 SQLite：迁移不应再建 env 表；BuildSnapshot.env 唯一来自注入的 EnvProvider
 func TestEnvMigratedOutAndSnapshotUsesProvider(t *testing.T) {
@@ -73,8 +86,8 @@ func TestEnvMigratedOutAndSnapshotUsesProvider(t *testing.T) {
 	if len(got.Env) != 0 {
 		t.Errorf("未注入 provider 时 env 应为空，实得 %v", got.Env)
 	}
-	// 注入 provider：快照 env 逐键来自 FlatEnv
-	s.SetEnvProvider(fakeEnv{m: map[string]string{"WWW_ROOT": "~/www", "MYSQL_84_PORT": "3306"}})
+	// 注入 provider：快照 env 逐键来自 FlatEnv，dirReady 由 RootsReady 派生
+	s.SetEnvProvider(fakeEnv{m: map[string]string{"WWW_ROOT": "~/www", "MYSQL_84_PORT": "3306"}, persisted: true, home: true})
 	got, err = s.BuildSnapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -82,17 +95,21 @@ func TestEnvMigratedOutAndSnapshotUsesProvider(t *testing.T) {
 	if got.Env["WWW_ROOT"] != "~/www" || got.Env["MYSQL_84_PORT"] != "3306" {
 		t.Errorf("快照 env 应来自 provider，实得 %v", got.Env)
 	}
+	if !got.DirReady["PHPO_HOME"] || got.DirReady["WWW_ROOT"] {
+		t.Errorf("dirReady 应逐根派生自 RootsReady，实得 %+v", got.DirReady)
+	}
 }
 
 func TestApplyTaskResultFullSnapshot(t *testing.T) {
 	s := openStore(t)
+	s.SetEnvProvider(fakeEnv{persisted: true, home: true, www: true})
 	snap := model.NewSnapshot()
 	snap.Installed["php"] = []string{"8.4", "8.3"}
 	snap.Running["php"] = []string{"8.4"}
 	snap.Sites = []model.Site{{Domain: "demo.test", Port: 81, PHP: "8.4", Root: "~/www/demo.test", Rewrite: "laravel"}}
 	snap.Env["PHPO_HOME"] = "~/phpo"
 	snap.PHPExtensions["8.4"] = []string{"redis", "zip"}
-	snap.DirReady["PHPO_HOME"] = true
+	snap.DirReady["PHPO_HOME"] = false // 就绪态为派生量：任务结果里的 dirReady/env 不参与落库
 
 	if err := s.ApplyTaskResult(model.TaskMeta{Type: "install"}, snap); err != nil {
 		t.Fatal(err)
@@ -111,7 +128,7 @@ func TestApplyTaskResultFullSnapshot(t *testing.T) {
 		t.Errorf("扩展物化错误: %+v", got.PHPExtensions)
 	}
 	if !got.DirReady["PHPO_HOME"] {
-		t.Error("dirReady 物化错误")
+		t.Error("dirReady 应由 provider 派生，不受任务快照影响")
 	}
 	// 幂等：重复应用结果一致
 	if err := s.ApplyTaskResult(model.TaskMeta{Type: "install"}, snap); err != nil {
@@ -206,5 +223,125 @@ func TestOfflineEntriesAndManifest(t *testing.T) {
 	}
 	if _, ok, _ := s.LoadManifest("php", "9.9"); ok {
 		t.Error("不存在版本 exists 应为 false")
+	}
+}
+
+// lazyEnv 可变 EnvProvider：模拟装机向导把两根写入 config.yaml 前/后的三态
+type lazyEnv struct {
+	m         map[string]string
+	persisted bool
+	home, www bool
+}
+
+func (e *lazyEnv) FlatEnv() map[string]string { return e.m }
+func (e *lazyEnv) RootsPersisted() bool       { return e.persisted }
+func (e *lazyEnv) RootsReady() (bool, bool)   { return e.home, e.www }
+
+// 方案B 首启门禁：两根未写入 config.yaml 前，运行态存储不得在用户数据目录留下任何文件；
+// 向导落地后首次访问即「建目录 → 建库 → 迁移」，无需重启。
+func TestDeferredOpen_FirstLaunchWritesNothing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "phpo") // 刻意不存在的父目录
+	dbPath := filepath.Join(dir, "phpo.db")
+	env := &lazyEnv{m: map[string]string{"PHPO_HOME": "~/phpo", "WWW_ROOT": "~/www"}}
+	s := New(dbPath)
+	s.SetEnvProvider(env)
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("未打开的库 Close 应无副作用: %v", err)
+		}
+	})
+
+	snap, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatalf("首启快照应返回空态而非报错: %v", err)
+	}
+	if len(snap.Installed) != 0 || len(snap.Sites) != 0 || len(snap.PHPExtensions) != 0 {
+		t.Errorf("首启运行态应为空: %+v", snap)
+	}
+	if snap.DirReady["PHPO_HOME"] || snap.DirReady["WWW_ROOT"] {
+		t.Errorf("首启 dirReady 应双 false，实得 %+v", snap.DirReady)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("首启读取快照不得创建用户数据目录")
+	}
+
+	// 读写一律拒绝（ErrHomeNotSet），且拒绝路径同样零落盘
+	if err := s.UpsertSite(model.Site{Domain: "a.test", Port: 80}); !errors.Is(err, ErrHomeNotSet) {
+		t.Errorf("写操作应报 ErrHomeNotSet，实得 %v", err)
+	}
+	if _, err := s.ListSites(); !errors.Is(err, ErrHomeNotSet) {
+		t.Errorf("读操作应报 ErrHomeNotSet，实得 %v", err)
+	}
+	if err := s.AppendOperation(model.Operation{Op: "install"}); !errors.Is(err, ErrHomeNotSet) {
+		t.Errorf("审计应报 ErrHomeNotSet，实得 %v", err)
+	}
+	if _, err := s.AddTrashItem(TrashItem{Kind: "site"}); !errors.Is(err, ErrHomeNotSet) {
+		t.Errorf("回收站应报 ErrHomeNotSet，实得 %v", err)
+	}
+	if err := s.Migrate(); !errors.Is(err, ErrHomeNotSet) {
+		t.Errorf("迁移应报 ErrHomeNotSet，实得 %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("被拒绝的写操作同样不得留下用户数据目录")
+	}
+
+	// 向导落库两根 → 门禁解除，下一次访问透明建库
+	env.persisted, env.home, env.www = true, true, true
+	if err := s.UpsertSite(model.Site{Domain: "a.test", Port: 80, PHP: "8.4", Root: "~/www/a.test"}); err != nil {
+		t.Fatalf("两根落地后应可写库: %v", err)
+	}
+	if fi, err := os.Stat(dbPath); err != nil || fi.Size() == 0 {
+		t.Fatalf("两根落地后应已建库: %v", err)
+	}
+	got, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sites) != 1 || got.Sites[0].Domain != "a.test" {
+		t.Errorf("落地前的写入不得丢: %+v", got.Sites)
+	}
+	if !got.DirReady["PHPO_HOME"] || !got.DirReady["WWW_ROOT"] {
+		t.Errorf("两根就绪后 dirReady 应双 true，实得 %+v", got.DirReady)
+	}
+}
+
+// 曾就绪但目录被删：dirReady 回落 false 重新拦截写操作，但库内已装状态不回退（下次建库照常可读）
+func TestSnapshot_DirReadyFallsBackWithoutLosingState(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "phpo.db")
+	env := &lazyEnv{persisted: true, home: true, www: true}
+	s := New(dbPath)
+	s.SetEnvProvider(env)
+	t.Cleanup(func() { s.Close() })
+
+	if err := s.SetInstalled("php", "8.4", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSite(model.Site{Domain: "a.test", Port: 80}); err != nil {
+		t.Fatal(err)
+	}
+
+	env.home, env.www = false, false // 目录被删，但 config.yaml 两根仍在（persisted 保持 true）
+	snap, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatalf("目录缺失时仍应可读库（不丢已装状态）: %v", err)
+	}
+	if snap.DirReady["PHPO_HOME"] || snap.DirReady["WWW_ROOT"] {
+		t.Errorf("目录被删后 dirReady 应回落 false，实得 %+v", snap.DirReady)
+	}
+	if len(snap.Installed["php"]) != 1 || len(snap.Sites) != 1 {
+		t.Errorf("已装状态不得因目录缺失而回退: %+v", snap)
+	}
+}
+
+// 派生 dirReady 与建库门禁相互独立：仅当两根写入 config.yaml 才建库，与目录是否存在无关
+func TestDeferredOpen_PersistedButMissingDirStillOpens(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "phpo.db")
+	s := New(dbPath)
+	s.SetEnvProvider(&lazyEnv{persisted: true}) // RootsReady 双 false
+	if _, err := s.ListSites(); err != nil {
+		t.Fatalf("已持久化但目录缺失时仍应打开库: %v", err)
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("库文件应已建立: %v", err)
 	}
 }

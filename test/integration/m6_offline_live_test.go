@@ -3,7 +3,7 @@
 // 运行：PHPO_LIVE=1 go test ./test/integration/ -run TestM6_Offline_FullChain_Live -v
 //
 // 端到端串起 M1–M6 全部运维面能力，兑现 §5.14 离线优先铁律（硬红线 8）：
-//  1. 装机（T607 向导 HomeEnsure：建工作目录子树 + 落派生 env + dirReady，纯探测无需 Docker）
+//  1. 装机（T607 向导 HomeEnsure：建工作目录子树 + 两根目录落地 config.yaml，dirReady 由快照派生，纯探测无需 Docker）
 //  2. 装服务（缓存优先镜像：在线首装必 cache:miss + cache:promote）
 //  3. 装扩展（T601：容器内编译 opcache → docker commit 固化 → 提升缓存 → 必清临时目录）
 //  4. 建站（T403/T405：写 vhost → 真 nginx -t → 落库；精确上游 php-{ver}-fpm:9000，硬红线 1）

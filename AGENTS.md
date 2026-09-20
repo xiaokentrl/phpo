@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.0
+> **文档版本**：v2.9.1
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -11,7 +11,7 @@
 > **核心原则**：以真实开发者工作流为标准；最小限制；用户是程序员；**离线优先**
 > **端口策略**：站点端口默认 80，被占用则在 1–65535 内顺延首个可用（不报错、无窗口上限）；服务端口占用仍报错；用户可指定任意端口
 > **应用升级**：支持版本检查和自动升级
-> **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 每服务版本的明文密码/宿主端口；SQLite 仅存运行态；不再使用 `~/phpo/.env` 或 `~/.phpo/config.json`
+> **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 每服务版本的明文密码/宿主端口；SQLite 仅存运行态，且**延迟建库**——两根工作目录写入 `config.yaml` 前不创建用户数据目录；`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」派生；不再使用 `~/phpo/.env` 或 `~/.phpo/config.json`
 > **密码策略**：明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看
 > **最小限制原则**：除 8 条硬红线外，所有限制放开或降级为警告
 > **Docker 清洁原则**：所有操作幂等、原子、可回滚、可清理
@@ -643,7 +643,9 @@ phpo/
 │   │       ├── 0002_add_offline.sql
 │   │       ├── 0003_add_update.sql
 │   │       ├── 0004_add_operations.sql
-│   │       └── 0005_add_cache_manifest.sql
+│   │       ├── 0005_add_cache_manifest.sql
+│   │       ├── 0006_add_site_rewrite.sql
+│   │       └── 0007_drop_dir_ready.sql
 │   │
 │   ├── engine/
 │   │   ├── client.go
@@ -938,7 +940,7 @@ phpo/
 ```
 ~/.phpo/                              # 用户数据目录 · Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
 ├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + services.{kind}.{version}.{password,port}
-├── phpo.db                           # SQLite，仅存运行态（installed/running/sites/php_extensions/dir_ready/trash/operations/offline/cache_manifest）
+├── phpo.db                           # SQLite，仅存运行态（installed/running/sites/php_extensions/trash/operations/offline/cache_manifest）；**延迟建库**：装机向导把两根目录写入 config.yaml 后才创建
 ├── logs/
 │   ├── phpo.log
 │   └── operations.log
@@ -984,6 +986,8 @@ phpo/
 # 卷：phpo-{kind}-{version}-{purpose}
 ```
 
+> **首启零落盘**：装机向导把两根目录写入 `config.yaml` 之前，用户数据目录内不得出现任何文件——`config.yaml` 与 `phpo.db` 均在首次写入时才创建（运行态存储延迟打开）。`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」逐根派生：目录被删即自动回落 `false` 重新拦截写操作，但库内已装状态照常可读、不回退。
+
 ---
 
 ## 5. 关键设计说明
@@ -996,7 +1000,7 @@ phpo/
 
 **五项规则**：明文存储 + 默认 `123456` + 可修改 + 可为空 + 长度不校验 + UI 可查看。
 
-**存储位置**：`config.yaml` 的 `services.{kind}.{version}.password`（各平台 XDG 用户配置目录内的 `phpo` 子目录）；文件权限 `0600`。不再有 `~/phpo/.env`，SQLite 不再持有 `env` 表；前端 `app.env.*` 契约经快照 `env` 扁平键合成保持不变。
+**存储位置**：`config.yaml` 的 `services.{kind}.{version}.password`（各平台 XDG 用户配置目录内的 `phpo` 子目录）；文件权限 `0600`。不再有 `~/phpo/.env`，SQLite 不再持有 `env` 表与 `dir_ready` 表；前端 `app.env.*` 契约经快照 `env` 扁平键合成保持不变。
 
 ### 5.3 templates 目录
 
@@ -1704,12 +1708,12 @@ type OfflineService interface {
 
 ---
 
-**phpo 项目总纲 v2.9.0**
+**phpo 项目总纲 v2.9.1**
 
 - 技术栈：Wails ≥ 3 + Go ≥ 1.27 + Vue 3.5+ + TypeScript
 - 目标：Windows / macOS / Linux 三平台桌面应用
 - 形态：**仅 GUI，不提供 CLI**
-- 配置存储：**单一 `config.yaml`（YAML，各平台 XDG 用户配置目录内 `phpo` 子目录）承载根目录 + 明文密码 + 端口；SQLite 仅存运行态；不再有 `~/phpo/.env` / `~/.phpo/config.json`**
+- 配置存储：**单一 `config.yaml`（YAML，各平台 XDG 用户配置目录内 `phpo` 子目录）承载根目录 + 明文密码 + 端口；SQLite 仅存运行态且延迟建库（两根未落地即首启零落盘）；`dirReady` 由快照派生、不落库；不再有 `~/phpo/.env` / `~/.phpo/config.json`**
 - 密码：**明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看**
 - 版本：**不限制字符集，仅做路径安全校验**
 - 端口：**站点端口默认 80，占用则顺延 1–65535 首个可用（不报错）；服务端口占用报错；用户可指定任意端口**

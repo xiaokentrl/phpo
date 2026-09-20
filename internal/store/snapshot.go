@@ -1,4 +1,5 @@
 // 快照读写：状态表 ⇄ model.Snapshot 的完整物化（后端唯一权威的持久形态）
+// dirReady 不落库：由 EnvProvider.RootsReady（config.yaml 两根 + 目录存在性）派生进快照。
 package store
 
 import (
@@ -9,10 +10,19 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	snap := model.NewSnapshot()
 	if s.env != nil {
 		snap.Env = s.env.FlatEnv() // 配置真相来自 ConfigStore（YAML），SQLite 不再持有 env 表
+		home, www := s.env.RootsReady()
+		snap.DirReady = map[string]bool{"PHPO_HOME": home, "WWW_ROOT": www}
+	}
+	if !s.mayOpen() {
+		return snap, nil // 工作目录未设置：运行态定义为空，且不得建库（首启不在用户数据目录留文件）
+	}
+	db, err := s.ensure()
+	if err != nil {
+		return nil, err
 	}
 	snap.Installed = map[string][]string{}
 	snap.Running = map[string][]string{}
-	rows, err := s.db.Query(`SELECT kind, version, running FROM installed ORDER BY rowid`)
+	rows, err := db.Query(`SELECT kind, version, running FROM installed ORDER BY rowid`)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +42,7 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 		return nil, err
 	}
 	snap.PHPExtensions = map[string][]string{}
-	extRows, err := s.db.Query(`SELECT version, ext FROM php_extensions ORDER BY rowid`)
+	extRows, err := db.Query(`SELECT version, ext FROM php_extensions ORDER BY rowid`)
 	if err != nil {
 		return nil, err
 	}
@@ -44,37 +54,18 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 		}
 		snap.PHPExtensions[v] = append(snap.PHPExtensions[v], e)
 	}
-	snap.DirReady = map[string]bool{}
-	drRows, err := s.db.Query(`SELECT key, ready FROM dir_ready`)
-	if err != nil {
-		return nil, err
-	}
-	defer drRows.Close()
-	for drRows.Next() {
-		var k string
-		var r int
-		if err := drRows.Scan(&k, &r); err != nil {
-			return nil, err
-		}
-		snap.DirReady[k] = r == 1
-	}
 	return snap, nil
 }
 
-// env CRUD 已迁出：配置真相唯一来自 ConfigStore（internal/config，YAML）；SQLite 不再持有 env 表。
-
-func (s *Store) SetDirReady(key string, ready bool) error {
-	n := 0
-	if ready {
-		n = 1
-	}
-	_, err := s.db.Exec(`INSERT INTO dir_ready(key,ready) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET ready=excluded.ready`, key, n)
-	return err
-}
+// env / dirReady 已迁出：配置真相与就绪判定唯一来自 ConfigStore（internal/config，YAML）；SQLite 不再持有 env 表与 dir_ready 表。
 
 // sites
 func (s *Store) ListSites() ([]model.Site, error) {
-	rows, err := s.db.Query(`SELECT domain, port, php, root, rewrite, rewrite_rule, vhost_customized FROM sites ORDER BY domain`)
+	db, err := s.ensure()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT domain, port, php, root, rewrite, rewrite_rule, vhost_customized FROM sites ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
@@ -93,11 +84,15 @@ func (s *Store) ListSites() ([]model.Site, error) {
 }
 
 func (s *Store) UpsertSite(st model.Site) error {
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
 	c := 0
 	if st.VhostCustomized {
 		c = 1
 	}
-	_, err := s.db.Exec(`INSERT INTO sites(domain,port,php,root,rewrite,rewrite_rule,vhost_customized) VALUES(?,?,?,?,?,?,?)
+	_, err = db.Exec(`INSERT INTO sites(domain,port,php,root,rewrite,rewrite_rule,vhost_customized) VALUES(?,?,?,?,?,?,?)
 		ON CONFLICT(domain) DO UPDATE SET port=excluded.port, php=excluded.php, root=excluded.root, rewrite=excluded.rewrite,
 			rewrite_rule=excluded.rewrite_rule, vhost_customized=excluded.vhost_customized`,
 		st.Domain, st.Port, st.PHP, st.Root, st.Rewrite, st.RewriteRule, c)
@@ -105,32 +100,48 @@ func (s *Store) UpsertSite(st model.Site) error {
 }
 
 func (s *Store) DeleteSite(domain string) error {
-	_, err := s.db.Exec(`DELETE FROM sites WHERE domain=?`, domain)
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM sites WHERE domain=?`, domain)
 	return err
 }
 
 // installed / running
 func (s *Store) SetInstalled(kind, version string, installed bool) error {
-	if !installed {
-		_, err := s.db.Exec(`DELETE FROM installed WHERE kind=? AND version=?`, kind, version)
+	db, err := s.ensure()
+	if err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`INSERT INTO installed(kind,version) VALUES(?,?) ON CONFLICT(kind,version) DO NOTHING`, kind, version)
+	if !installed {
+		_, err := db.Exec(`DELETE FROM installed WHERE kind=? AND version=?`, kind, version)
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO installed(kind,version) VALUES(?,?) ON CONFLICT(kind,version) DO NOTHING`, kind, version)
 	return err
 }
 
 func (s *Store) SetRunning(kind, version string, running bool) error {
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
 	n := 0
 	if running {
 		n = 1
 	}
-	_, err := s.db.Exec(`UPDATE installed SET running=? WHERE kind=? AND version=?`, n, kind, version)
+	_, err = db.Exec(`UPDATE installed SET running=? WHERE kind=? AND version=?`, n, kind, version)
 	return err
 }
 
 // PHP 扩展（整组替换，幂等）
 func (s *Store) SetPHPExtensions(version string, exts []string) error {
-	tx, err := s.db.Begin()
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}

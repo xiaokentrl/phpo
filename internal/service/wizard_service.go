@@ -1,8 +1,10 @@
 // T607 · 装机向导服务：把原型 openHomeSetupWizard 的「验证 / 确认」两步真化到后端。
-// HomeVerify 纯探测（校验路径安全 + 逐级创建 PHPO_HOME 子树与 WWW_ROOT + 可写测试），不落库、不发事件；
-// HomeEnsure 走三段式任务：创建工作目录子树 → Apply 把两根目录写入 config.yaml（ConfigStore）并置 dirReady=true → 广播 state:changed。
+// HomeVerify 只读预检（校验路径安全 + 判存在 + 按权限位判可写），**不创建任何目录、不落任何文件、不落库、不发事件**；
+// 目录与文件的创建只发生在用户点「确认并创建」→ HomeEnsure。
+// HomeEnsure 走三段式任务：创建工作目录子树 → Apply 把两根目录写入 config.yaml（ConfigStore）→ 广播 state:changed。
 // 遵循硬红线 3（.. 路径穿越拒绝）、硬红线 4（前端只读快照，不本地乐观更新）、硬红线 5（写操作三段式）。
-// 幂等：HomeEnsure 先检测两根是否「已持久化 + 目录已存在」，已设置则跳过建树、仅校正 dirReady 并广播，禁止重复创建工作目录。
+// 幂等：HomeEnsure 先检测两根是否「已持久化 + 目录已存在」，已设置则跳过建树直接广播，禁止重复创建工作目录。
+// dirReady 不再落库：由 config.yaml 两根 + 目录存在性在快照内派生（见 store.BuildSnapshot）。
 package service
 
 import (
@@ -24,9 +26,8 @@ type WizardConfig interface {
 	Roots() (home, www string)
 }
 
-// WizardStore 就绪标记 + 权威快照回流子集（*store.Store 满足）：dirReady 属运行态，仍留 SQLite
+// WizardStore 权威快照回流子集（*store.Store 满足）：两根落库后据此广播就绪态
 type WizardStore interface {
-	SetDirReady(key string, ready bool) error
 	BuildSnapshot() (*model.Snapshot, error)
 }
 
@@ -43,18 +44,19 @@ func NewWizardService(cfg WizardConfig, st WizardStore, em Emitter, tm *task.Man
 	return &WizardService{cfg: cfg, store: st, em: em, tasks: tm}
 }
 
-// HomeVerify 校验并创建工作目录子树 + 可写探测；仅返回逐条进度与错误，不做任何持久化（供向导「验证」按钮实时反馈）
+// HomeVerify 只读预检工作目录：判路径安全、判存在、判可写，**不创建目录也不写探测文件**；
+// 仅返回逐条预检行与错误行，不持久化、不发事件（供向导「验证」按钮实时反馈）。
 func (s *WizardService) HomeVerify(ctx context.Context, home, www string) (model.HomeVerifyResult, error) {
 	h, w, verr := validateHomeWww(home, www)
 	if verr != "" {
 		return model.HomeVerifyResult{Errors: []string{verr}}, nil
 	}
-	lines, fsErrs := ensureTree(h, w)
+	lines, fsErrs := probeTree(h, w)
 	return model.HomeVerifyResult{OK: len(fsErrs) == 0, Lines: lines, Errors: fsErrs}, nil
 }
 
-// HomeEnsure 装机确认：三段式任务创建工作目录子树并落地 env / dirReady，随后广播 state:changed（硬红线 5）
-// 先决检测：两根目录已在 config.yaml 持久化且实际存在 → 视为「已设置」，只校正就绪标记并广播以即时更新 UI，
+// HomeEnsure 装机确认：三段式任务创建工作目录子树并把两根目录落地 config.yaml，随后广播 state:changed（硬红线 5）
+// 先决检测：两根目录已在 config.yaml 持久化且实际存在 → 视为「已设置」，广播权威快照以即时更新 UI，
 // 跳过目录子树创建，禁止重复创建（幂等）。
 func (s *WizardService) HomeEnsure(ctx context.Context, home, www string) error {
 	h, w, verr := validateHomeWww(home, www)
@@ -62,10 +64,7 @@ func (s *WizardService) HomeEnsure(ctx context.Context, home, www string) error 
 		return fmt.Errorf("%s", verr)
 	}
 	if s.alreadyReady(h, w) {
-		if err := s.markReady(); err != nil {
-			return err
-		}
-		return s.emit()
+		return s.emit() // 已设置：仅广播权威快照令前端即时更新就绪态，不重复建树、不重复落库
 	}
 	t := &task.Task{
 		ID:    s.newID("home-ensure"),
@@ -113,7 +112,8 @@ func validateHomeWww(home, www string) (h, w, errMsg string) {
 	return h, w, ""
 }
 
-// ensureTree 逐级创建 PHPO_HOME 子树与 WWW_ROOT 并试写探测可写；返回逐条成功行与错误行（幂等，目录已存在即空操作）
+// ensureTree 逐级创建 PHPO_HOME 子树与 WWW_ROOT 并试写探测可写；返回逐条成功行与错误行（幂等，目录已存在即空操作）。
+// **只允许 HomeEnsure（用户点「确认并创建」）调用**：验证阶段不得落盘。
 func ensureTree(home, www string) (lines, errsList []string) {
 	hRoot := config.ExpandHome(home)
 	wRoot := config.ExpandHome(www)
@@ -132,6 +132,60 @@ func ensureTree(home, www string) (lines, errsList []string) {
 	return lines, errsList
 }
 
+// probeTree 只读预检工作目录树：判存在、判可写，**不创建目录、不写探测文件**（创建只在「确认并创建」时发生）。
+// 已存在且可写 → ✓；尚不存在但最近已存在祖先可写 → ○（确认后将创建）；其余 → ✗。
+// 权限位只是预览启发式（Windows 只读目录回 0555，类 Unix 看属主 0o200）；权威判定在 HomeEnsure 实建时以真实写入为准。
+func probeTree(home, www string) (lines, errsList []string) {
+	hRoot := config.ExpandHome(home)
+	wRoot := config.ExpandHome(www)
+	check := func(label, p string) {
+		switch st, err := os.Stat(p); {
+		case err == nil && st.IsDir():
+			if writableByPerm(p) {
+				lines = append(lines, fmt.Sprintf("✓ %s %s", label, filepath.ToSlash(p)))
+			} else {
+				errsList = append(errsList, fmt.Sprintf("✗ 不可写：%s", filepath.ToSlash(p)))
+			}
+		case err == nil:
+			errsList = append(errsList, fmt.Sprintf("✗ 同名文件已存在，不能作为目录：%s", filepath.ToSlash(p)))
+		case os.IsNotExist(err):
+			if writableByPerm(nearestExistingDir(p)) {
+				lines = append(lines, fmt.Sprintf("○ %s %s（确认后将创建）", label, filepath.ToSlash(p)))
+			} else {
+				errsList = append(errsList, fmt.Sprintf("✗ 上级目录不可写，无法创建：%s", filepath.ToSlash(p)))
+			}
+		default:
+			errsList = append(errsList, fmt.Sprintf("✗ 无法访问 %s：%v", filepath.ToSlash(p), err))
+		}
+	}
+	check("PHPO_HOME", hRoot)
+	for _, sd := range config.HomeSubdirs {
+		check("子目录", filepath.Join(hRoot, filepath.FromSlash(sd.Path)))
+	}
+	check("WWW_ROOT", wRoot)
+	return lines, errsList
+}
+
+// nearestExistingDir 自父级向上找第一个已存在的目录（文件系统根恒存在，故必返回非空）
+func nearestExistingDir(p string) string {
+	for d := filepath.Dir(p); ; {
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return d
+		}
+		d = parent
+	}
+}
+
+// writableByPerm 按属主权限位判目录可写；路径不存在或非目录即 false
+func writableByPerm(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir() && st.Mode().Perm()&0o200 != 0
+}
+
 // alreadyReady 判定请求的两根目录是否「已设置」：config.yaml 已持久化非空根、展开后与请求一致、且两目录实际存在。
 // 命中即说明工作目录早已建好，HomeEnsure 据此跳过重复创建。
 func (s *WizardService) alreadyReady(home, www string) bool {
@@ -144,38 +198,10 @@ func (s *WizardService) alreadyReady(home, www string) bool {
 	return sameHome && sameWww && dirExists(config.ExpandHome(home)) && dirExists(config.ExpandHome(www))
 }
 
-// markReady 置双 dirReady=true（供 Snapshot 回流 + preflight NEEDS_HOME 放行）；仅在两根目录已实际存在时调用。
-func (s *WizardService) markReady() error {
-	if err := s.store.SetDirReady("PHPO_HOME", true); err != nil {
-		return err
-	}
-	return s.store.SetDirReady("WWW_ROOT", true)
-}
-
-// persistEnv 把规范化 home/www 写入 config.yaml（ConfigStore，仅存两根，派生路径现算），并置双 dirReady=true（供 Snapshot 回流）
+// persistEnv 把规范化 home/www 写入 config.yaml（ConfigStore 仅存两根，派生路径现算）。
+// 写盘即令快照 dirReady 派生为双 true（preflight NEEDS_HOME 随之放行），无需任何落库标记。
 func (s *WizardService) persistEnv(home, www string) error {
-	if err := s.cfg.SetRoots(home, www); err != nil {
-		return err
-	}
-	// 主目录与网站目录一并建树成功 → 双就绪标记（供 Snapshot 回流 + preflight NEEDS_HOME 放行）
-	return s.markReady()
-}
-
-// RefreshDirReady 启动时按「config.yaml 已持久化 + 目录实际存在」重算双就绪标记：任一缺失即置 false（永久阻断写操作）。
-// 首启两根为空 → 双 false → 弹装机向导；曾就绪但目录被删 → 回落 false 重新拦截。返回是否有降级变化。
-func (s *WizardService) RefreshDirReady() (bool, error) {
-	changed := false
-	roots := map[string]string{"PHPO_HOME": "", "WWW_ROOT": ""}
-	roots["PHPO_HOME"], roots["WWW_ROOT"] = s.cfg.Roots()
-	for _, key := range []string{"PHPO_HOME", "WWW_ROOT"} {
-		raw := roots[key]
-		ready := raw != "" && dirExists(config.ExpandHome(raw))
-		if err := s.store.SetDirReady(key, ready); err != nil {
-			return false, err
-		}
-		changed = changed || !ready
-	}
-	return changed, nil
+	return s.cfg.SetRoots(home, www)
 }
 
 // dirExists 目录存在且为目录（跟随符号链接）

@@ -22,7 +22,11 @@ func (s *Store) AddTrashItem(item TrashItem) (int64, error) {
 	if item.ExpiresAt.IsZero() {
 		item.ExpiresAt = item.MovedAt.Add(TrashRetention)
 	}
-	res, err := s.db.Exec(`INSERT INTO trash(kind,orig_path,trash_path,moved_at,expires_at) VALUES(?,?,?,?,?)`,
+	db, err := s.ensure()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.Exec(`INSERT INTO trash(kind,orig_path,trash_path,moved_at,expires_at) VALUES(?,?,?,?,?)`,
 		item.Kind, item.OrigPath, item.TrashPath,
 		item.MovedAt.Format(time.RFC3339Nano), item.ExpiresAt.Format(time.RFC3339Nano))
 	if err != nil {
@@ -32,7 +36,11 @@ func (s *Store) AddTrashItem(item TrashItem) (int64, error) {
 }
 
 func (s *Store) ListTrash() ([]TrashItem, error) {
-	rows, err := s.db.Query(`SELECT id,kind,orig_path,trash_path,moved_at,expires_at FROM trash ORDER BY id DESC`)
+	db, err := s.ensure()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT id,kind,orig_path,trash_path,moved_at,expires_at FROM trash ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -52,13 +60,21 @@ func (s *Store) ListTrash() ([]TrashItem, error) {
 }
 
 func (s *Store) RemoveTrashItem(id int64) error {
-	_, err := s.db.Exec(`DELETE FROM trash WHERE id=?`, id)
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM trash WHERE id=?`, id)
 	return err
 }
 
 // ExpiredTrash 到期条目（清空动作在 engine/trash.go，M6 接入）
 func (s *Store) ExpiredTrash(now time.Time) ([]TrashItem, error) {
-	rows, err := s.db.Query(`SELECT id,kind,orig_path,trash_path,moved_at,expires_at FROM trash WHERE expires_at <= ?`,
+	db, err := s.ensure()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT id,kind,orig_path,trash_path,moved_at,expires_at FROM trash WHERE expires_at <= ?`,
 		now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err

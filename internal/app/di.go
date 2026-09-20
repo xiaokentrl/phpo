@@ -51,7 +51,7 @@ type Container struct {
 	// M6 离线缓存门面：§5.14.10 统计/校验/三模式清理/单条删除/lookup/promote/临时目录（T606）；启动后非 nil
 	OfflineService *service.OfflineService
 
-	// M6 装机向导门面：创建工作目录子树 + 落地 env/dirReady（T607）；启动后非 nil
+	// M6 装机向导门面：创建工作目录子树 + 把两根目录落地到 config.yaml（T607）；启动后非 nil
 	WizardService *service.WizardService
 
 	// M6 升级门面：应用版本检查 + 三段式升级（下载→双校验→备份→安装，失败回滚，T604）；启动后非 nil
@@ -82,31 +82,26 @@ func (c *Container) Build() *Assembly {
 	// M3 真实对象图：store + engine + cache + task.Manager + LifecycleService + AppService
 	// 于启动钩子内构造——Build 期不产生文件/连接，保持无 Docker 单测纯净；此处失败即中断启动。
 	c.Lifecycle.AddStartupHook("object-graph", func(ctx context.Context) error {
-		env := config.ExpandEnvHomes(c.Env) // `~/phpo` → 绝对路径供真实 IO
-		dbPath, err := config.DBPath()
-		if err != nil {
-			return err
-		}
-		st, err := store.Open(dbPath)
-		if err != nil {
-			return err
-		}
-		cli, err := engine.New() // 惰性：不拨号，Docker 缺席亦不报错
-		if err != nil {
-			st.Close()
-			return err
-		}
 		// 配置唯一权威：载入 XDG config.yaml（缺失即首启空配置，回落默认根目录）；SQLite 退居纯运行态。
 		// 后端 Container.Env 与前端 snapshot.env 同源于此，杜绝分散/不同步。
 		cfg, err := config.LoadConfigStore()
 		if err != nil {
-			st.Close()
-			_ = cli.Close()
 			return err
 		}
+		c.Env = cfg.Env()        // 原始根派生（含 `~`，供展示/快照）
+		env := cfg.ExpandedEnv() // 展开 `~` 供真实 IO / 容器挂载
+		// 运行态存储延迟建库：两根目录未写入 config.yaml 前不创建/打开 phpo.db（首启在用户数据目录零落盘）。
+		dbPath, err := config.DBPath()
+		if err != nil {
+			return err
+		}
+		st := store.New(dbPath)
 		st.SetEnvProvider(cfg)
-		c.Env = cfg.Env()       // 原始根派生（含 `~`，供展示/快照）
-		env = cfg.ExpandedEnv() // 展开 `~` 供真实 IO / 容器挂载
+		cli, err := engine.New() // 惰性：不拨号，Docker 缺席亦不报错
+		if err != nil {
+			_ = st.Close()
+			return err
+		}
 		tm := task.NewManager(c.Emitter)
 		lc := service.NewLifecycle(cli, st, c.Emitter, env, cfg)
 		cacheMgr := steps.NewCacheManager(env, c.Emitter, cli)
@@ -158,12 +153,10 @@ func (c *Container) Build() *Assembly {
 		// M6 离线缓存门面（T606）：§5.14.10 统计/校验/三模式清理/单条删除/lookup/promote/临时目录全接真
 		c.OfflineService = service.NewOfflineService(cacheMgr, st, engine.NewAudit(auditPath), c.Emitter, tm)
 
-		// M6 装机向导门面（T607）：创建工作目录子树 + 落地两根目录到 config.yaml + dirReady，广播 state:changed
+		// M6 装机向导门面（T607）：创建工作目录子树 + 落地两根目录到 config.yaml，广播 state:changed
 		c.WizardService = service.NewWizardService(cfg, st, c.Emitter, tm)
 
-		// 首启先决门禁：按 config.yaml 两根是否持久化 + 主目录/网站目录是否实际存在重算双就绪标记（缺失则前端永久阻断写操作）
-		// DB 失败时维持原标记（首启默认未就绪 → 仍安全阻断），不引入冻结协议外事件
-		_, _ = c.WizardService.RefreshDirReady()
+		// dirReady 不再落库：快照按「config.yaml 已持久化 + 目录实际存在」实时派生（首启两根为空 → 双 false → 前端弹装机向导并阻断写操作）
 
 		// M6 升级门面（T604 / 硬红线 5/6）：编排器 + 三段式 UpdateService；无发布源时 Check 返回错误而非 panic
 		// §5.9 中断升级下次启动自动回滚：pending 标记存在且运行版本≠目标 → 恢复旧二进制（失败不阻断 GUI）
@@ -182,9 +175,12 @@ func (c *Container) Build() *Assembly {
 			}
 		}
 
-		// §5.13.9 启动时校准：Docker 缺席/未运行时容忍失败，不阻断 GUI 启动
-		if _, cerr := lc.Calibrate(ctx); cerr != nil {
-			c.Emitter.Emit(EventDockerStateDrift, map[string]any{"error": cerr.Error()})
+		// §5.13.9 启动时校准：仅在工作目录已落地后执行（校准会读写运行态存储并访问容器；首启未配置则零落盘、零拨号）。
+		// Docker 缺席/未运行时容忍失败，不阻断 GUI 启动
+		if cfg.RootsPersisted() {
+			if _, cerr := lc.Calibrate(ctx); cerr != nil {
+				c.Emitter.Emit(EventDockerStateDrift, map[string]any{"error": cerr.Error()})
+			}
 		}
 		c.Lifecycle.AddShutdownHook("close-object-graph", func(context.Context) error {
 			_ = cli.Close()

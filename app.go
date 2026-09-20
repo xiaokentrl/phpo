@@ -517,7 +517,7 @@ func (a *App) OfflineClearTempDir(ctx context.Context, kind, version, reason str
 
 // ---- M6 装机向导（T607）----
 
-// HomeVerify 校验并试建工作目录子树 + 可写探测（纯探测，不落库）；返回逐条进度与错误
+// HomeVerify 只读预检工作目录（判存在 + 判可写，不创建任何目录/文件，不落库）；返回逐条预检行与错误
 func (a *App) HomeVerify(ctx context.Context, home, www string) (model.HomeVerifyResult, error) {
 	if a.container.WizardService == nil {
 		return model.HomeVerifyResult{}, errNotReady

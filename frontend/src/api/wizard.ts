@@ -1,11 +1,11 @@
-// 装机向导 API（T607 / §5.13）：HomeVerify 纯探测（试建子树 + 可写检查），HomeEnsure 三段式落库。
+// 装机向导 API（T607 / §5.13）：HomeVerify 纯只读预检（判存在 + 判可写，不建目录不落文件），HomeEnsure 三段式建树 + 落库。
 // 硬红线 4：确认后不本地乐观更新，等后端 state:changed 回流 env + dirReady。
 // 无宿主（纯 Vite demo）时 homeVerify 返回 null、homeEnsure 直接返回，让向导回退到本地占位行为。
 import * as app from '../../bindings/phpo/app.js'
 import { hasBackend } from '@/api/site'
 import type { HomeVerifyResult } from '@/types'
 
-// homeVerify 校验并试建工作目录子树，返回逐条进度与错误；无宿主返回 null
+// homeVerify 只读预检工作目录子树（不创建任何目录/文件），返回逐条预检行与错误行；无宿主返回 null
 export async function homeVerify(home: string, www: string): Promise<HomeVerifyResult | null> {
   if (!hasBackend()) return null
   const r = await app.HomeVerify(home, www)

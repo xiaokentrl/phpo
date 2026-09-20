@@ -1,12 +1,18 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.0`。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.12`。冲突以 AGENTS.md 为准。
+>
+> **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
 ## [未发布 / M7 收尾]
 
+- **装机向导「验证」改为纯只读预检（目录/文件只在「确认并创建」后产生）**：原 `HomeVerify` 走 `ensureTree → dirWritable`，而 `dirWritable` 会 `os.MkdirAll` 并写入 `.phpo-writetest` 探测文件——点「验证」时工作目录子树与文件已被真创建，「确认并创建」形同走过场。现拆为两条路径：`HomeVerify` 只 `os.Stat` 判存在 + 按属主权限位判可写（不存在但最近已存在祖先可写 → 报「○ …（确认后将创建）」），**零 `MkdirAll`、零探测文件**；`ensureTree`（`MkdirAll` + 试写）只由 `HomeEnsure` 调用。UI 文案随之改实：第三步「验证并创建」→「只读验证」、按钮 `dir.verify` →「验证」（中英各 2 键）。新增单测锁死该不变量：验证后临时目录仍为空、根目录不存在、祖先不可写时报错且不落盘，确认后才建出子树。
+- **首启零落盘：`dirReady` 改派生 + 运行态库延迟创建（AGENTS.md 授权变更至 v2.9.1）**：装机向导完成前不再在用户数据目录留下任何文件——`store.New` 只记路径，首次访问才「建父目录 → 建库 → 迁移」，门禁取自 `ConfigStore.RootsPersisted()`（两根是否已写入 `config.yaml`）；未就绪时读写统一返回 `ErrHomeNotSet`（文案复用 `errs.HomeNotReady`）。SQLite `dir_ready` 表下线（迁移 `0007_drop_dir_ready.sql`，原为每次启动被覆盖的派生缓存，删除不丢信息），快照 `dirReady` 改由 `ConfigStore.RootsReady()` 按「已持久化 + 目录实际存在」逐根派生：目录被删即回落 `false` 重新拦截写操作，而已装状态照常可读、不回退；`wizard_service.RefreshDirReady/markReady/SetDirReady` 移除，启动校准 `Calibrate` 加两根门禁。
+- **装机向导收口交互（禁止目录设置与后续写操作串联）**：`useModals` 的 `openInstallModal`/`openSiteAddModal` 在两根未就绪时只弹装机向导，不再携带完成后接续安装/建站的回调（`onReady` 参数移除）；`HomeSetupWizard` 在 `HomeEnsure` 成功后就地展示「工作目录设置成功」并回显 PHPO_HOME / WWW_ROOT 终值，用户点「完成」才关闭窗口返回主界面（新增 3 个 `wiz.done.*` i18n 键，`dir.confirm` 文案由「确认并继续」改为「确认并创建」以消除接续语义）。
 - **配置存储统一为单一 YAML（AGENTS.md 授权变更至 v2.9.0）**：全部 `env` 读写迁入 `config.yaml`（落 XDG 用户配置目录 `os.UserConfigDir()/phpo/config.yaml`，Linux `~/.config/phpo`），路径/密码/端口集中一处，消除旧 `~/phpo/.env` + `~/.phpo/config.json` 双份散落与失同步；`internal/config/env.go`、`internal/store/password.go`、SQLite `env` 表移除，新增 `internal/config/configstore.go` 门面；SQLite 退居纯运行态；快照 `env` 由 `ConfigStore.FlatEnv()` 合成，前端 `app.env.*` 键名契约不变；备份恢复改经 `ConfigStore.Reload()` 热重载；clean switch，不迁移旧数据。`.env.example` → `config.example.yaml`。
 - **文档定稿（T704）**：`docs/` 全中文专项文档 + 用户手册（本目录 30 篇）。
 - **真机冒烟（T705，待办）**：三平台安装/卸载/升级/回滚端到端，交由用户/CI 环境执行。
+- **版本基准推进至 `0.1.12`**：`0.1.7`–`0.1.12` 是 T705 Linux 冒烟期间反复 `task release:local` 出包（`bump-version.sh` 每次 patch +1，用于验证 dpkg 覆盖升级与降级回滚）累积所得，**不含额外功能**，保留不回退；正式对外发布仍从 `release.yml` 手填版本号并经 `scripts/sign-release.sh` 签名 + `checksums.txt`。
 
 ## [0.1.0] — M7 发布脚手架
 

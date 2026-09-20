@@ -7,12 +7,16 @@ import (
 
 // ApplyTaskResult 由 task 层在事务提交点调用；禁止 UI 旁路（硬红线 5）
 func (s *Store) ApplyTaskResult(meta model.TaskMeta, snap *model.Snapshot) error {
-	tx, err := s.db.Begin()
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	// 全量物化运行态快照：installed / sites / ext / dirReady（配置真相在 config.yaml，不在此重放）
+	// 全量物化运行态快照：installed / sites / ext（配置真相与 dirReady 在 config.yaml 侧派生，不在此重放）
 	if _, err := tx.Exec(`DELETE FROM installed`); err != nil {
 		return err
 	}
@@ -47,18 +51,6 @@ func (s *Store) ApplyTaskResult(meta model.TaskMeta, snap *model.Snapshot) error
 			if _, err := tx.Exec(`INSERT INTO php_extensions(version,ext) VALUES(?,?)`, ver, e); err != nil {
 				return err
 			}
-		}
-	}
-	if _, err := tx.Exec(`DELETE FROM dir_ready`); err != nil {
-		return err
-	}
-	for k, r := range snap.DirReady {
-		n := 0
-		if r {
-			n = 1
-		}
-		if _, err := tx.Exec(`INSERT INTO dir_ready(key,ready) VALUES(?,?)`, k, n); err != nil {
-			return err
 		}
 	}
 	_ = meta // meta 的语义已由调用方反映进 snap；保留参数以便审计关联

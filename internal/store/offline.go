@@ -8,6 +8,10 @@ import (
 )
 
 func (s *Store) UpsertOfflineEntry(e model.CacheEntry) error {
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
 	li, vi := 0, 0
 	if e.HasImage {
 		li = 1
@@ -19,7 +23,7 @@ func (s *Store) UpsertOfflineEntry(e model.CacheEntry) error {
 	if !e.LastVerify.IsZero() {
 		lv = e.LastVerify.UTC().Format(time.RFC3339Nano)
 	}
-	_, err := s.db.Exec(`INSERT INTO offline_entries(kind,version,has_image,total_size,last_verify,verify_ok)
+	_, err = db.Exec(`INSERT INTO offline_entries(kind,version,has_image,total_size,last_verify,verify_ok)
 		VALUES(?,?,?,?,?,?) ON CONFLICT(kind,version) DO UPDATE SET
 		has_image=excluded.has_image, total_size=excluded.total_size, last_verify=excluded.last_verify, verify_ok=excluded.verify_ok`,
 		e.Kind, e.Version, li, e.TotalSize, lv, vi)
@@ -27,7 +31,11 @@ func (s *Store) UpsertOfflineEntry(e model.CacheEntry) error {
 }
 
 func (s *Store) ListOfflineEntries() ([]model.CacheEntry, error) {
-	rows, err := s.db.Query(`SELECT kind,version,has_image,total_size,IFNULL(last_verify,''),verify_ok FROM offline_entries ORDER BY kind,version`)
+	db, err := s.ensure()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT kind,version,has_image,total_size,IFNULL(last_verify,''),verify_ok FROM offline_entries ORDER BY kind,version`)
 	if err != nil {
 		return nil, err
 	}
@@ -52,15 +60,23 @@ func (s *Store) ListOfflineEntries() ([]model.CacheEntry, error) {
 }
 
 func (s *Store) SaveManifest(kind, version, rawJSON string, updatedAt time.Time) error {
-	_, err := s.db.Exec(`INSERT INTO cache_manifest(kind,version,manifest,updated_at) VALUES(?,?,?,?)
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO cache_manifest(kind,version,manifest,updated_at) VALUES(?,?,?,?)
 		ON CONFLICT(kind,version) DO UPDATE SET manifest=excluded.manifest, updated_at=excluded.updated_at`,
 		kind, version, rawJSON, updatedAt.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *Store) LoadManifest(kind, version string) (string, bool, error) {
+	db, err := s.ensure()
+	if err != nil {
+		return "", false, err
+	}
 	var raw string
-	err := s.db.QueryRow(`SELECT manifest FROM cache_manifest WHERE kind=? AND version=?`, kind, version).Scan(&raw)
+	err = db.QueryRow(`SELECT manifest FROM cache_manifest WHERE kind=? AND version=?`, kind, version).Scan(&raw)
 	if err == sqlNoRows {
 		return "", false, nil
 	}

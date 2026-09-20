@@ -13,7 +13,7 @@ import { DEFAULT_HOME, DEFAULT_WWW, derivePaths } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 import { getHomeDefaults, homeEnsure, homeVerify } from '@/api/wizard'
 
-const props = defineProps<{ onReady?: () => void; locked?: boolean }>()
+const props = defineProps<{ locked?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
 const app = useAppState()
@@ -172,26 +172,27 @@ async function doVerify(): Promise<void> {
 }
 
 const confirming = ref(false)
+const done = ref(false) // 目录设置成功后置真：向导内展示成功提示，用户点「完成」才关闭返回主界面
 async function doConfirm(): Promise<void> {
   if (confirming.value) return
   confirming.value = true
   const h = normHome.value
   const w = normWww.value
   try {
-    await homeEnsure(h, w) // 有宿主：后端建树 + 写 env + 置 dirReady + 广播 state:changed（硬红线 4/5）
+    await homeEnsure(h, w) // 有宿主：只有这一步才真正建目录 → 写 config.yaml → 广播 state:changed（dirReady 由快照派生，硬红线 4/5）
     if (!hasBackend()) { // 无宿主：本地占位落地
       Object.assign(app.env, derivePaths(h, w))
       app.dirReady.PHPO_HOME = true
       app.dirReady.WWW_ROOT = true
     }
-    emit('close')
-    props.onReady?.()
+    done.value = true // 成功后就地提示；不接续任何后续写操作（禁止目录设置与安装/建站连续操作）
   } catch (e) {
     toast(String((e as Error)?.message ?? e), 'err')
   } finally {
     confirming.value = false
   }
 }
+function finish(): void { emit('close') } // 用户确认成功后关闭向导返回主界面
 </script>
 
 <template>
@@ -200,7 +201,7 @@ async function doConfirm(): Promise<void> {
       <h3>{{ t('wiz.title') }}</h3>
       <p>{{ t('wiz.subtitle') }}</p>
     </template>
-    <div class="wiz-bar">
+    <div v-if="!done" class="wiz-bar">
       <div class="wiz-steps">
         <div class="wiz-step" :class="step > 1 ? 'done' : step === 1 ? 'active' : ''"><span class="wiz-num">{{ step > 1 ? '✓' : '1' }}</span><span class="wiz-label">{{ t('wiz.step1') }}</span></div>
         <div class="wiz-line" :class="{ done: step > 1 }" />
@@ -210,7 +211,14 @@ async function doConfirm(): Promise<void> {
       </div>
     </div>
     <template #body>
-      <template v-if="step === 1">
+      <template v-if="done">
+        <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.done.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.done.desc') }}</div></div>
+        <div class="wiz-confirm-kv">
+          <div class="row"><span class="k">PHPO_HOME</span><span class="v">{{ normHome }}</span></div>
+          <div class="row"><span class="k">WWW_ROOT</span><span class="v">{{ normWww }}</span></div>
+        </div>
+      </template>
+      <template v-else-if="step === 1">
         <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s1.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s1.desc') }}</div></div>
         <div class="field">
           <label class="mono" style="font-size: 12px">PHPO_HOME</label>
@@ -252,11 +260,14 @@ async function doConfirm(): Promise<void> {
       </template>
     </template>
     <template #foot>
-      <button v-if="step > 1" class="btn" type="button" @click="prev">← {{ t('wiz.prev') }}</button>
-      <button v-else-if="!props.locked" class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
-      <button v-if="step < 3" class="btn btn-primary" type="button" @click="next">{{ t('wiz.next') }} →</button>
-      <button v-else-if="verified" class="btn btn-primary" type="button" :disabled="confirming" @click="doConfirm">{{ t('dir.confirm') }}</button>
-      <button v-else class="btn btn-primary" type="button" :disabled="verifying" @click="doVerify">{{ t('dir.verify') }}</button>
+      <button v-if="done" class="btn btn-primary" type="button" @click="finish">{{ t('wiz.done.btn') }}</button>
+      <template v-else>
+        <button v-if="step > 1" class="btn" type="button" @click="prev">← {{ t('wiz.prev') }}</button>
+        <button v-else-if="!props.locked" class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
+        <button v-if="step < 3" class="btn btn-primary" type="button" @click="next">{{ t('wiz.next') }} →</button>
+        <button v-else-if="verified" class="btn btn-primary" type="button" :disabled="confirming" @click="doConfirm">{{ t('dir.confirm') }}</button>
+        <button v-else class="btn btn-primary" type="button" :disabled="verifying" @click="doVerify">{{ t('dir.verify') }}</button>
+      </template>
     </template>
   </ModalShell>
 </template>

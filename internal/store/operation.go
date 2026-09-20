@@ -9,6 +9,10 @@ import (
 )
 
 func (s *Store) AppendOperation(op model.Operation) error {
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
 	if op.TS.IsZero() {
 		op.TS = time.Now().UTC()
 	}
@@ -16,7 +20,7 @@ func (s *Store) AppendOperation(op model.Operation) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO operations(ts,actor,op,args,status,duration_ms,error) VALUES(?,?,?,?,?,?,?)`,
+	_, err = db.Exec(`INSERT INTO operations(ts,actor,op,args,status,duration_ms,error) VALUES(?,?,?,?,?,?,?)`,
 		op.TS.Format(time.RFC3339Nano), op.Actor, op.Op, string(args), op.Status, op.DurationMs, op.Error)
 	return err
 }
@@ -25,7 +29,11 @@ func (s *Store) ListOperations(limit int) ([]model.Operation, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.Query(`SELECT ts,actor,op,args,status,duration_ms,error FROM operations ORDER BY id DESC LIMIT ?`, limit)
+	db, err := s.ensure()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT ts,actor,op,args,status,duration_ms,error FROM operations ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
