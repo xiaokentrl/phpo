@@ -4,12 +4,34 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"phpo/internal/config"
 	"phpo/internal/engine"
 	"phpo/internal/model"
 )
+
+// TestDirProbeWritable_CreatesNothing doctor 的目录可写判定必须只读：目录不存在不得被顺手创建
+// （装机向导「确认并创建」是唯一允许创建目录/文件的入口）
+func TestDirProbeWritable_CreatesNothing(t *testing.T) {
+	base := t.TempDir()
+	miss := filepath.Join(base, "phpo")
+	if dirProbeWritable(miss) {
+		t.Fatal("不存在的目录不应判可写")
+	}
+	if _, e := os.Stat(miss); !os.IsNotExist(e) {
+		t.Fatalf("诊断探测创建了目录：%s", miss)
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("诊断探测落了盘，base 下出现 %d 个条目", len(entries))
+	}
+}
 
 // ---- 依赖替身 ----
 

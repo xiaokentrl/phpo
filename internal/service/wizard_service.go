@@ -3,7 +3,7 @@
 // 目录与文件的创建只发生在用户点「确认并创建」→ HomeEnsure。
 // HomeEnsure 走三段式任务：创建工作目录子树 → Apply 把两根目录写入 config.yaml（ConfigStore）→ 广播 state:changed。
 // 遵循硬红线 3（.. 路径穿越拒绝）、硬红线 4（前端只读快照，不本地乐观更新）、硬红线 5（写操作三段式）。
-// 幂等：HomeEnsure 先检测两根是否「已持久化 + 目录已存在」，已设置则跳过建树直接广播，禁止重复创建工作目录。
+// 先决检测：HomeEnsure 进来先问 Configured()——两根「已持久化 + 目录已存在」即为已设置，一律跳过建树只广播，禁止重复创建工作目录。
 // dirReady 不再落库：由 config.yaml 两根 + 目录存在性在快照内派生（见 store.BuildSnapshot）。
 package service
 
@@ -20,10 +20,10 @@ import (
 	"phpo/pkg/errs"
 )
 
-// WizardConfig 装机根目录落库子集（*config.ConfigStore 满足）：写两根 + 读原始根
+// WizardConfig 装机根目录落库子集（*config.ConfigStore 满足）：写两根 + 判两根就绪
 type WizardConfig interface {
 	SetRoots(home, www string) error
-	Roots() (home, www string)
+	RootsReady() (home, www bool)
 }
 
 // WizardStore 权威快照回流子集（*store.Store 满足）：两根落库后据此广播就绪态
@@ -55,15 +55,22 @@ func (s *WizardService) HomeVerify(ctx context.Context, home, www string) (model
 	return model.HomeVerifyResult{OK: len(fsErrs) == 0, Lines: lines, Errors: fsErrs}, nil
 }
 
+// Configured 工作目录是否「已设置」：两根已写入 config.yaml 且两个目录实际存在（与快照 dirReady 同判据，不另立标准）。
+// 这是装机向导的先决检测：已设置即禁止任何重复创建。
+func (s *WizardService) Configured() bool {
+	home, www := s.cfg.RootsReady()
+	return home && www
+}
+
 // HomeEnsure 装机确认：三段式任务创建工作目录子树并把两根目录落地 config.yaml，随后广播 state:changed（硬红线 5）
-// 先决检测：两根目录已在 config.yaml 持久化且实际存在 → 视为「已设置」，广播权威快照以即时更新 UI，
-// 跳过目录子树创建，禁止重复创建（幂等）。
+// 先决检测：工作目录已设置（两根已持久化且目录已存在）→ 一律跳过创建，只广播权威快照令前端即时归位；
+// 即使本次请求的路径与已设目录不同，也不建第二套工作目录、不改写 config.yaml（禁止重复创建）。
 func (s *WizardService) HomeEnsure(ctx context.Context, home, www string) error {
 	h, w, verr := validateHomeWww(home, www)
 	if verr != "" {
 		return fmt.Errorf("%s", verr)
 	}
-	if s.alreadyReady(h, w) {
+	if s.Configured() {
 		return s.emit() // 已设置：仅广播权威快照令前端即时更新就绪态，不重复建树、不重复落库
 	}
 	t := &task.Task{
@@ -186,28 +193,10 @@ func writableByPerm(p string) bool {
 	return err == nil && st.IsDir() && st.Mode().Perm()&0o200 != 0
 }
 
-// alreadyReady 判定请求的两根目录是否「已设置」：config.yaml 已持久化非空根、展开后与请求一致、且两目录实际存在。
-// 命中即说明工作目录早已建好，HomeEnsure 据此跳过重复创建。
-func (s *WizardService) alreadyReady(home, www string) bool {
-	ph, pw := s.cfg.Roots()
-	if ph == "" || pw == "" {
-		return false
-	}
-	sameHome := config.ExpandHome(config.NormPath(ph)) == config.ExpandHome(home)
-	sameWww := config.ExpandHome(config.NormPath(pw)) == config.ExpandHome(www)
-	return sameHome && sameWww && dirExists(config.ExpandHome(home)) && dirExists(config.ExpandHome(www))
-}
-
 // persistEnv 把规范化 home/www 写入 config.yaml（ConfigStore 仅存两根，派生路径现算）。
 // 写盘即令快照 dirReady 派生为双 true（preflight NEEDS_HOME 随之放行），无需任何落库标记。
 func (s *WizardService) persistEnv(home, www string) error {
 	return s.cfg.SetRoots(home, www)
-}
-
-// dirExists 目录存在且为目录（跟随符号链接）
-func dirExists(p string) bool {
-	st, err := os.Stat(p)
-	return err == nil && st.IsDir()
 }
 
 // emit 拉取权威快照并广播 state:changed（前端据此落地 env 与 dirReady，无乐观更新）

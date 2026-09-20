@@ -477,6 +477,8 @@ const messages: Record<string, string> = {
   "wiz.s3.wwwCreate": "创建站点源码目录",
   "wiz.s3.chmod": "设置读写权限 755",
   "wiz.s3.rw": "读写测试",
+  "wiz.already.title": "✓ 工作目录已设置",
+  "wiz.already.desc": "检测到 PHPO_HOME 与 WWW_ROOT 已创建并就绪，本窗口不会重复创建任何目录或文件，也不会改写已存配置。点击「完成」返回主界面。",
   "wiz.done.title": "✓ 工作目录设置成功",
   "wiz.done.desc": "主目录与站点目录已就绪。点击「完成」关闭本窗口返回主界面，可继续安装服务或建站。",
   "wiz.done.btn": "完成",

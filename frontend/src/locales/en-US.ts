@@ -477,6 +477,8 @@ const messages: Record<string, string> = {
   "wiz.s3.wwwCreate": "Create site sources directory",
   "wiz.s3.chmod": "Apply permissions 755",
   "wiz.s3.rw": "Read/write test",
+  "wiz.already.title": "✓ Working directories already set",
+  "wiz.already.desc": "PHPO_HOME and WWW_ROOT already exist and are ready. This window creates no directory or file and overwrites no saved configuration. Click Done to return to the main view.",
   "wiz.done.title": "✓ Working directories set up",
   "wiz.done.desc": "Home and site directories are ready. Click Done to close and return to the main view, then install services or add sites.",
   "wiz.done.btn": "Done",

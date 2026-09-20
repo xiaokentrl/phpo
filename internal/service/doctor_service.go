@@ -72,7 +72,7 @@ func NewDoctor(probe engine.Probe, docker DoctorDocker, store DoctorStore, cache
 	d.freeDisk = disk.Free
 	d.portFree = port.Available
 	d.hostsWritable = fileWritable
-	d.dirWritable = dirWritable
+	d.dirWritable = dirProbeWritable
 	d.reachable = httpReachable
 	return d
 }
@@ -208,7 +208,7 @@ func (s *DoctorService) checkDirWritable(id, title, path string) model.DoctorChe
 	if s.dirWritable(path) {
 		c.Status, c.Detail = model.DoctorOK, path+" 可写"
 	} else {
-		c.Status, c.Detail, c.Hint = model.DoctorErr, path+" 无写权限。", "请检查目录权限。"
+		c.Status, c.Detail, c.Hint = model.DoctorErr, path+" 不存在或无写权限。", "请先在装机向导完成工作目录设置；已存在则检查目录权限。"
 	}
 	return c
 }
@@ -348,6 +348,9 @@ func httpReachable(ctx context.Context, url string) (bool, error) {
 	return true, nil
 }
 
+// dirProbeWritable 只读判定目录存在且属主可写：诊断绝不建目录（创建只发生在装机向导「确认并创建」）
+func dirProbeWritable(path string) bool { return writableByPerm(path) }
+
 // fileWritable 以追加方式试开，不写内容；权限不足返回 false
 func fileWritable(path string) bool {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
@@ -358,7 +361,8 @@ func fileWritable(path string) bool {
 	return true
 }
 
-// dirWritable 目录不存在则逐级创建后试写临时文件；任一步失败判不可写
+// dirWritable 目录不存在则逐级创建后试写临时文件；任一步失败判不可写。
+// **写侧探测：只允许装机向导 HomeEnsure 的 ensureTree 调用**——诊断等只读场景一律用 dirProbeWritable。
 func dirWritable(path string) bool {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return false

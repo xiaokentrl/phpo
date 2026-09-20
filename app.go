@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -535,9 +536,14 @@ func (a *App) HomeEnsure(ctx context.Context, home, www string) error {
 
 // HomeDefaults 返回后端已解析的工作目录默认值（config.yaml 已存根目录 > ~/phpo 默认），供装机向导预填与浏览起始目录。
 // 与快照 env 同源：首启快照为空时，前端据此拿到 config.yaml 预置的自定义根目录而非硬编码 ~/phpo。
+// CONFIGURED 携带「工作目录是否已设置」（两根已持久化且目录已存在）：向导据此先决检测，已设置即不再进入设置流程。
 func (a *App) HomeDefaults() map[string]string {
-	return map[string]string{
+	m := map[string]string{
 		"PHPO_HOME": a.container.Env.PHPOHome,
 		"WWW_ROOT":  a.container.Env.WWWRoot,
 	}
+	if a.container.WizardService != nil {
+		m["CONFIGURED"] = strconv.FormatBool(a.container.WizardService.Configured())
+	}
+	return m
 }

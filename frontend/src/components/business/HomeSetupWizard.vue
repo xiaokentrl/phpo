@@ -30,17 +30,21 @@ const homeVal = ref(app.env.PHPO_HOME || DEFAULT_HOME)
 const wwwVal = ref(app.env.WWW_ROOT || DEFAULT_WWW)
 const homeDirty = ref(false)
 const wwwDirty = ref(false)
+// alreadySet：后端先决检测「工作目录已设置」→ 只回显两根 + 「完成」，不提供三步设置、验证与确认并创建（禁止重复创建）
+const alreadySet = ref(false)
 
 // normHome/normWww：trim 去尾斜杠；输入框为空时回落 env 定义目录，再退 DEFAULT_*
 const normHome = computed(() => homeVal.value.trim().replace(/\/+$/, '') || envHome.value || DEFAULT_HOME)
 const normWww = computed(() => wwwVal.value.trim().replace(/\/+$/, '') || envWww.value || DEFAULT_WWW)
 
 // 载入后端解析的工作目录默认值：config.yaml 预置自定义根目录时优先于硬编码 ~/phpo（需求 1）
+// configured 为真即工作目录早已设置完毕：本向导不再允许重复创建，就地展示已设置态
 onMounted(async () => {
   const d = await getHomeDefaults()
   if (!d) return
   envHome.value = d.home
   envWww.value = d.www
+  alreadySet.value = d.configured
   if (!homeDirty.value && d.home) homeVal.value = d.home
   if (!wwwDirty.value && d.www) wwwVal.value = d.www
 })
@@ -201,7 +205,7 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
       <h3>{{ t('wiz.title') }}</h3>
       <p>{{ t('wiz.subtitle') }}</p>
     </template>
-    <div v-if="!done" class="wiz-bar">
+    <div v-if="!done && !alreadySet" class="wiz-bar">
       <div class="wiz-steps">
         <div class="wiz-step" :class="step > 1 ? 'done' : step === 1 ? 'active' : ''"><span class="wiz-num">{{ step > 1 ? '✓' : '1' }}</span><span class="wiz-label">{{ t('wiz.step1') }}</span></div>
         <div class="wiz-line" :class="{ done: step > 1 }" />
@@ -211,11 +215,11 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
       </div>
     </div>
     <template #body>
-      <template v-if="done">
-        <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.done.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.done.desc') }}</div></div>
+      <template v-if="done || alreadySet">
+        <div class="wiz-hero"><div class="wiz-hero-title">{{ alreadySet ? t('wiz.already.title') : t('wiz.done.title') }}</div><div class="wiz-hero-desc">{{ alreadySet ? t('wiz.already.desc') : t('wiz.done.desc') }}</div></div>
         <div class="wiz-confirm-kv">
-          <div class="row"><span class="k">PHPO_HOME</span><span class="v">{{ normHome }}</span></div>
-          <div class="row"><span class="k">WWW_ROOT</span><span class="v">{{ normWww }}</span></div>
+          <div class="row"><span class="k">PHPO_HOME</span><span class="v">{{ alreadySet ? envHome : normHome }}</span></div>
+          <div class="row"><span class="k">WWW_ROOT</span><span class="v">{{ alreadySet ? envWww : normWww }}</span></div>
         </div>
       </template>
       <template v-else-if="step === 1">
@@ -260,7 +264,7 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
       </template>
     </template>
     <template #foot>
-      <button v-if="done" class="btn btn-primary" type="button" @click="finish">{{ t('wiz.done.btn') }}</button>
+      <button v-if="done || alreadySet" class="btn btn-primary" type="button" @click="finish">{{ t('wiz.done.btn') }}</button>
       <template v-else>
         <button v-if="step > 1" class="btn" type="button" @click="prev">← {{ t('wiz.prev') }}</button>
         <button v-else-if="!props.locked" class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>

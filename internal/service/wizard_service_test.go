@@ -17,7 +17,7 @@ import (
 	"phpo/pkg/errs"
 )
 
-// fakeWizard 同满足 WizardConfig（SetRoots/Roots）与 WizardStore（BuildSnapshot）：内存两根 + 落库次数
+// fakeWizard 同满足 WizardConfig（SetRoots/RootsReady）与 WizardStore（BuildSnapshot）：内存两根 + 落库次数
 type fakeWizard struct {
 	home, www  string
 	rootsCalls int // SetRoots 调用次数：验证「已设置」路径不重复落库/建树
@@ -29,8 +29,16 @@ func (f *fakeWizard) SetRoots(home, www string) error {
 	f.rootsCalls++
 	return nil
 }
-func (f *fakeWizard) Roots() (string, string)                 { return f.home, f.www }
+func (f *fakeWizard) RootsReady() (home, www bool) {
+	return f.home != "" && pathIsDir(config.ExpandHome(f.home)), f.www != "" && pathIsDir(config.ExpandHome(f.www))
+}
 func (f *fakeWizard) BuildSnapshot() (*model.Snapshot, error) { return model.NewSnapshot(), nil }
+
+// pathIsDir 跟随符号链接判路径为已存在目录（镜像 ConfigStore.isDir）
+func pathIsDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
 
 func newWizardSvc(t *testing.T) (*WizardService, *fakeWizard, *fakeEmitter) {
 	t.Helper()
@@ -223,6 +231,88 @@ func TestHomeEnsure_SkipsWhenAlreadyReady(t *testing.T) {
 	}
 	if !em.has("state:changed") {
 		t.Fatalf("已设置时仍应广播 state:changed 更新 UI，得 %v", em.events)
+	}
+}
+
+// TestHomeEnsure_RefusesSecondWorkingDir 工作目录一旦「已设置」，任何再次进入向导的设置请求都必须被拒：
+// 既不建第二套目录，也不改写 config.yaml 已存两根——只广播权威快照让 UI 回到已设置态（禁止重复创建）。
+func TestHomeEnsure_RefusesSecondWorkingDir(t *testing.T) {
+	svc, st, em := newWizardSvc(t)
+	base := t.TempDir()
+	oldHome, oldWww := filepath.Join(base, "old", "phpo"), filepath.Join(base, "old", "www")
+	for _, p := range []string{oldHome, oldWww} {
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.home, st.www = oldHome, oldWww // 预置「已设置」：两根已持久化且目录存在
+	if !svc.Configured() {
+		t.Fatal("前置条件失效：应判定工作目录已设置")
+	}
+
+	newHome, newWww := filepath.Join(base, "new", "phpo"), filepath.Join(base, "new", "www")
+	if err := svc.HomeEnsure(context.Background(), newHome, newWww); err != nil {
+		t.Fatalf("HomeEnsure err: %v", err)
+	}
+	if _, e := os.Stat(newHome); !os.IsNotExist(e) {
+		t.Fatalf("已设置时重复创建了第二套 PHPO_HOME：%s", newHome)
+	}
+	if _, e := os.Stat(newWww); !os.IsNotExist(e) {
+		t.Fatalf("已设置时重复创建了第二套 WWW_ROOT：%s", newWww)
+	}
+	if st.rootsCalls != 0 || st.home != oldHome || st.www != oldWww {
+		t.Fatalf("已设置时不得改写 config.yaml：calls=%d home=%q www=%q", st.rootsCalls, st.home, st.www)
+	}
+	if !em.has("state:changed") {
+		t.Fatalf("已设置时仍应广播 state:changed 让 UI 归位，得 %v", em.events)
+	}
+}
+
+// TestHomeEnsure_RefusesSecondWorkingDirRealStore 真 ConfigStore 下走完一次向导后再请求其它路径：
+// 既不建第二套工作目录，也不改写 config.yaml 已存两根；重启进程（另开 ConfigStore）后判据依旧成立。
+func TestHomeEnsure_RefusesSecondWorkingDirRealStore(t *testing.T) {
+	base := t.TempDir()
+	cfgPath := filepath.Join(base, "config.yaml")
+	dbPath := filepath.Join(base, "phpo.db")
+	cfg, err := config.LoadFromPath(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := store.New(dbPath)
+	st.SetEnvProvider(cfg)
+	t.Cleanup(func() { st.Close() })
+	em := &fakeEmitter{}
+	svc := NewWizardService(cfg, st, em, task.NewManager(em))
+
+	home, www := filepath.Join(base, "phpo"), filepath.Join(base, "www")
+	if err := svc.HomeEnsure(context.Background(), home, www); err != nil {
+		t.Fatal(err)
+	}
+	if !svc.Configured() {
+		t.Fatal("向导确认后应判定工作目录已设置")
+	}
+
+	reopened, err := config.LoadFromPath(cfgPath) // 模拟重启：判据取自落盘值而非内存态
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc2 := NewWizardService(reopened, st, em, task.NewManager(em))
+	if !svc2.Configured() {
+		t.Fatal("重启后仍应判定工作目录已设置")
+	}
+
+	altHome, altWww := filepath.Join(base, "alt", "phpo"), filepath.Join(base, "alt", "www")
+	if err := svc2.HomeEnsure(context.Background(), altHome, altWww); err != nil {
+		t.Fatalf("HomeEnsure err: %v", err)
+	}
+	if _, e := os.Stat(altHome); !os.IsNotExist(e) {
+		t.Fatalf("重复创建了第二套 PHPO_HOME：%s", altHome)
+	}
+	if _, e := os.Stat(altWww); !os.IsNotExist(e) {
+		t.Fatalf("重复创建了第二套 WWW_ROOT：%s", altWww)
+	}
+	if h, w := reopened.Roots(); config.ExpandHome(h) != home || config.ExpandHome(w) != www {
+		t.Fatalf("config.yaml 两根被改写：%q / %q（期望 %q / %q）", h, w, home, www)
 	}
 }
 

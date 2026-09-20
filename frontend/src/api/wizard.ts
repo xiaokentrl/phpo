@@ -18,9 +18,10 @@ export async function homeEnsure(home: string, www: string): Promise<void> {
   await app.HomeEnsure(home, www)
 }
 
-// getHomeDefaults 取后端已解析的工作目录默认值（config.yaml 的 phpo_home > ~/phpo）；无宿主返回 null
-export async function getHomeDefaults(): Promise<{ home: string; www: string } | null> {
+// getHomeDefaults 取后端已解析的工作目录默认值（config.yaml 的 phpo_home > ~/phpo）+ 工作目录是否已设置；无宿主返回 null
+// configured=true 即「已设置」：向导只显示当前两根并禁止再次进入设置流程（禁止重复创建）
+export async function getHomeDefaults(): Promise<{ home: string; www: string; configured: boolean } | null> {
   if (!hasBackend()) return null
   const m = await app.HomeDefaults()
-  return { home: m?.['PHPO_HOME'] ?? '', www: m?.['WWW_ROOT'] ?? '' }
+  return { home: m?.['PHPO_HOME'] ?? '', www: m?.['WWW_ROOT'] ?? '', configured: m?.['CONFIGURED'] === 'true' }
 }
