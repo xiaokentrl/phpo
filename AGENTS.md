@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.3
+> **文档版本**：v2.9.4
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -11,7 +11,8 @@
 > **核心原则**：以真实开发者工作流为标准；最小限制；用户是程序员；**离线优先**
 > **端口策略**：站点端口默认 80，用户可指定任意端口；**新建站点端口被占用时不顺延**——仅弹框告警并把站点降级（vhost 暂不落盘、端口暂不发布），站点照常创建；改已有站点的端口时占用才顺延 1–65535 首个可用（不报错、无窗口上限）；服务端口占用仍报错
 > **应用升级**：支持版本检查和自动升级
-> **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 每服务版本的明文密码/宿主端口；SQLite 仅存运行态，且**延迟建库**——两根工作目录写入 `config.yaml` 前不创建用户数据目录；`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」派生；不再使用 `~/phpo/.env` 或 `~/.phpo/config.json`
+> **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 每服务版本的明文密码/宿主端口；SQLite 仅存运行态，且**延迟建库**——两根工作目录写入 `config.yaml` 前不创建用户数据目录；`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」派生；不再使用 `./.env` 或 `~/.phpo/config.json`
+> **路径记法**：本文件的 **`./` 一律指 PHPO_HOME 根**（即 `config.yaml` 的 `phpo_home`，由装机向导指向任意目录；`~/phpo` 只是默认值，**打包安装后不得假定工作目录在用户主目录**）。`<用户数据目录>` 仍是各平台 XDG 的 `os.UserConfigDir()/phpo`（`config.yaml` / `phpo.db` / `logs` / `trash` / `updates`），与 PHPO_HOME **不同源**；`~/www/` 是 WWW_ROOT 的默认值（同样可改）。详见 §0.1.1
 > **密码策略**：明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看
 > **最小限制原则**：除 8 条硬红线外，所有限制放开或降级为警告
 > **Docker 清洁原则**：所有操作幂等、原子、可回滚、可清理
@@ -25,6 +26,23 @@
 ### 0.1 效力声明
 
 本文件为 **phpo 项目的最高项目总纲**。当本文件与其他任何文档、注释、口述、历史草案冲突时，**一律以本文件为准**。
+
+### 0.1.1 路径记法（v2.9.4 新增，仅记法约定，不改任何行为条款）
+
+本文件描述路径时使用三种记法，**不得混用**：
+
+| 记法 | 含义 | 权威来源 | 说明 |
+|------|------|---------|------|
+| **`./`** | **PHPO_HOME 根**（工作目录） | `config.yaml` 的 `phpo_home`（`internal/config/configstore.go`），装机向导落地 | 相对记法。默认值为 `~/phpo`（`internal/config/config.go` 的 `DefaultHome`），**但打包安装后位置由用户选定**，可能是任意磁盘/任意路径；因此本文件一律写 `./offline/`、`./{kind}/{version}/ext/`，不再写死 `~/phpo/…` |
+| **`<用户数据目录>/`** | 应用自身配置与运行态存储 | `os.UserConfigDir()/phpo`（`internal/config/userdata.go`） | Windows `%APPDATA%\phpo\` · macOS `~/Library/Application Support/phpo/` · Linux `~/.config/phpo/`。**与 PHPO_HOME 不同源、不同生命周期** |
+| **`~/www/`** | WWW_ROOT 默认值 | `config.yaml` 的 `www_root` | 同样是可改的根，仅给出默认形态 |
+
+**约束**：
+
+- `./` 段下的所有子路径（`offline/`、`{kind}/{version}/ext/`、`php/<ver>/conf`、`nginx/sites/`、`backups/` 等）都随 PHPO_HOME 移动，**不可在代码或文档里拼死 `~/phpo`**。
+- 描述 `config.yaml`、`phpo.db`、`logs/operations.log`、`trash/`、`updates/` 时**不得**用 `./`——它们在 `<用户数据目录>/`，不受装机向导的 PHPO_HOME 影响。
+- 历史遗留字面量 `~/.phpo/config.json` 是已废弃的旧配置路径，与本记法无关，原样保留以便识别。
+- 引用具体代码位置时保持仓库相对路径（如 `internal/cache/tempdir.go`），不加 `./` 前缀。
 
 ### 0.2 Agent 行为约束
 
@@ -49,9 +67,9 @@
 19. **禁止对 Docker 留下脏状态**：任何操作前必须先清理同名/冲突资源；任何操作失败必须回滚。
 20. **禁止破坏用户数据**：卸载默认保留 volume；删除 volume 必须二次确认；回收站机制。
 21. **禁止绕过离线缓存**：
-    - **安装任何 Docker 镜像（php/mysql/pgsql/redis/nginx 等）时，必须先查 `~/phpo/offline/{kind}/{version}/` 目录**；命中则 `docker load`（零网络）；未命中才 `docker pull`。
-    - **安装任何 PHP 扩展（apk/pecl）时，必须先查 `~/phpo/offline/php/{version}/{apk|pecl}/` 目录**；命中则直接使用（零网络）；未命中才网络下载到临时目录。
-    - **临时目录路径固定为 `~/phpo/{kind}/{version}/ext/`**（如 `~/phpo/php/8.4/ext/`）。
+    - **安装任何 Docker 镜像（php/mysql/pgsql/redis/nginx 等）时，必须先查 `./offline/{kind}/{version}/` 目录**；命中则 `docker load`（零网络）；未命中才 `docker pull`。
+    - **安装任何 PHP 扩展（apk/pecl）时，必须先查 `./offline/php/{version}/{apk|pecl}/` 目录**；命中则直接使用（零网络）；未命中才网络下载到临时目录。
+    - **临时目录路径固定为 `./{kind}/{version}/ext/`**（如 `./php/8.4/ext/`）。
     - **未命中时下载到临时目录 → 编译/加载 → 成功后立刻把文件从临时目录提升到缓存目录 → 无论成功失败，必须清空临时目录**。
     - **编译失败 → 直接清空临时目录 → 报错，不进缓存**。
     - **任务取消 → 直接清空临时目录**。
@@ -104,11 +122,11 @@
 | 操作审计日志 | **`<用户数据目录>/logs/operations.log`** | 见 §5.13.10 · §4.2 |
 | 幂等操作数 | **8** | 见 §5.13.4 |
 | 清理模式数 | **3** | 保守 / 标准 / 激进 |
-| 离线缓存根目录 | **`~/phpo/offline/`** | 见 §5.14.2 |
-| 镜像缓存路径 | **`~/phpo/offline/{kind}/{version}/image.tar`** | 见 §5.14.2 |
-| apk 缓存路径 | **`~/phpo/offline/php/{version}/apk/`** | 见 §5.14.2 |
-| pecl 缓存路径 | **`~/phpo/offline/php/{version}/pecl/`** | 见 §5.14.2 |
-| 临时目录路径 | **`~/phpo/{kind}/{version}/ext/`** | 见 §5.14.2 |
+| 离线缓存根目录 | **`./offline/`** | 见 §5.14.2 |
+| 镜像缓存路径 | **`./offline/{kind}/{version}/image.tar`** | 见 §5.14.2 |
+| apk 缓存路径 | **`./offline/php/{version}/apk/`** | 见 §5.14.2 |
+| pecl 缓存路径 | **`./offline/php/{version}/pecl/`** | 见 §5.14.2 |
+| 临时目录路径 | **`./{kind}/{version}/ext/`** | 见 §5.14.2 |
 | 缓存清单文件 | **`manifest.json`** | 每个版本一份 |
 | 缓存命中优先级 | **离线缓存 > 网络** | 见 §5.14.3 |
 | 临时目录生命周期 | **单任务，任务结束必清空** | 见 §5.14.4 |
@@ -283,7 +301,7 @@
 **安装 PHP 8.4 镜像**：
 
 ```
-1. 检查 ~/phpo/offline/php/8.4/image.tar
+1. 检查 ./offline/php/8.4/image.tar
    ├─ 存在 + SHA256 通过
    │   → docker load -i image.tar（零网络）
    │   → 发射 cache:hit 事件
@@ -292,8 +310,8 @@
        → docker pull php:8.4-fpm（网络）
        → docker save -o {tmp}/image.tar
        → 校验
-       → mv {tmp}/image.tar ~/phpo/offline/php/8.4/image.tar
-       → 更新 ~/phpo/offline/php/8.4/manifest.json
+       → mv {tmp}/image.tar ./offline/php/8.4/image.tar
+       → 更新 ./offline/php/8.4/manifest.json
        → 清空 {tmp}
        → 发射 cache:miss + cache:promote 事件
        → 完成
@@ -302,22 +320,22 @@
 **安装 PHP 8.4 的 redis 扩展（pecl）**：
 
 ```
-1. 检查 ~/phpo/offline/php/8.4/pecl/redis-6.0.2.tgz
+1. 检查 ./offline/php/8.4/pecl/redis-6.0.2.tgz
    ├─ 存在 + SHA256 通过
-   │   → 复制到 ~/phpo/php/8.4/ext/pecl/
+   │   → 复制到 ./php/8.4/ext/pecl/
    │   → 编译安装
-   │   → 清空 ~/phpo/php/8.4/ext/
+   │   → 清空 ./php/8.4/ext/
    │   → 发射 cache:hit 事件
    └─ 不存在 / SHA256 失败
-       → 下载到 ~/phpo/php/8.4/ext/pecl/redis-6.0.2.tgz（网络）
+       → 下载到 ./php/8.4/ext/pecl/redis-6.0.2.tgz（网络）
        → 编译安装
        ├─ 成功
-       │   → mv ~/phpo/php/8.4/ext/pecl/redis-6.0.2.tgz ~/phpo/offline/php/8.4/pecl/
-       │   → 更新 ~/phpo/offline/php/8.4/manifest.json
-       │   → **清空 ~/phpo/php/8.4/ext/**（防污染下次使用）
+       │   → mv ./php/8.4/ext/pecl/redis-6.0.2.tgz ./offline/php/8.4/pecl/
+       │   → 更新 ./offline/php/8.4/manifest.json
+       │   → **清空 ./php/8.4/ext/**（防污染下次使用）
        │   → 发射 cache:miss + cache:promote 事件
        └─ 失败
-           → **清空 ~/phpo/php/8.4/ext/**（防污染下次使用）
+           → **清空 ./php/8.4/ext/**（防污染下次使用）
            → 报错
 2. 重建镜像 + 重启容器
 ```
@@ -325,7 +343,7 @@
 #### 1.13.3 目录结构总览
 
 ```
-~/phpo/offline/                       # 缓存根目录（持久）
+./offline/                       # 缓存根目录（持久）
 ├── php/
 │   └── 8.4/
 │       ├── image.tar                 # 镜像缓存
@@ -337,7 +355,7 @@
 ├── redis/8/{image.tar, manifest.json}
 └── nginx/alpine/{image.tar, manifest.json}
 
-~/phpo/php/8.4/ext/                   # 临时目录（单任务，结束即空）
+./php/8.4/ext/                   # 临时目录（单任务，结束即空）
 ├── apk/                              # 编译期间临时存放
 └── pecl/
 ```
@@ -816,8 +834,8 @@ phpo/
 ### 4.2 运行时用户数据目录
 
 ```
-$XDG_CONFIG_HOME/phpo/                # 用户数据目录（os.UserConfigDir()/phpo，见 internal/config/userdata.go）
-│                                     # Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
+<用户数据目录>/                         # = os.UserConfigDir()/phpo（见 internal/config/userdata.go）；不受装机向导影响
+│                                       # Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
 ├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + services.{kind}.{version}.{password,port}；0600
 ├── phpo.db                           # SQLite，仅存运行态（installed / running / sites / php_extensions / trash / operations（含任务账本 task_id/label/logs） / offline / cache_manifest）；**延迟建库**：装机向导把两根目录写入 config.yaml 后才创建
 ├── logs/
@@ -830,7 +848,7 @@ $XDG_CONFIG_HOME/phpo/                # 用户数据目录（os.UserConfigDir()/
 # 注：主题、语言、布局、缩放属 UI 偏好，留前端 localStorage（§3.1 原则 5），用户数据目录内不再有 themes/ 与 locales/；
 #     运行日志走标准输出 + 系统日志，未单独落 phpo.log。
 
-~/phpo/                               # PHPO_HOME
+./                                      # PHPO_HOME（= config.yaml 的 phpo_home；装机向导可指向任意目录，`~/phpo` 仅默认值）
 ├── php/<ver>/{conf,logs}
 │   └── ext/                          # 临时目录（编译期间，任务结束即清空）
 │       ├── apk/
@@ -852,7 +870,7 @@ $XDG_CONFIG_HOME/phpo/                # 用户数据目录（os.UserConfigDir()/
     ├── redis/8/{image.tar, manifest.json}
     └── nginx/alpine/{image.tar, manifest.json}
 
-# 注：密码/端口/工作根目录统一存于用户数据目录内的 config.yaml（见上），不再有 ~/phpo/.env。
+# 注：密码/端口/工作根目录统一存于用户数据目录内的 config.yaml（见上），不再有 ./.env。
 
 ~/www/                                # WWW_ROOT（默认，可改）
 ├── demo.test/
@@ -879,7 +897,7 @@ $XDG_CONFIG_HOME/phpo/                # 用户数据目录（os.UserConfigDir()/
 
 **五项规则**：明文存储 + 默认 `123456` + 可修改 + 可为空 + 长度不校验 + UI 可查看。
 
-**存储位置**：`config.yaml` 的 `services.{kind}.{version}.password`（各平台 XDG 用户配置目录内的 `phpo` 子目录）；文件权限 `0600`。不再有 `~/phpo/.env`，SQLite 不再持有 `env` 表与 `dir_ready` 表；前端 `app.env.*` 契约经快照 `env` 扁平键合成保持不变。
+**存储位置**：`config.yaml` 的 `services.{kind}.{version}.password`（各平台 XDG 用户配置目录内的 `phpo` 子目录）；文件权限 `0600`。不再有 `./.env`，SQLite 不再持有 `env` 表与 `dir_ready` 表；前端 `app.env.*` 契约经快照 `env` 扁平键合成保持不变。
 
 ### 5.3 templates 目录
 
@@ -1063,14 +1081,14 @@ CI 无人值守支持。
 
 #### 5.14.2 目录结构
 
-**离线缓存根目录**：`~/phpo/offline/`（**持久**）
+**离线缓存根目录**：`./offline/`（**持久**）
 
-**临时目录**：`~/phpo/{kind}/{version}/ext/`（**单任务，任务结束即清空**）
+**临时目录**：`./{kind}/{version}/ext/`（**单任务，任务结束即清空**）
 
 **完整结构**：
 
 ```
-~/phpo/offline/                       # 缓存根目录（持久）
+./offline/                       # 缓存根目录（持久）
 ├── php/
 │   └── {version}/
 │       ├── image.tar                # Docker 镜像（docker save 产物）
@@ -1098,7 +1116,7 @@ CI 无人值守支持。
         ├── image.tar
         └── manifest.json
 
-~/phpo/{kind}/{version}/ext/           # 临时目录（单任务，结束即空）
+./{kind}/{version}/ext/           # 临时目录（单任务，结束即空）
 ├── apk/                              # 编译期间临时存放
 │   └── {下载中}.apk
 └── pecl/
@@ -1147,7 +1165,7 @@ CI 无人值守支持。
 **安装服务（Docker 镜像）**：
 
 ```
-1. 检查 ~/phpo/offline/{kind}/{version}/image.tar
+1. 检查 ./offline/{kind}/{version}/image.tar
    ├─ 存在
    │   ├─ 校验 SHA256（对比 manifest.json 中的值）
    │   │   ├─ 通过 → docker load -i image.tar（零网络）
@@ -1161,8 +1179,8 @@ CI 无人值守支持。
        → docker pull {image}（网络）
        → docker save -o {tmp}/image.tar
        → 校验
-       → mv {tmp}/image.tar ~/phpo/offline/{kind}/{version}/image.tar
-       → 更新 ~/phpo/offline/{kind}/{version}/manifest.json
+       → mv {tmp}/image.tar ./offline/{kind}/{version}/image.tar
+       → 更新 ./offline/{kind}/{version}/manifest.json
        → 清空 {tmp}
        → 发射 cache:miss + cache:promote + cache:tempdir-cleared 事件
        → 完成
@@ -1172,10 +1190,10 @@ CI 无人值守支持。
 
 ```
 1. 判断扩展类型（apk / pecl）
-2. 检查 ~/phpo/offline/php/{version}/{type}/{package}
+2. 检查 ./offline/php/{version}/{type}/{package}
    ├─ 存在
    │   ├─ 校验 SHA256（对比 manifest.json 中的值）
-   │   │   ├─ 通过 → 从缓存复制到临时目录 ~/phpo/php/{version}/ext/{type}/
+   │   │   ├─ 通过 → 从缓存复制到临时目录 ./php/{version}/ext/{type}/
    │   │   │         → 编译安装
    │   │   │         → **清空临时目录**（防污染下次使用）
    │   │   │         → 发射 cache:hit + cache:tempdir-cleared 事件
@@ -1183,15 +1201,15 @@ CI 无人值守支持。
    │   │              → 回退到网络
    │   └─ （损坏则走网络）
    └─ 不存在
-       → 下载到 ~/phpo/php/{version}/ext/{type}/（网络）
+       → 下载到 ./php/{version}/ext/{type}/（网络）
        → 编译安装
        │   ├─ 成功
-       │   │   → mv ~/phpo/php/{version}/ext/{type}/{package} ~/phpo/offline/php/{version}/{type}/
-       │   │   → 更新 ~/phpo/offline/php/{version}/manifest.json
-       │   │   → **清空 ~/phpo/php/{version}/ext/**（防污染下次使用）
+       │   │   → mv ./php/{version}/ext/{type}/{package} ./offline/php/{version}/{type}/
+       │   │   → 更新 ./offline/php/{version}/manifest.json
+       │   │   → **清空 ./php/{version}/ext/**（防污染下次使用）
        │   │   → 发射 cache:miss + cache:promote + cache:tempdir-cleared 事件
        │   └─ 失败
-       │       → **清空 ~/phpo/php/{version}/ext/**（防污染下次使用）
+       │       → **清空 ./php/{version}/ext/**（防污染下次使用）
        │       → 发射 cache:tempdir-cleared 事件（reason: "compile_failed"）
        │       → 报错
 3. 重建镜像 + 重启容器
@@ -1199,7 +1217,7 @@ CI 无人值守支持。
 
 #### 5.14.4 临时目录生命周期（严格）
 
-**临时目录路径**：`~/phpo/{kind}/{version}/ext/`
+**临时目录路径**：`./{kind}/{version}/ext/`
 
 | 时机 | 行为 |
 |------|------|
@@ -1260,7 +1278,7 @@ func ClearTempDir(kind, version string) error {
 
 #### 5.14.9 缓存迁移（可选）
 
-可手动拷贝 `~/phpo/offline/` 或通过备份恢复功能包含离线缓存。
+可手动拷贝 `./offline/` 或通过备份恢复功能包含离线缓存。
 
 #### 5.14.10 缓存 API（Service 层）
 
@@ -1421,7 +1439,7 @@ type OfflineService interface {
 
 **规则 2：命中零网络**：缓存命中 + SHA256 通过 → 直接使用（零网络）。
 
-**规则 3：未命中走临时**：下载到 `~/phpo/{kind}/{version}/ext/` → 编译/加载 → 成功 → 提升到 `~/phpo/offline/{kind}/{version}/`。
+**规则 3：未命中走临时**：下载到 `./{kind}/{version}/ext/` → 编译/加载 → 成功 → 提升到 `./offline/{kind}/{version}/`。
 
 **规则 4：无论成败清临时**：编译成功/失败/取消/崩溃后，临时目录必须清空。
 
@@ -1454,9 +1472,11 @@ type OfflineService interface {
 | 代码签名 | EV 证书 | Developer ID + 公证 | 无 |
 | `config.yaml` 权限 | NTFS ACL | `chmod 600` | `chmod 600` |
 | 升级安装方式 | NSIS 静默安装 | .app 替换 | AppImage 替换 |
-| 缓存路径 | `%USERPROFILE%\phpo\offline\` | `~/phpo/offline/` | `~/phpo/offline/` |
+| 缓存路径 | `./offline/` | `./offline/` | `./offline/` |
 | 缓存文件权限 | NTFS ACL | `chmod 644` | `chmod 644` |
-| 临时目录 | `%USERPROFILE%\phpo\{kind}\{version}\ext\` | `~/phpo/{kind}/{version}/ext/` | `~/phpo/{kind}/{version}/ext/` |
+| 临时目录 | `./{kind}/{version}/ext/` | `./{kind}/{version}/ext/` | `./{kind}/{version}/ext/` |
+
+> **缓存路径与临时目录跨平台同记法**：两者都从 PHPO_HOME（`config.yaml` 的 `phpo_home`）派生，位置由装机向导决定，**不随平台写死**。各平台的默认候选：Windows `%USERPROFILE%\phpo\`、macOS/Linux `~/phpo/`（仅默认值，非约束）；`~` 的展开由 `internal/config` 在出口统一处理（Windows 无 shell `~`，见上「路径解析」行）。
 
 ### 8.1–8.7（见 v2.6.0）
 
@@ -1604,7 +1624,17 @@ type OfflineService interface {
 
 ---
 
-**phpo 项目总纲 v2.9.3**
+**phpo 项目总纲 v2.9.4**
+
+> **v2.9.4 变更（仅统一路径记法，不改任何行为条款与权威数字）**：新增 §0.1.1「路径记法」并补头部「路径记法」条目——
+> 本文件的 **`./` 一律指 PHPO_HOME 根**（`config.yaml` 的 `phpo_home`，装机向导可指向任意目录），此前写死的
+> `~/phpo/…` 字面量全部改为相对记法（共 47 处，覆盖 §0.2 规则 21、§0.3 权威表、§1.13.2/1.13.3、§4.2、§5.2、
+> §5.14.2/5.14.3/5.14.4/5.14.9、决策 22、§8 跨平台矩阵）。理由：本文件描述的是**打包安装后**的运行时目录，
+> PHPO_HOME 由用户在装机向导选定（默认值才是 `~/phpo`），把默认值当约束写死会导致代码/文档误假定位置。
+> §8 的「缓存路径」「临时目录」三平台列统一为 `./offline/` 与 `./{kind}/{version}/ext/`（同源派生、跨平台同记法），
+> 并在表下注明各平台默认候选仅为默认值。§4.2 用户数据目录段首改为 `<用户数据目录>/` 记法，与 PHPO_HOME 的 `./`
+> 明确区分（两者不同源、不同生命周期）。字面量 `~/.phpo/config.json`（已废弃旧配置）与 `~/www/`（WWW_ROOT 默认值）
+> 原样保留。**离线缓存铁律、临时目录路径规则、硬红线 8 条、端口/密码/版本策略、§0.3 全部数字一字未改。**
 
 > **v2.9.3 变更（仅同步既有实现的落点，不改任何策略条款）**：§4.1 目录树按仓库真实文件重排——删去从未落地的
 > `configs/`、`internal/i18n/`、`internal/preflight/{common,portprobe,rules_cleanup}.go`、
@@ -1623,7 +1653,8 @@ type OfflineService interface {
 - 技术栈：Wails ≥ 3 + Go ≥ 1.27 + Vue 3.5+ + TypeScript
 - 目标：Windows / macOS / Linux 三平台桌面应用
 - 形态：**仅 GUI，不提供 CLI**
-- 配置存储：**单一 `config.yaml`（YAML，各平台 XDG 用户配置目录内 `phpo` 子目录）承载根目录 + 明文密码 + 端口；SQLite 仅存运行态且延迟建库（两根未落地即首启零落盘）；`dirReady` 由快照派生、不落库；不再有 `~/phpo/.env` / `~/.phpo/config.json`**
+- 配置存储：**单一 `config.yaml`（YAML，各平台 XDG 用户配置目录内 `phpo` 子目录）承载根目录 + 明文密码 + 端口；SQLite 仅存运行态且延迟建库（两根未落地即首启零落盘）；`dirReady` 由快照派生、不落库；不再有 `./.env` / `~/.phpo/config.json`**
+- 路径记法：**`./` = PHPO_HOME 根（`config.yaml` 的 `phpo_home`，装机向导可指向任意目录，`~/phpo` 仅默认值）；`<用户数据目录>/` = `os.UserConfigDir()/phpo`（两者不同源）；见 §0.1.1**
 - 密码：**明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看**
 - 版本：**不限制字符集，仅做路径安全校验**
 - 端口：**站点端口默认 80、用户可指定任意端口；新建站点占用不顺延（告警 + 站点降级，站点照常创建）；改已有站点端口占用才顺延 1–65535 首个可用（不报错）；服务端口占用报错**
