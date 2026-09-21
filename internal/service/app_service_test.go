@@ -282,30 +282,38 @@ func TestAppService_Install_LogsFailureReason(t *testing.T) {
 	}
 }
 
-// TestAppService_NginxReadyHealsSites 建站已不以 nginx 为门禁，降级站点必须能自愈：
-// 安装 / 启动 nginx 后各补齐一次；其余服务（PHP 等）不触发该步骤。
-func TestAppService_NginxReadyHealsSites(t *testing.T) {
+// TestAppService_HealsSitesOnReadyingEvents 降级站点的自愈触发面（建站已不以 nginx 为门禁，靠事件补齐）：
+//   - nginx 装/启动：容器就绪才写得动 vhost（硬红线 2 的 nginx -t 在容器里跑）
+//   - php 装：因缺上游而降级的站点有了 fastcgi 目标
+//   - 数据服务卸载：让出被占端口，卡在端口占用的站点可发布
+//
+// 反向：php 卸载、nginx 停止只会让站点更降级，补齐不得空跑。
+func TestAppService_HealsSitesOnReadyingEvents(t *testing.T) {
 	a, _, _, _, _, _ := newApp(t, nil)
 	h := &healRecorder{}
 	a.SetSiteHealer(h)
 	ctx := context.Background()
 
-	if err := a.Install(ctx, model.KindNginx, "alpine"); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		what string
+		run  func() error
+		want int
+	}{
+		{"安装 nginx", func() error { return a.Install(ctx, model.KindNginx, "alpine") }, 1},
+		{"启动 nginx", func() error { return a.Start(ctx, model.KindNginx, "alpine") }, 2},
+		{"停止 nginx", func() error { return a.Stop(ctx, model.KindNginx, "alpine") }, 2},
+		{"安装 php", func() error { return a.Install(ctx, model.KindPHP, "8.4") }, 3},
+		{"安装 mysql", func() error { return a.Install(ctx, model.KindMySQL, "8.4") }, 3},
+		{"卸载 php", func() error { return a.Remove(ctx, model.KindPHP, "8.4") }, 3},
+		{"卸载 nginx", func() error { return a.Remove(ctx, model.KindNginx, "alpine") }, 3},
+		{"卸载 mysql", func() error { return a.Remove(ctx, model.KindMySQL, "8.4") }, 4},
 	}
-	if h.calls != 1 {
-		t.Fatalf("安装 nginx 后应补齐站点一次，实得 %d", h.calls)
-	}
-	if err := a.Start(ctx, model.KindNginx, "alpine"); err != nil {
-		t.Fatal(err)
-	}
-	if h.calls != 2 {
-		t.Fatalf("启动 nginx 后应再补齐一次，实得 %d", h.calls)
-	}
-	if err := a.Install(ctx, model.KindPHP, "8.4"); err != nil {
-		t.Fatal(err)
-	}
-	if h.calls != 2 {
-		t.Fatalf("非 nginx 的操作不应触发站点补齐，实得 %d", h.calls)
+	for _, c := range cases {
+		if err := c.run(); err != nil {
+			t.Fatalf("%s 应成功: %v", c.what, err)
+		}
+		if h.calls != c.want {
+			t.Fatalf("%s 后补齐次数应为 %d，实得 %d", c.what, c.want, h.calls)
+		}
 	}
 }

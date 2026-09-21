@@ -13,7 +13,7 @@ const MOCK_SNAPSHOT: StateSnapshot = {
   ],
   env: {
     PHPO_HOME: '~/phpo', WWW_ROOT: '~/www', NGINX_SITES_ROOT: '~/phpo/nginx/sites', OFFLINE_ROOT: '~/phpo/offline',
-    BACKUP_ROOT: '~/phpo/backups', NGINX_PORT: '80', NGINX_VERSION: 'alpine',
+    BACKUP_ROOT: '~/phpo/backups', NGINX_ALPINE_PORT: '80', MYSQL_84_PORT: '3384', MYSQL_84_PASSWORD: '123456',
   },
   phpExtensions: { '8.5': ['gd', 'redis', 'opcache'], '8.4': ['gd', 'redis', 'pdo_mysql'] },
   dirReady: { PHPO_HOME: true, WWW_ROOT: true },

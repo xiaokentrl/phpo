@@ -470,6 +470,57 @@ func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
 	}
 }
 
+// TestSiteService_Remove_HealsSiteFreedByDeletedPort 删站让出的端口可能正卡着别的降级站点
+// （两个站点同填一个端口，后者无 conf）：删除落库后顺手补齐，否则用户删完冲突站点，
+// 界面上会留下一个「条件已满足却仍不服务、且健康列已说不出原因」的站点。
+func TestSiteService_Remove_HealsSiteFreedByDeletedPort(t *testing.T) {
+	ctx := context.Background()
+	svc, _, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	confB := filepath.Join(env.NginxSitesRoot, "b.test.conf")
+	if _, e := os.Stat(confB); !os.IsNotExist(e) {
+		t.Fatal("端口被 a.test 占用时 b.test 应降级（不写 vhost）")
+	}
+	if err := svc.Remove(ctx, "a.test"); err != nil {
+		t.Fatal(err)
+	}
+	b, e := os.ReadFile(confB)
+	if e != nil {
+		t.Fatalf("删掉冲突站点后应补齐 b.test 的 vhost: %v", e)
+	}
+	if !strings.Contains(string(b), "listen 8081;") {
+		t.Fatalf("补齐的 vhost 端口应精确:\n%s", b)
+	}
+}
+
+// TestSiteService_SetPort_HealsSiteFreedByNewPort 改端口同样会腾出端口：a.test 从 8081 让开后，
+// 卡在 8081 上的 b.test 应在本次写操作末尾补齐（与删站同一判据，落库之后才看得见新占用表）。
+func TestSiteService_SetPort_HealsSiteFreedByNewPort(t *testing.T) {
+	ctx := context.Background()
+	svc, _, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetPort(ctx, "a.test", 8082); err != nil {
+		t.Fatal(err)
+	}
+	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "b.test.conf"))
+	if e != nil {
+		t.Fatalf("a.test 让开 8081 后应补写 b.test 的 vhost: %v", e)
+	}
+	if !strings.Contains(string(b), "listen 8081;") {
+		t.Fatalf("补齐的 vhost 端口应精确:\n%s", b)
+	}
+}
+
 // hostsFake 可编排的 HostsOps：记录调用次数，按预设返回 Result/error
 type hostsFake struct {
 	res       hosts.Result

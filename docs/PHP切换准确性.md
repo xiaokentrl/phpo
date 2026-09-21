@@ -46,6 +46,7 @@ php-{version}-fpm:9000
 
 - 与「版本策略」：版本号仅路径安全校验后原样进入上游串（[版本策略](./版本策略.md)）。
 - 与「Docker 清洁」：目标 PHP 容器须已安装并加入 `phpo-network`；切换前 preflight 校验其存在，否则 `NotInstalled`。
+- 与「端口策略」：`php-switch` 属 vhost 写链，切换前 preflight 还须 **Nginx 已装且运行**（`nginxServing()`）——步 5 的 `nginx -t` 在容器里执行，Nginx 停了这条链必然失败，故此处阻断而非降级（[端口策略](./端口策略.md)）。
 - vhost 被手改过（`VhostCustomized`）：仍按精确上游改写单行，不覆盖用户其余指令（§5.10 放开 vhost 指令）。
 
 ## 相关文档

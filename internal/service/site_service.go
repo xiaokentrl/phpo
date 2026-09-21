@@ -122,14 +122,19 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 	if rp := s.republishStep(s.publishPorts(mustSites(s.store), domain, 0)); rp != nil {
 		stepsList = append(stepsList, rp)
 	}
+	id := s.newID("site-remove")
 	t := &task.Task{
-		ID:    s.newID("site-remove"),
+		ID:    id,
 		Label: "删除站点 " + domain,
 		Meta:  model.TaskMeta{Type: "site-remove", Domain: domain},
 		Steps: stepsList,
 		Apply: func() error {
 			trashPath = trashStep.TrashPath()
-			return s.commitRemove(domain, site.Root, trashPath)
+			if err := s.commitRemove(domain, site.Root, trashPath); err != nil {
+				return err
+			}
+			s.healFreed(id, ctx)
+			return nil
 		},
 	}
 	_, err := s.tasks.Run(ctx, t)
@@ -369,8 +374,9 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 	if rp := s.republishStep(s.publishPorts(sites, domain, updated.Port)); rp != nil {
 		stepList = append(stepList, rp)
 	}
+	id := s.newID(op)
 	t := &task.Task{
-		ID:    s.newID(op),
+		ID:    id,
 		Label: label,
 		Meta:  model.TaskMeta{Type: op, Domain: domain},
 		Steps: stepList,
@@ -378,11 +384,24 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 			if err := s.store.UpsertSite(updated); err != nil {
 				return err
 			}
-			return s.emit()
+			if err := s.emit(); err != nil {
+				return err
+			}
+			s.healFreed(id, ctx)
+			return nil
 		},
 	}
 	_, err := s.tasks.Run(ctx, t)
 	return err
+}
+
+// healFreed 本次站点写操作让出的端口（删站、改端口）可能正卡着别的降级站点：落库后顺手补齐它们。
+// 只能挂在 Apply 段末尾——步骤阶段库里仍是旧占用表，那时补齐会照旧判定「端口被占」而空跑。
+// 失败只记一行 task:log 不上抛：本次删除/改动已成功，让补齐失败回滚整任务与本意相反（§3.2 原则 7）。
+func (s *SiteService) healFreed(taskID string, ctx context.Context) {
+	if err := s.ReconcileServe(ctx); err != nil {
+		task.Logf(s.emitter, taskID, model.LogErr, "补齐其他降级站点失败: "+err.Error())
+	}
 }
 
 // commitUpsert applyStateChange：写库 + 校准缓存 + 广播新快照

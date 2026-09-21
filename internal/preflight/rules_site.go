@@ -68,6 +68,9 @@ func (r *run) sitePort() {
 		r.errf("%s: %s", errs.SiteMissing, c.Domain)
 		return
 	}
+	if !r.nginxServing() {
+		return
+	}
 	// FIX #5：改已有站点的端口仍支持自动顺延（排除自身域名与当前端口）
 	pp := r.validatePort(asString(c.NewValue), []int{site.Port}, []string{c.Domain}, conflictAdvance)
 	if !pp.Ok {
@@ -84,6 +87,9 @@ func (r *run) siteVhost() {
 		r.errf("%s: %s", errs.SiteMissing, c.Domain)
 		return
 	}
+	if !r.nginxServing() {
+		return
+	}
 	if c.Content != nil && strings.TrimSpace(*c.Content) == "" {
 		r.errf("%s", errs.ConfigEmpty)
 	}
@@ -98,6 +104,9 @@ func (r *run) phpSwitch() {
 		r.errf("%s: %s", errs.SiteMissing, c.Domain)
 		return
 	}
+	if !r.nginxServing() {
+		return
+	}
 	if !contains(r.w.Snap.Installed["php"], c.NewPhp) {
 		r.errf("%s: PHP %s", errs.NotInstalled, c.NewPhp)
 	}
@@ -109,8 +118,8 @@ func (r *run) rewrite() {
 		r.errf("%s: %s", errs.SiteMissing, c.Domain)
 		return
 	}
-	if len(r.w.Snap.Installed["nginx"]) == 0 {
-		r.errf("%s", errs.NginxNeeded)
+	if !r.nginxServing() {
+		return
 	}
 }
 
@@ -139,9 +148,30 @@ type siteView struct {
 	Root   string
 }
 
+// nginxServing vhost 写操作（改端口 / 手改正文 / 切 PHP / 伪静态）的服务门禁：nginx 必须已装且运行。
+// 与建站不同——建站没有旧 conf 会失配，未运行只降级；编辑站点必须把新正文写盘，而写盘前的 nginx -t
+// （硬红线 2）只能在运行中的容器里执行，容器停了这条链必然失败。故此处拦截并给出可恢复的下一步。
+// 返回 false 表示已记错误，调用方应直接 return。
+func (r *run) nginxServing() bool {
+	if len(r.w.Snap.Installed["nginx"]) == 0 {
+		r.errf("%s", errs.NginxNeeded)
+		return false
+	}
+	if len(r.w.Snap.Running["nginx"]) == 0 {
+		r.errf("%s", nginxNotServingErr())
+		return false
+	}
+	return true
+}
+
 // nginxNotRunningWarn nginx 已装但未运行的建站降级告警；文案与前端 usePreflight.ts 逐字对齐
 func nginxNotRunningWarn() string {
 	return errs.NotRunning + ": Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；启动 Nginx 后自动补齐）"
+}
+
+// nginxNotServingErr nginx 未运行时的编辑站点拦截文案；文案与前端 usePreflight.ts 逐字对齐
+func nginxNotServingErr() string {
+	return errs.NotRunning + ": Nginx（vhost 改动须经运行中的 Nginx 校验后才能落盘，请先启动 Nginx 再重试）"
 }
 
 func advanceMsg(from, to int) string {

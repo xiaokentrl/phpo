@@ -6,28 +6,35 @@ import type { Backup, DockerStatus, Env, OfflineTree, ServiceKind, Site, StateSn
 import { derivePaths, DEFAULT_HOME, DEFAULT_WWW } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 
+// 后端只发 {KIND}_{VER}_PORT / {KIND}_{VER}_PASSWORD（internal/config/configstore.go 的 EnvKey*），
+// 从不发 NGINX_PORT / NGINX_VERSION / *_ROOT_PASSWORD 这类原型遗留键——真宿主下种它们，
+// 等于往快照 env 里永久留下无人覆盖的假值（applySnapshot 只清后端真发过的键）。
 function defaultEnv(): Env {
-  return {
-    ...derivePaths(DEFAULT_HOME, DEFAULT_WWW),
-    NGINX_PORT: '80',
-    NGINX_VERSION: 'alpine',
+  const env: Env = { ...derivePaths(DEFAULT_HOME, DEFAULT_WWW) } as Env
+  if (hasBackend()) return env // 真宿主：路径键仅是向导未落地前的兜底，端口/密码一律等权威快照
+  Object.assign(env, {
     MYSQL_84_PORT: '3384',
-    MYSQL_84_ROOT_PASSWORD: '123456',
+    MYSQL_84_PASSWORD: '123456',
     PGSQL_17_PORT: '5417',
-    PGSQL_17_ROOT_PASSWORD: '123456',
+    PGSQL_17_PASSWORD: '123456',
     REDIS_8_PORT: '6379',
-    REDIS_8_ROOT_PASSWORD: '123456',
-  }
+    REDIS_8_PASSWORD: '123456',
+    NGINX_ALPINE_PORT: '80',
+  })
+  return env
 }
 
+// demo：无宿主（纯 Vite 起前端）时用原型占位数据直接打开各视图做 UI 验证；
+// 真宿主一律从空开始，等 GetState / state:changed 落地（硬红线 4：前端不编造后端事实）。
+// 宿主判据可能晚于 store 建立（window._wails 在 WindowLoadFinished 才注入），故 App.vue 确认宿主后
+// 还要调 enterRealHost() 收掉这里可能已经铺下的占位数据。
 export const useAppState = defineStore('appState', () => {
-  const installed = reactive<Record<ServiceKind, string[]>>({
-    php: ['8.4', '8.3', '8.0'],
-    mysql: ['8.4'],
-    pgsql: ['17'],
-    redis: ['8'],
-    nginx: ['alpine'],
-  })
+  const demo = !hasBackend()
+  const installed = reactive<Record<ServiceKind, string[]>>(
+    demo
+      ? { php: ['8.4', '8.3', '8.0'], mysql: ['8.4'], pgsql: ['17'], redis: ['8'], nginx: ['alpine'] }
+      : { php: [], mysql: [], pgsql: [], redis: [], nginx: [] },
+  )
   const stopped = reactive<Record<ServiceKind, string[]>>({
     php: [],
     mysql: [],
@@ -35,33 +42,49 @@ export const useAppState = defineStore('appState', () => {
     redis: [],
     nginx: [],
   })
-  const sites = reactive<Site[]>([
-    { domain: 'demo.test', port: 80, php: '8.4', root: '~/www/demo.test', hosts: true, health: 'up', rewrite: 'laravel' },
-    { domain: 'blog.test', port: 80, php: '8.3', root: '~/www/blog.test', hosts: true, health: 'up', rewrite: 'thinkphp' },
-    { domain: 'api.test', port: 8080, php: '8.4', root: '~/www/api.test', hosts: false, health: 'warn', rewrite: 'none' },
-    { domain: 'legacy.test', port: 8000, php: '8.0', root: '~/www/legacy.test', hosts: true, health: 'down', rewrite: 'ci' },
-  ])
-  const backups = reactive<Backup[]>([
-    { file: 'backup-20260913-093015.tar.gz', size: '48.2 MB', at: '2026-09-13 09:30', items: 5 },
-    { file: 'backup-20260910-220845.tar.gz', size: '46.7 MB', at: '2026-09-10 22:08', items: 5 },
-    { file: 'backup-20260905-141200.tar.gz', size: '41.1 MB', at: '2026-09-05 14:12', items: 4 },
-  ])
-  const offline = reactive<{ total: string; trees: OfflineTree[] }>({
-    total: '1.42 GB',
-    trees: [
-      { svc: 'php', ver: '8.4', size: '420 MB', items: 138, verified: '2026-09-12 18:03' },
-      { svc: 'php', ver: '8.0', size: '385 MB', items: 126, verified: '2026-09-08 22:15' },
-      { svc: 'mysql', ver: '8.4', size: '212 MB', items: 1, verified: '2026-09-11 09:40' },
-      { svc: 'pgsql', ver: '17', size: '180 MB', items: 1, verified: '2026-09-10 15:20' },
-      { svc: 'redis', ver: '8', size: '68 MB', items: 1, verified: '2026-09-06 11:22' },
-      { svc: 'nginx', ver: 'alpine', size: '52 MB', items: 1, verified: '2026-09-05 08:11' },
-    ],
-  })
-  const phpExtensions = reactive<Record<string, string[]>>({
-    '8.4': ['gd', 'redis', 'pdo_mysql', 'mysqli', 'pgsql', 'pdo_pgsql', 'zip', 'bcmath', 'intl', 'opcache', 'exif', 'soap', 'sockets', 'imagick', 'xdebug'],
-    '8.3': ['gd', 'redis', 'pdo_mysql', 'mysqli', 'zip', 'bcmath', 'opcache', 'exif', 'sockets'],
-    '8.0': ['gd', 'redis', 'pdo_mysql', 'mysqli', 'zip', 'bcmath', 'opcache'],
-  })
+  const sites = reactive<Site[]>(
+    demo
+      ? [
+          { domain: 'demo.test', port: 80, php: '8.4', root: '~/www/demo.test', hosts: true, health: 'up', rewrite: 'laravel' },
+          { domain: 'blog.test', port: 80, php: '8.3', root: '~/www/blog.test', hosts: true, health: 'up', rewrite: 'thinkphp' },
+          { domain: 'api.test', port: 8080, php: '8.4', root: '~/www/api.test', hosts: false, health: 'warn', rewrite: 'none' },
+          { domain: 'legacy.test', port: 8000, php: '8.0', root: '~/www/legacy.test', hosts: true, health: 'down', rewrite: 'ci' },
+        ]
+      : [],
+  )
+  const backups = reactive<Backup[]>(
+    demo
+      ? [
+          { file: 'backup-20260913-093015.tar.gz', size: '48.2 MB', at: '2026-09-13 09:30', items: 5 },
+          { file: 'backup-20260910-220845.tar.gz', size: '46.7 MB', at: '2026-09-10 22:08', items: 5 },
+          { file: 'backup-20260905-141200.tar.gz', size: '41.1 MB', at: '2026-09-05 14:12', items: 4 },
+        ]
+      : [],
+  )
+  const offline = reactive<{ total: string; trees: OfflineTree[] }>(
+    demo
+      ? {
+          total: '1.42 GB',
+          trees: [
+            { svc: 'php', ver: '8.4', size: '420 MB', items: 138, verified: '2026-09-12 18:03' },
+            { svc: 'php', ver: '8.0', size: '385 MB', items: 126, verified: '2026-09-08 22:15' },
+            { svc: 'mysql', ver: '8.4', size: '212 MB', items: 1, verified: '2026-09-11 09:40' },
+            { svc: 'pgsql', ver: '17', size: '180 MB', items: 1, verified: '2026-09-10 15:20' },
+            { svc: 'redis', ver: '8', size: '68 MB', items: 1, verified: '2026-09-06 11:22' },
+            { svc: 'nginx', ver: 'alpine', size: '52 MB', items: 1, verified: '2026-09-05 08:11' },
+          ],
+        }
+      : { total: '', trees: [] },
+  )
+  const phpExtensions = reactive<Record<string, string[]>>(
+    demo
+      ? {
+          '8.4': ['gd', 'redis', 'pdo_mysql', 'mysqli', 'pgsql', 'pdo_pgsql', 'zip', 'bcmath', 'intl', 'opcache', 'exif', 'soap', 'sockets', 'imagick', 'xdebug'],
+          '8.3': ['gd', 'redis', 'pdo_mysql', 'mysqli', 'zip', 'bcmath', 'opcache', 'exif', 'sockets'],
+          '8.0': ['gd', 'redis', 'pdo_mysql', 'mysqli', 'zip', 'bcmath', 'opcache'],
+        }
+      : {},
+  )
   const env = reactive<Env>(defaultEnv())
   // 用户改过的配置正文，键 `${kind}:${version}:${fileName}`（原型 state.configs）
   const configs = reactive<Record<string, string>>({})
@@ -113,6 +136,24 @@ export const useAppState = defineStore('appState', () => {
     applyTaskBoard(s.tasks)
   }
 
+  // enterRealHost：App.vue 确认宿主（waitForBackend 命中）后一次性收掉 M1 占位数据，此后界面只认后端事实。
+  // 不能只靠 applySnapshot 覆盖：backups 不在快照内、offline 的权威在 cacheStore，
+  // 而快照可能压根拉不到（后端报错/未装机）——那种情况下假站点、假备份、假缓存仍会挂在界面上被当成真。
+  function enterRealHost(): void {
+    for (const kind of Object.keys(installed) as ServiceKind[]) installed[kind].splice(0, installed[kind].length)
+    for (const kind of Object.keys(stopped) as ServiceKind[]) stopped[kind].splice(0, stopped[kind].length)
+    sites.splice(0, sites.length)
+    backups.splice(0, backups.length)
+    offline.total = ''
+    offline.trees.splice(0, offline.trees.length)
+    for (const k of Object.keys(phpExtensions)) delete phpExtensions[k]
+    for (const k of Object.keys(env)) delete env[k]
+    Object.assign(env, derivePaths(DEFAULT_HOME, DEFAULT_WWW))
+    // dirReady 同理：宿主未确认时的 demo 值是「已就绪」，真宿主首帧必须回落到未就绪，由权威快照判定
+    dirReady.PHPO_HOME = false
+    dirReady.WWW_ROOT = false
+  }
+
   // setServiceRunning：后端 service:changed 单服务增量落地。
   function setServiceRunning(kind: ServiceKind, version: string, running: boolean): void {
     const arr = stopped[kind]
@@ -128,5 +169,5 @@ export const useAppState = defineStore('appState', () => {
 
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, tasks, isServiceRunning, applySnapshot, applyTaskBoard, setServiceRunning, setBackups, setDocker, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, tasks, isServiceRunning, applySnapshot, applyTaskBoard, enterRealHost, setServiceRunning, setBackups, setDocker, phpVersions }
 })

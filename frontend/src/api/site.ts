@@ -3,13 +3,15 @@
 import * as app from '../../bindings/phpo/app.js'
 import { AddInput } from '../../bindings/phpo/internal/service/models.js'
 
-// 后端运行环境探测：Wails v3 不注入 window.runtime（那是 v2 全局）。真实宿主在文档加载完成后
-// 由 runtime.Core 注入 window._wails.flags / .environment / .invoke；纯 Vite 浏览器里 @wailsio/runtime
-// 只建 window._wails 空壳、不填这些字段。故以宿主独有字段为判据，命中才走真实后端，否则退化 demo。
+// 后端运行环境探测：Wails v3 不注入 window.runtime（那是 v2 全局）。真实宿主由 Core 注入
+// window._wails.flags / .environment（wails v3 internal/runtime/runtime.go 的 Core()，dev/prod 都带）。
+// 判据只能取这两个宿主独有字段：window._wails.invoke 是 @wailsio/runtime 自己在任何 DOM 里挂的
+// （dist/index.js `window._wails.invoke = System.invoke`），纯 Vite 浏览器同样为真——拿它当宿主信号
+// 会把浏览器误判成有后端：demo 占位数据永不出现，且每个绑定调用都打向不存在的 /wails/runtime（404 风暴）。
 export function hasBackend(): boolean {
-  const w = (globalThis as { window?: { _wails?: { flags?: unknown; environment?: unknown; invoke?: unknown } } }).window
+  const w = (globalThis as { window?: { _wails?: { flags?: unknown; environment?: unknown } } }).window
   const bridge = w?._wails
-  return !!(bridge && (bridge.flags || bridge.environment || bridge.invoke))
+  return !!(bridge && (bridge.flags || bridge.environment))
 }
 
 // 宿主 Core 在 WindowLoadFinished 注入，可能晚于 Vue 挂载。挂载期门禁（向导/Docker 首探测）需等它就绪：

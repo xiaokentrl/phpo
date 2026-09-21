@@ -96,6 +96,13 @@ func pfReady(installed map[string][]string, sites ...model.Site) *model.Snapshot
 	return s
 }
 
+// pfServing vhost 写链的裁决输入：除「已装」还须 nginx 真在运行（硬红线 2 的 nginx -t 在容器里跑）
+func pfServing(installed map[string][]string, sites ...model.Site) *model.Snapshot {
+	s := pfReady(installed, sites...)
+	s.Running["nginx"] = append([]string{}, installed["nginx"]...)
+	return s
+}
+
 func TestGateSiteAddBlockedWhenNginxMissing(t *testing.T) {
 	src := pfSrc{snap: pfReady(map[string][]string{"php": {"8.4"}})}
 	err := runGuard(src, preflight.ActSiteAdd, preflight.Ctx{Domain: "demo.test", Port: 80, PHP: "8.4"})
@@ -135,7 +142,7 @@ func TestGateSetServicePortRequiresInstalled(t *testing.T) {
 
 // TestGateSitePortAdvanceNotBlocked 改已有站点端口占用时顺延（§5.8），不得报错
 func TestGateSitePortAdvanceNotBlocked(t *testing.T) {
-	src := pfSrc{snap: pfReady(
+	src := pfSrc{snap: pfServing(
 		map[string][]string{"nginx": {"alpine"}, "php": {"8.4"}},
 		model.Site{Domain: "a.test", Port: 80, PHP: "8.4"},
 		model.Site{Domain: "b.test", Port: 81, PHP: "8.4"},
@@ -145,9 +152,26 @@ func TestGateSitePortAdvanceNotBlocked(t *testing.T) {
 	}
 }
 
+// TestGateSiteEditBlockedWhenNginxStopped 改端口 / 切 PHP / 伪静态 / 手改正文都要把 vhost 写盘，
+// 写盘前的 nginx -t（硬红线 2）只能在运行中的容器里跑：nginx 停着时必须在裁决层拦住并给出人话下一步，
+// 而不是放进任务里跑到一半抛 docker 原始错误。
+func TestGateSiteEditBlockedWhenNginxStopped(t *testing.T) {
+	snap := pfReady(map[string][]string{"nginx": {"alpine"}, "php": {"8.4"}},
+		model.Site{Domain: "a.test", Port: 80, PHP: "8.4"})
+	src := pfSrc{snap: snap} // pfReady：已装未运行
+	c := preflight.Ctx{Domain: "a.test", NewValue: 8080}
+	if err := runGuard(src, preflight.ActSitePort, c); err == nil || !strings.Contains(err.Error(), errs.NotRunning) {
+		t.Fatalf("nginx 未运行时改站点端口应被拦截，实际：%v", err)
+	}
+	snap.Running["nginx"] = []string{"alpine"}
+	if err := runGuard(src, preflight.ActSitePort, c); err != nil {
+		t.Fatalf("nginx 运行后应放行，实际：%v", err)
+	}
+}
+
 // TestGateSwitchPhpRequiresInstalled php-switch 前端无镜像调用，靠后端补齐裁决
 func TestGateSwitchPhpRequiresInstalled(t *testing.T) {
-	src := pfSrc{snap: pfReady(
+	src := pfSrc{snap: pfServing(
 		map[string][]string{"nginx": {"alpine"}, "php": {"8.4"}},
 		model.Site{Domain: "a.test", Port: 80, PHP: "8.4"},
 	)}

@@ -397,6 +397,57 @@ func TestRewriteOK(t *testing.T) {
 	}
 }
 
+// wantNginxNotServingErr 锁死 vhost 写操作的 nginx 未运行拦截文案（与 rules_site.go#nginxNotServingErr、前端 usePreflight.ts 逐字对齐）
+func wantNginxNotServingErr() string {
+	return errs.NotRunning + ": Nginx（vhost 改动须经运行中的 Nginx 校验后才能落盘，请先启动 Nginx 再重试）"
+}
+
+// TestEditVhostRequiresServingNginx 改端口 / 手改正文 / 切 PHP / 伪静态四条编辑链都要把 vhost 写盘，
+// 而写盘前 nginx -t（硬红线 2）只能在运行中的容器里跑。Nginx 未装或未跑时这条链必然失败，
+// 且旧 conf 会与库里配置长期不一致（补齐只处理「conf 缺失」，不会覆盖过期正文）——
+// 故在裁决层直接拒绝并给出可恢复的下一步，而不是让任务跑到一半抛 docker 原始错误。
+func TestEditVhostRequiresServingNginx(t *testing.T) {
+	content := "server {\n  listen 80;\n}"
+	cases := []struct {
+		name string
+		act  string
+		c    Ctx
+	}{
+		{"site-port", ActSitePort, Ctx{Domain: "demo.test", NewValue: "8080"}},
+		{"site-vhost", ActSiteVhost, Ctx{Domain: "demo.test", Content: &content}},
+		{"php-switch", ActPhpSwitch, Ctx{Domain: "demo.test", NewPhp: "8.1"}},
+		{"rewrite", ActRewrite, Ctx{Domain: "demo.test"}},
+	}
+
+	// nginx 就绪（已装且运行）：四条编辑链都不该因 nginx 被拦
+	for _, tc := range cases {
+		if res := Run(tc.act, tc.c, readyWorld()); !res.Ok {
+			t.Errorf("%s 在 nginx 运行时应通过，得 %+v", tc.name, res.Errors)
+		}
+	}
+
+	// 未装 nginx：一律 nginxNeeded
+	noNginx := readyWorld()
+	noNginx.Snap.Installed["nginx"] = nil
+	noNginx.Snap.Running["nginx"] = nil
+	for _, tc := range cases {
+		res := Run(tc.act, tc.c, noNginx)
+		if res.Ok || !contains(res.Errors, errs.NginxNeeded) {
+			t.Errorf("%s 未装 nginx 应报 nginxNeeded，得 %+v", tc.name, res.Errors)
+		}
+	}
+
+	// 已装但停着：报 nginxNotServingErr，且不得只降级为告警
+	stopped := readyWorld()
+	stopped.Snap.Running["nginx"] = nil
+	for _, tc := range cases {
+		res := Run(tc.act, tc.c, stopped)
+		if res.Ok || !contains(res.Errors, wantNginxNotServingErr()) {
+			t.Errorf("%s nginx 未运行应拦截并给人话提示，得 %+v / %+v", tc.name, res.Errors, res.Warnings)
+		}
+	}
+}
+
 // —— extensions / backup / restore / backup-delete / offline-prune ——
 
 func TestExtensionsOK(t *testing.T) {

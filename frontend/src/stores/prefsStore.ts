@@ -3,6 +3,8 @@
 import { defineStore } from 'pinia'
 import { reactive, ref, watchEffect } from 'vue'
 import { setTrayPrefs } from '@/api/state'
+import { toast } from '@/composables/useToast'
+import { t } from '@/composables/useI18n'
 import type { TrayPrefs } from '@/types'
 
 export const THEME_IDS = ['midnight', 'light', 'oled', 'forest', 'ocean', 'sakura'] as const
@@ -60,7 +62,10 @@ export const usePrefsStore = defineStore('prefs', () => {
   let mirroring = false
   function mirrorTray(): void {
     if (!mirroring) return
-    void setTrayPrefs(tray.enabled, tray.minimizeOnClose).catch(() => {})
+    // 下发失败不得静默：勾选已写进 localStorage 并显示为「已生效」，原生托盘却没变＝界面失真（硬红线 4 的同一口径）
+    void setTrayPrefs(tray.enabled, tray.minimizeOnClose).catch(() => {
+      toast(t('settings.tray.pushFailed'), 'err', 4200)
+    })
   }
 
   function syncTrayPrefs(): void {

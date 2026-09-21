@@ -30,6 +30,8 @@ onMounted(async () => {
   // 先等宿主 Core 就绪（有界超时）：window._wails 的宿主字段在 WindowLoadFinished 才注入，
   // 可能晚于本挂载钩子。未就绪时 hasBackend 误判为 false 会走 demo、跳过真实 Docker 探测。
   await waitForBackend()
+  // 宿主已确认：store 建立早于 window._wails 注入时会误判 demo 铺下占位数据，此处一次性收掉再等快照
+  if (hasBackend()) app.enterRealHost()
   prefs.syncTrayPrefs() // 宿主就绪后才把托盘偏好投影到原生外壳；此后勾选变化由 store 自动跟随
   startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
   subscribeUpdater() // 订阅 update:* 事件：后台发现新版本即时提示（硬红线 4）

@@ -1,6 +1,8 @@
 // usePreflight：preflight() 的前端镜像（§0.2 #14：UI 即时反馈；最终裁决在 internal/preflight/）
 // 逐字迁移原型 PF 文案 + validateVersion/Port/Domain/SiteRoot/Ext + preflight(action,ctx) 17 action。
 import { useAppState } from '@/stores/appState'
+import { useCacheStore } from '@/stores/cacheStore'
+import { hasBackend } from '@/api/site'
 import { SVC_META } from '@/constants/service'
 import type { ServiceKind } from '@/types'
 
@@ -59,6 +61,11 @@ function nginxNotRunningWarn(): string {
   return `${PF.notRunning}: Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；启动 Nginx 后自动补齐）`
 }
 
+// 编辑站点的拦截文案：与后端 rules_site.go#nginxNotServingErr 文案逐字对齐
+function nginxNotServingErr(): string {
+  return `${PF.notRunning}: Nginx（vhost 改动须经运行中的 Nginx 校验后才能落盘，请先启动 Nginx 再重试）`
+}
+
 // 端口占用的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐（§5.8：不改用户所填端口，仅暂不发布端口、暂不落盘 vhost）
 function portDegradeWarn(msg: string): string {
   return `${msg}（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）`
@@ -79,6 +86,7 @@ interface ValResult { ok: boolean; msg?: string; value?: string | number; outsid
 
 export function usePreflight() {
   const app = useAppState()
+  const cache = useCacheStore()
 
   function validateVersion(version: unknown): ValResult {
     const v = String(version ?? '').trim()
@@ -161,6 +169,22 @@ export function usePreflight() {
     if (NEEDS_HOME.has(action) && !app.homeReady) errors.push(PF.homeNotReady)
 
     const installed = (k: string) => (app.installed as Record<string, string[]>)[k] || []
+
+    // vhost 写链（改端口 / 手改正文 / 切 PHP / 伪静态）的服务门禁：Nginx 必须已装且在运行。
+    // 与建站不同——建站没有旧 conf 会失配，未运行只降级；编辑必须写盘，而写盘前的 nginx -t
+    // （硬红线 2）只能在运行中的容器里执行。与后端 rules_site.go#nginxServing 同口径。
+    const nginxServing = (): boolean => {
+      const vs = installed('nginx')
+      if (!vs.length) {
+        errors.push(PF.nginxNeeded)
+        return false
+      }
+      if (!vs.some((v) => app.isServiceRunning('nginx', v))) {
+        errors.push(nginxNotServingErr())
+        return false
+      }
+      return true
+    }
 
     switch (action) {
       case 'install': {
@@ -259,6 +283,7 @@ export function usePreflight() {
       case 'site-port': {
         const site = app.sites.find((s) => s.domain === c.domain)
         if (!site) { errors.push(`${PF.siteMissing}: ${c.domain}`); break }
+        if (!nginxServing()) break
         const pp = validatePort(c.newValue, { exclude: site.port, excludeDomains: [c.domain], autoAdvance: true })
         if (!pp.ok) errors.push(pp.msg!)
         else if (pp.adjusted) {
@@ -271,6 +296,7 @@ export function usePreflight() {
         const { domain, content, php } = c
         const site = app.sites.find((s) => s.domain === domain)
         if (!site) { errors.push(`${PF.siteMissing}: ${domain}`); break }
+        if (!nginxServing()) break
         if (content != null && !String(content).trim()) errors.push(PF.configEmpty)
         if (php && !installed('php').includes(php)) warnings.push(`${PF.notInstalled}: PHP ${php}（站点配置仍可保存，但需安装该版本才能生效）`)
         break
@@ -279,13 +305,14 @@ export function usePreflight() {
         const { domain, newPhp } = c
         const site = app.sites.find((s) => s.domain === domain)
         if (!site) { errors.push(`${PF.siteMissing}: ${domain}`); break }
+        if (!nginxServing()) break
         if (!installed('php').includes(newPhp)) errors.push(`${PF.notInstalled}: PHP ${newPhp}`)
         break
       }
       case 'rewrite': {
         const site = app.sites.find((s) => s.domain === c.domain)
         if (!site) { errors.push(`${PF.siteMissing}: ${c.domain}`); break }
-        if (!installed('nginx').length) errors.push(PF.nginxNeeded)
+        if (!nginxServing()) break
         break
       }
       case 'extensions': {
@@ -307,7 +334,12 @@ export function usePreflight() {
         break
       }
       case 'offline-prune': {
-        if (!app.offline.trees.some((x) => x.svc === c.svc && x.ver === c.ver)) errors.push(`${PF.offlineMissing}: ${c.svc}/${c.ver}`)
+        // 真宿主的缓存权威是 cacheStore.entries（OfflineView/useCache 写入）；app.offline 只是 demo 占位，
+        // 在真宿主下恒为空，拿它判定会把每个真实条目都报成「缓存条目不存在」。
+        const hit = hasBackend()
+          ? cache.entries.some((e) => e.kind === c.svc && e.version === c.ver)
+          : app.offline.trees.some((x) => x.svc === c.svc && x.ver === c.ver)
+        if (!hit) errors.push(`${PF.offlineMissing}: ${c.svc}/${c.ver}`)
         break
       }
     }

@@ -20,8 +20,17 @@ import (
 // dockerProbeTimeout 单次 Docker 探测超时：防 Ping 挂起阻塞首启/轮询
 const dockerProbeTimeout = 3 * time.Second
 
-// SiteHealer nginx 就绪后补齐降级站点（真实实现：*SiteService.ReconcileServe）。
-// 建站已不设 nginx 门禁，降级站点必须由「装好/启动 nginx」这一事件驱动自愈。
+// 服务生命周期动作名：既是任务 ID 前缀，也是 siteHealedBy 判定自愈触发面的依据
+const (
+	opInstall   = "install"
+	opReinstall = "reinstall"
+	opStart     = "start"
+	opStop      = "stop"
+	opRemove    = "remove"
+)
+
+// SiteHealer 补齐降级站点（真实实现：*SiteService.ReconcileServe）。
+// 建站不以 nginx 为门禁，降级站点必须由「让站点转为可服务」的事件驱动自愈（见 siteHealedBy）。
 type SiteHealer interface {
 	ReconcileServe(ctx context.Context) error
 }
@@ -32,7 +41,7 @@ type AppService struct {
 	tasks     *task.Manager
 	cache     steps.ImageEnsurer // 缓存优先保证镜像就绪（*cache.Manager 满足）
 	probe     engine.Probe       // Docker 可用性门禁（*engine.Client 满足）
-	healer    SiteHealer         // nginx 安装/启动后补齐站点 vhost（未注入则跳过）
+	healer    SiteHealer         // 站点转为可服务的事件后补齐 vhost（未注入则跳过）
 	env       config.Env
 	seq       atomic.Uint64 // 任务 ID 计数
 }
@@ -44,10 +53,10 @@ func NewAppService(lc *LifecycleService, tm *task.Manager, cache steps.ImageEnsu
 // SetSiteHealer 注入站点补齐器（di 装配期调用）
 func (s *AppService) SetSiteHealer(h SiteHealer) { s.healer = h }
 
-// healStep nginx 就绪后的补齐步骤；非 nginx 或未注入返回 nil（调用方跳过）。
-// 补齐失败只记日志不判任务失败：nginx 已装好，站点仍可在下次写操作自愈。
-func (s *AppService) healStep(kind model.ServiceKind) task.Step {
-	if kind != model.KindNginx || s.healer == nil {
+// healStep 站点补齐步骤；只在「可能解除站点降级」的服务事件后挂（见 siteHealedBy）。
+// 补齐失败只记日志不判任务失败：容器已按请求装好/卸掉，站点仍可在下次就绪事件自愈。
+func (s *AppService) healStep(kind model.ServiceKind, op string) task.Step {
+	if !siteHealedBy(kind, op) || s.healer == nil {
 		return nil
 	}
 	return &task.FuncStep{StepName: "补齐站点 vhost", Exec: func(ctx context.Context, log task.StepLog) error {
@@ -56,6 +65,24 @@ func (s *AppService) healStep(kind model.ServiceKind) task.Step {
 		}
 		return nil
 	}}
+}
+
+// siteHealedBy 该服务操作是否可能让降级站点转为可服务：
+//   - nginx 装/重建/启动 → 写 vhost 要的 nginx -t 才跑得通（硬红线 2）
+//   - php 装/重建 → 缺上游而降级的站点有了 fastcgi 目标
+//   - mysql/pgsql/redis 卸载 → 让出被占端口，卡在端口占用的站点可发布
+//
+// php 卸载、nginx 停止只会让站点更降级，补齐必然空转，故不挂。
+func siteHealedBy(kind model.ServiceKind, op string) bool {
+	switch op {
+	case opInstall, opReinstall:
+		return kind == model.KindNginx || kind == model.KindPHP
+	case opStart:
+		return kind == model.KindNginx
+	case opRemove:
+		return kind == model.KindMySQL || kind == model.KindPgsql || kind == model.KindRedis
+	}
+	return false
 }
 
 // ---- 读接口 ----
@@ -99,11 +126,11 @@ func (s *AppService) DockerStatus(ctx context.Context) model.DockerStatus {
 func (s *AppService) Install(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
 	t := &task.Task{
-		ID:    s.newID("install"),
+		ID:    s.newID(opInstall),
 		Label: "安装 " + name,
 		Steps: s.serviceSteps(kind, version, s.lifecycle.Install),
 	}
-	if st := s.healStep(kind); st != nil {
+	if st := s.healStep(kind, opInstall); st != nil {
 		t.Steps = append(t.Steps, st)
 	}
 	return s.run(ctx, t)
@@ -116,11 +143,11 @@ func (s *AppService) Install(ctx context.Context, kind model.ServiceKind, versio
 func (s *AppService) Reinstall(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
 	t := &task.Task{
-		ID:    s.newID("reinstall"),
+		ID:    s.newID(opReinstall),
 		Label: "重建 " + name,
 		Steps: s.serviceSteps(kind, version, s.lifecycle.Reinstall),
 	}
-	if st := s.healStep(kind); st != nil {
+	if st := s.healStep(kind, opReinstall); st != nil {
 		t.Steps = append(t.Steps, st)
 	}
 	return s.run(ctx, t)
@@ -146,22 +173,22 @@ func (s *AppService) serviceSteps(kind model.ServiceKind, version string, apply 
 	}
 }
 
-// Start 启动已安装容器
+// Start 启动已安装容器；启动 nginx 可能让降级站点转为可服务，故带补齐
 func (s *AppService) Start(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one("start", "启动 "+dockerutil.ContainerName(string(kind), version),
-		func(ctx context.Context) error { return s.lifecycle.Start(ctx, kind, version) }, s.healStep(kind))
+	return s.one(opStart, "启动 "+dockerutil.ContainerName(string(kind), version),
+		func(ctx context.Context) error { return s.lifecycle.Start(ctx, kind, version) }, s.healStep(kind, opStart))
 }
 
 // Stop 停止容器（保留数据，§5.13.7）
 func (s *AppService) Stop(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one("stop", "停止 "+dockerutil.ContainerName(string(kind), version),
+	return s.one(opStop, "停止 "+dockerutil.ContainerName(string(kind), version),
 		func(ctx context.Context) error { return s.lifecycle.Stop(ctx, kind, version) })
 }
 
-// Remove 卸载容器（保留数据卷）
+// Remove 卸载容器（保留数据卷）；卸载数据服务会让出端口，被端口占用卡住的降级站点靠此补齐
 func (s *AppService) Remove(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one("remove", "卸载 "+dockerutil.ContainerName(string(kind), version),
-		func(ctx context.Context) error { return s.lifecycle.Remove(ctx, kind, version) })
+	return s.one(opRemove, "卸载 "+dockerutil.ContainerName(string(kind), version),
+		func(ctx context.Context) error { return s.lifecycle.Remove(ctx, kind, version) }, s.healStep(kind, opRemove))
 }
 
 // ---- 内部助手 ----
