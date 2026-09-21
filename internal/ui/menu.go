@@ -22,7 +22,7 @@ func BuildTrayMenu(app *application.App, emitter phpapp.Emitter) *application.Me
 		emitter.Emit(EventUICommand, CmdOpenLogs)
 	})
 	menu.Add("立即备份").OnClick(func(*application.Context) {
-		// 实际执行在前端：任务运行中会被 taskBusy 拒绝（runGuardedTask 语义）
+		// 实际执行在前端：走 useModals.runBackup → 后端三段式任务（有任务在跑则排队，队列/日志/成败由事件回流）
 		emitter.Emit(EventUICommand, CmdBackupNow)
 	})
 	menu.AddSeparator()

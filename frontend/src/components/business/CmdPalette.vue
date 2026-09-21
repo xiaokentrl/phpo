@@ -34,6 +34,7 @@ function dispatch(it: CmdItem): void {
   }
   switch (it.action) {
     case 'site-add': modals.openSiteAddModal(); return
+    case 'backup': modals.runBackup(); return
     case 'theme': modals.openThemePicker(); return
     case 'zoom-in': layout.zoomIn(); return
     case 'zoom-out': layout.zoomOut(); return

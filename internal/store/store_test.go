@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +183,35 @@ func TestOperationsAndTrash(t *testing.T) {
 	}
 	if !list[0].TS.After(time.Time{}) {
 		t.Error("TS 为零值")
+	}
+	// 0008 之前的旧行无任务字段：读出为空串而非报错
+	if list[0].TaskID != "" || list[0].Label != "" || list[0].Logs != "" {
+		t.Errorf("旧审计行任务字段应为空: %+v", list[0])
+	}
+	// 任务账本：终态 + 失败原因 + 日志原文同表可读
+	if err := s.AppendOperation(model.Operation{
+		Actor: "ui", Op: "install", Args: map[string]any{"id": "install-2"}, Status: "failed",
+		DurationMs: 800, Error: "docker pull 失败: net/http: TLS handshake timeout",
+		TaskID: "install-2", Label: "安装 phpo-php-8.4", Logs: "▶ 安装 phpo-php-8.4\n步骤 准备镜像\n准备镜像 失败",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list, err = s.ListOperations(10)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("任务账本查询错误: %v %v", list, err)
+	}
+	latest := list[0] // ORDER BY id DESC：最新在前
+	if latest.TaskID != "install-2" || latest.Label != "安装 phpo-php-8.4" || latest.Status != "failed" {
+		t.Errorf("任务账本字段丢失: %+v", latest)
+	}
+	if latest.Error == "" {
+		t.Errorf("失败原因应落 error 列: %+v", latest)
+	}
+	if strings.Contains(latest.Logs, "TLS handshake") {
+		t.Errorf("日志原文不应混入失败原因: %q", latest.Logs)
+	}
+	if strings.Count(latest.Logs, "\n") != 2 {
+		t.Errorf("日志原文行数不符: %q", latest.Logs)
 	}
 
 	id, err := s.AddTrashItem(TrashItem{Kind: "site", OrigPath: "~/www/a.test", TrashPath: "~/.phpo/trash/a.test"})
@@ -451,5 +481,54 @@ func TestSnapshotSitesWithoutHostsProbe(t *testing.T) {
 	}
 	if snap.Sites[0].Health != model.HealthWarn {
 		t.Errorf("无 nginx、无 conf 应为降级，实得 %s", snap.Sites[0].Health)
+	}
+}
+
+// TestSnapshotCarriesTaskBoard 任务队列详情经 provider 注入快照出口（硬红线 4：唯一权威仍在前端订阅的 state:changed）。
+// 延迟建库分支也必须给出——首启的第一个任务正是最需要看到排队详情的时候。
+func TestSnapshotCarriesTaskBoard(t *testing.T) {
+	board := model.TaskBoard{
+		Running: &model.TaskBrief{ID: "install-1", Label: "安装 phpo-nginx-alpine", Type: "install", Step: 1, Total: 3},
+		Pending: []model.TaskBrief{{ID: "install-2", Label: "安装 phpo-php-8.4", Type: "install", Total: 3}},
+	}
+
+	s := openStore(t)
+	s.SetTaskBoard(func() model.TaskBoard { return board })
+	snap, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Tasks.Running == nil || snap.Tasks.Running.ID != "install-1" || snap.Tasks.Running.Step != 1 {
+		t.Errorf("快照缺运行中任务: %+v", snap.Tasks)
+	}
+	if len(snap.Tasks.Pending) != 1 || snap.Tasks.Pending[0].ID != "install-2" {
+		t.Errorf("快照缺排队任务: %+v", snap.Tasks.Pending)
+	}
+
+	// 未建库（两根未持久化）：快照早退分支仍带队列，且不得留下库文件
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "phpo.db")
+	d := New(dbPath)
+	d.SetEnvProvider(fakeEnv{})
+	d.SetTaskBoard(func() model.TaskBoard { return board })
+	early, err := d.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if early.Tasks.Running == nil || len(early.Tasks.Pending) != 1 {
+		t.Errorf("未建库快照应带队列: %+v", early.Tasks)
+	}
+	if _, e := os.Stat(dbPath); !os.IsNotExist(e) {
+		t.Error("读快照不得提前建库")
+	}
+
+	// 未注入 provider（单测/归档快照）：队列为空但可安全遍历
+	n := openStore(t)
+	empty, err := n.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.Tasks.Running != nil || empty.Tasks.Pending == nil || len(empty.Tasks.Pending) != 0 {
+		t.Errorf("未注入时应为空队列: %+v", empty.Tasks)
 	}
 }

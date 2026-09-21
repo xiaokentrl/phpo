@@ -4,7 +4,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"phpo/internal/config"
@@ -195,6 +197,46 @@ func TestAppService_DockerStatus(t *testing.T) {
 type healRecorder struct{ calls int }
 
 func (h *healRecorder) ReconcileServe(context.Context) error { h.calls++; return nil }
+
+// hasLog 日志行中是否有任一行含 sub（断言用户可见的过程信息，而非仅事件名）
+func hasLog(logs []string, sub string) bool {
+	for _, l := range logs {
+		if strings.Contains(l, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestAppService_Install_LogsProgress 安装必须逐段吐人话日志：镜像引用、缓存查找路径、
+// 工作目录落盘位置、容器创建/启动、运行校验——否则用户分不清是卡住还是失败。
+func TestAppService_Install_LogsProgress(t *testing.T) {
+	a, _, _, em, _, env := newApp(t, nil)
+	if err := a.Install(context.Background(), model.KindPHP, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"php:8.4-fpm", "镜像就绪", env.PHPOHome + "/php/8.4", "phpo-php-8.4", "运行状态校验通过"} {
+		if !hasLog(em.logs, want) {
+			t.Errorf("安装日志缺关键过程信息 %q，实得 %v", want, em.logs)
+		}
+	}
+}
+
+// TestAppService_Install_LogsFailureReason 失败时日志必须带原因，且失败步之后不再报成功
+func TestAppService_Install_LogsFailureReason(t *testing.T) {
+	a, _, _, em, ens, _ := newApp(t, nil)
+	ens.err = errors.New("拉取镜像超时：网络不可达")
+	err := a.Install(context.Background(), model.KindPHP, "8.4")
+	if err == nil {
+		t.Fatal("镜像安装失败应上抛")
+	}
+	if !hasLog(em.logs, "拉取镜像超时") {
+		t.Errorf("失败原因必须实时出现在任务日志: %v", em.logs)
+	}
+	if hasLog(em.logs, "运行状态校验通过") {
+		t.Errorf("镜像失败后不应继续报容器成功: %v", em.logs)
+	}
+}
 
 // TestAppService_NginxReadyHealsSites 建站已不以 nginx 为门禁，降级站点必须能自愈：
 // 安装 / 启动 nginx 后各补齐一次；其余服务（PHP 等）不触发该步骤。

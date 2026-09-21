@@ -1,6 +1,6 @@
 // 命令面板项：逐字迁移原型 CMD_ITEMS（3233–3240，§0.3 权威值 20 命令）
 // 每项含 labelKey + kbd 提示，并按 route/action/layout/pf+task/task 之一分发。
-export type CmdAction = 'site-add' | 'theme' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
+export type CmdAction = 'site-add' | 'backup' | 'theme' | 'zoom-in' | 'zoom-out' | 'zoom-reset'
 export type CmdLayout = 'compact' | 'default' | 'wide' | 'reset'
 
 export interface CmdItem {
@@ -25,7 +25,7 @@ export const CMD_ITEMS: CmdItem[] = [
   { labelKey: 'nav.overview', kbd: '⌘8', route: 'overview' },
   { labelKey: 'nav.settings', kbd: '⌘9', route: 'settings' },
   { labelKey: 'cmd.newSite', kbd: '', action: 'site-add' },
-  { labelKey: 'cmd.backup', kbd: '', pf: 'backup', task: ['backup', 'backup.nowTask'] },
+  { labelKey: 'cmd.backup', kbd: '', action: 'backup' },
   { labelKey: 'cmd.doctor', kbd: '', task: ['doctor', 'overview.doctorTask'] },
   { labelKey: 'cmd.theme', kbd: '', action: 'theme' },
   { labelKey: 'cmd.layoutCompact', kbd: '', layout: 'compact' },

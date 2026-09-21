@@ -9,6 +9,7 @@ type Snapshot struct {
 	Env           map[string]string   `json:"env"`           // 派生路径 + 服务密码/端口等
 	PHPExtensions map[string][]string `json:"phpExtensions"` // php version → 启用的扩展
 	DirReady      map[string]bool     `json:"dirReady"`      // PHPO_HOME / WWW_ROOT 初始化标记
+	Tasks         TaskBoard           `json:"tasks"`         // 任务队列详情（运行中 + 排队中，实时推送）
 }
 
 func NewSnapshot() *Snapshot {
@@ -19,6 +20,7 @@ func NewSnapshot() *Snapshot {
 		Env:           map[string]string{},
 		PHPExtensions: map[string][]string{},
 		DirReady:      map[string]bool{},
+		Tasks:         TaskBoard{Pending: []TaskBrief{}},
 	}
 }
 

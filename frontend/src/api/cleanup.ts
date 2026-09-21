@@ -61,12 +61,13 @@ export async function emptyExpired(): Promise<number> {
   return await app.TrashEmptyExpired()
 }
 
-// listOperations 最近审计历史（operations 表）；无宿主返回 null
+// listOperations 最近审计历史（operations 表，含任务账本三项）；无宿主返回 null
 export async function listOperations(limit: number): Promise<Operation[] | null> {
   if (!hasBackend()) return null
   const rows = await app.OperationList(limit)
   return (rows ?? []).map((x) => ({
     ts: x.ts, actor: x.actor, op: x.op, args: x.args,
     status: x.status, durationMs: x.durationMs, error: x.error,
+    taskId: x.taskId, label: x.label, logs: x.logs,
   }))
 }

@@ -120,10 +120,18 @@ func (s *fakeStore) GetPassword(_, _ string) (string, bool, error) { return "", 
 func (s *fakeStore) GetServicePort(_, _ string) (int, bool, error) { return 0, false, nil }
 
 // fakeEmitter 捕获事件名序列
-type fakeEmitter struct{ events []string }
+type fakeEmitter struct {
+	events []string
+	logs   []string // 捕获 task:log 文本，用于断言步骤日志真的可见
+}
 
-func (e *fakeEmitter) Emit(event string, _ any) { e.events = append(e.events, event) }
-func (e *fakeEmitter) has(name string) bool     { return contains(e.events, name) }
+func (e *fakeEmitter) Emit(event string, payload any) {
+	e.events = append(e.events, event)
+	if l, ok := payload.(model.TaskLogEvent); ok {
+		e.logs = append(e.logs, l.Text)
+	}
+}
+func (e *fakeEmitter) has(name string) bool { return contains(e.events, name) }
 
 func newSvc() (*LifecycleService, *fakeDocker, *fakeStore, *fakeEmitter) {
 	d, s, em := newFakeDocker(), newFakeStore(), &fakeEmitter{}

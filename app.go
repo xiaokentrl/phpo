@@ -138,6 +138,14 @@ func (a *App) Cancel() {
 	}
 }
 
+// CancelQueued 撤回排队中的任务（未执行即无需回滚）；返回是否命中该排队项
+func (a *App) CancelQueued(id string) bool {
+	if a.container.AppService == nil {
+		return false
+	}
+	return a.container.AppService.CancelQueued(id)
+}
+
 // Calibrate 手动触发状态校准
 func (a *App) Calibrate(ctx context.Context) error {
 	if a.container.AppService == nil {
@@ -363,7 +371,7 @@ func (a *App) UpdateCheck(ctx context.Context) (model.UpdateAvailable, bool, err
 	return a.container.UpdateService.Check(ctx)
 }
 
-// UpdateApply 经任务引擎执行一次升级（单飞；忙则 TASK_BUSY）；进度/结果走 update:progress/done 事件
+// UpdateApply 经任务引擎执行一次升级（串行 FIFO；前面有任务则排队，同标签重复提交返回 ErrQueued）；进度/结果走 update:progress/done 事件
 func (a *App) UpdateApply(ctx context.Context) error {
 	if a.container.UpdateService == nil {
 		return errNotReady

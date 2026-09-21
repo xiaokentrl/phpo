@@ -77,7 +77,8 @@ type InstallImageStep struct {
 	version string
 }
 
-// ImageEnsurer 抽出 EnsureImage 便于注入 fake Manager 测试
+// ImageEnsurer 抽出 EnsureImage 便于注入 fake Manager 测试。
+// 缓存命中/未命中/提升由 cache 层以 cache:* 事件如实上报（§5.6 既有事件名），步骤不再重复播报。
 type ImageEnsurer interface {
 	EnsureImage(ctx context.Context, kind, version, ref string) error
 }

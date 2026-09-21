@@ -17,6 +17,7 @@ const MOCK_SNAPSHOT: StateSnapshot = {
   },
   phpExtensions: { '8.5': ['gd', 'redis', 'opcache'], '8.4': ['gd', 'redis', 'pdo_mysql'] },
   dirReady: { PHPO_HOME: true, WWW_ROOT: true },
+  tasks: { running: { id: 't-1', label: 'mock · php 8.5 安装', type: 'install', step: 2, total: 6, startedAt: '2026-09-21T10:00:00Z' }, pending: [] },
 }
 
 const MOCK_SAMPLES: Record<string, unknown> = {

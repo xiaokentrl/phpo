@@ -22,7 +22,7 @@
 | 6 | 升级 | `pkexec dpkg -i …0.1.1.deb` | ✅ 覆盖 0.1.0→0.1.1，EXIT=0 |
 | 7 | 回滚（包级） | `pkexec dpkg -i …0.1.0.deb` | ✅ dpkg 降级 0.1.1→0.1.0（提示 downgrading），EXIT=0 |
 | 8 | 卸载 | `pkexec dpkg -r phpo` | ✅ 系统文件移除、dpkg 记录清空 |
-| 9 | 数据保留（硬红线：不破坏用户数据） | 卸载前后对比 | ✅ 卸载仅删系统文件；`~/.phpo/`、`~/phpo/`（PHPO_HOME）不在包内，`dpkg -r` 不触碰 |
+| 9 | 数据保留（硬红线：不破坏用户数据） | 卸载前后对比 | ✅ 卸载仅删系统文件；用户数据目录（`~/.config/phpo/`）、`~/phpo/`（PHPO_HOME）不在包内，`dpkg -r` 不触碰 |
 | 10 | GUI 真机启动 | `timeout 8 build/bin/phpo` | ✅ EXIT=124（存活至超时被杀），AssetServer 伺服 `index.html`+`OverviewView`（默认路由渲染），SIGTERM 干净退出 |
 | 11 | 应用内升级回滚逻辑 | `go test ./internal/updater/…` | ✅ ok（marker + `RecoverOnStartup` + SHA256/Ed25519 双校验，T604 覆盖） |
 
@@ -36,7 +36,7 @@
 - **Windows**：NSIS `phpo-setup-x64.exe` 装/卸/升/回滚 + 代码签名 —— 需 windows runner（本机无 `makensis`）。
 - **macOS**：`.dmg` 装/卸/升/回滚 + Developer ID 签名/公证 —— 需 mac runner。
 - **Linux rpm**：`phpo-x86_64.rpm` 装卸 —— 本机无 `rpmbuild`（nfpm 纯 Go 可出包，但装/卸需 rpm 系发行版）。
-- **升级包签名**：`build/signing/public.key` 为占位，T703/release.yml 发布时换真私钥签名；真机「下载→双校验→安装→下次启动确认/回滚」端到端需 CI 出包后跑。
+- **升级包签名**：`internal/updater/signing/public.key` 为占位，T703/release.yml 发布时换真私钥签名；真机「下载→双校验→安装→下次启动确认/回滚」端到端需 CI 出包后跑。
 - 上述由 CI matrix（native runner）或用户本机补齐；口径与 PHPO_LIVE 门禁一致——不编造未执行的结果。
 
 ## 相关文档

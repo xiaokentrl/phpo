@@ -65,12 +65,13 @@ function openLogs(): void {
 
 function backupNow(): void {
   closeMenu()
-  modals.runGuardedTask('backup', {}, ['backup'], t('backup.nowTask'))
+  // 走 useModals.runBackup：预检 → 警告危险确认 → 后端三段式任务（队列/日志/成败由事件回流）
+  modals.runBackup()
 }
 
 function quitApp(): void {
   closeMenu()
-  if (task.isRunning) {
+  if (task.queueRunning) {
     // 与原生菜单一致：任务运行中禁止退出（忙锁）
     window.alert?.(TASK_BUSY)
     return

@@ -40,7 +40,7 @@ func (s *UpdateService) Check(ctx context.Context) (model.UpdateAvailable, bool,
 	return model.UpdateAvailable{Version: rel.Version, Changelog: rel.Changelog, Size: rel.Size}, true, nil
 }
 
-// Apply 经任务引擎执行一次升级（单飞；忙则返回 TASK_BUSY）
+// Apply 经任务引擎执行一次升级（串行 FIFO；前面有任务则排队，同标签重复提交返回 ErrQueued）
 func (s *UpdateService) Apply(ctx context.Context) error {
 	t := &task.Task{
 		ID:    fmt.Sprintf("update-%d", s.seq.Add(1)),

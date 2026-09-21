@@ -7,8 +7,7 @@ import MountList from '@/components/common/MountList.vue'
 import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
-import { runTask } from '@/composables/useTask'
-import { hasBackend } from '@/api/site'
+import { submitWrite } from '@/composables/useTask'
 import { installService } from '@/api/lifecycle'
 import { setPassword, setPort } from '@/api/env'
 import { useAppState } from '@/stores/appState'
@@ -71,14 +70,13 @@ function onOk(): void {
   const label = `${t('svc.install')} ${t(meta.value.titleKey)} ${v}`
   const taskMeta = { type: 'install', kind: props.kind, version: v, port: ctx.port, password: ctx.password, extensions: ctx.extensions }
   emit('close')
-  if (!hasBackend()) { runTask(args, label, taskMeta); return }
   // 真实链路：先落库端口/密码（Install 时容器据此装配），再安装；状态由后端事件回流。
   const portNum = ctx.port ? parseInt(ctx.port, 10) : 0
-  const chain = Promise.resolve()
-    .then(() => (ctx.port ? setPort(props.kind, v, portNum) : undefined))
-    .then(() => (ctx.password !== null ? setPassword(props.kind, v, ctx.password) : undefined))
-    .then(() => installService(props.kind, v))
-  chain.catch((e: unknown) => toast(String(e), 'err', 4600))
+  submitWrite(args, label, taskMeta, async () => {
+    if (ctx.port) await setPort(props.kind, v, portNum)
+    if (ctx.password !== null) await setPassword(props.kind, v, ctx.password)
+    await installService(props.kind, v)
+  })
 }
 </script>
 

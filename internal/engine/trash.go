@@ -1,4 +1,4 @@
-// 回收站文件操作（§5.13.7）：把站点根目录移入 ~/.phpo/trash 并可恢复；到期清理由 store 记录的 ExpiresAt 驱动
+// 回收站文件操作（§5.13.7）：把站点根目录移入 `<用户数据目录>/trash` 并可恢复；到期清理由 store 记录的 ExpiresAt 驱动
 package engine
 
 import (
@@ -13,7 +13,7 @@ type Trash struct {
 	Root string
 }
 
-// NewTrash 指定回收站根（通常 ~/.phpo/trash）
+// NewTrash 指定回收站根（通常 `<用户数据目录>/trash`）
 func NewTrash(root string) *Trash { return &Trash{Root: root} }
 
 // Move 把 origPath 移入回收站，返回落地路径。幂等：origPath 不存在则视为已回收，返回既有/预期目标。

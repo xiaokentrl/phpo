@@ -30,6 +30,25 @@ type LogLine struct {
 	Text  string   `json:"text"`
 }
 
+// ---- 任务面板（快照字段，随 state:changed 实时推送；不落库）----
+
+// TaskBrief 面板上的一条任务摘要：所在分区（Running / Pending）即其排队态，
+// 不新增第 5 个任务状态（§0.3 任务状态冻结为 4 个）。
+type TaskBrief struct {
+	ID        string    `json:"id"`
+	Label     string    `json:"label"`
+	Type      string    `json:"type"` // install / start / site-add / ...
+	Step      int       `json:"step"` // 已完成步骤数
+	Total     int       `json:"total"`
+	StartedAt time.Time `json:"startedAt"`
+}
+
+// TaskBoard 任务队列详情：当前运行任务 + 其后 FIFO 排队项
+type TaskBoard struct {
+	Running *TaskBrief  `json:"running"`
+	Pending []TaskBrief `json:"pending"`
+}
+
 // ---- §5.6 事件载荷 ----
 
 type TaskLogEvent struct {

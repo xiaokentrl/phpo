@@ -69,6 +69,9 @@ func (s *AppService) Running() bool { return s.tasks.Running() }
 // Cancel 取消当前运行中任务（T308 语义：中断可取消步骤并回滚 + 清临时目录）
 func (s *AppService) Cancel() { s.tasks.Cancel() }
 
+// CancelQueued 撤回排队中的任务（尚未执行，无需回滚）；返回是否命中
+func (s *AppService) CancelQueued(id string) bool { return s.tasks.CancelQueued(id) }
+
 // Calibrate 手动校准（§5.13.9 三处触发之一：启动 / 每任务后 / 手动）
 func (s *AppService) Calibrate(ctx context.Context) error {
 	_, err := s.lifecycle.Calibrate(ctx)
@@ -100,11 +103,16 @@ func (s *AppService) Install(ctx context.Context, kind model.ServiceKind, versio
 		Label: "安装 " + name,
 		Steps: []task.Step{
 			steps.NewInstallImageStep("准备镜像", s.cache, s.probe, s.env, string(kind), version),
-			&task.FuncStep{StepName: "落盘工作目录与配置", Exec: func(context.Context, task.StepLog) error {
-				return prepareService(s.env, kind, version)
+			&task.FuncStep{StepName: "落盘工作目录与配置", Exec: func(_ context.Context, log task.StepLog) error {
+				return prepareService(s.env, kind, version, log)
 			}},
-			&task.FuncStep{StepName: "创建并启动 " + name, Exec: func(ctx context.Context, _ task.StepLog) error {
-				return s.lifecycle.Install(ctx, kind, version)
+			&task.FuncStep{StepName: "创建并启动 " + name, Exec: func(ctx context.Context, log task.StepLog) error {
+				if err := s.lifecycle.Install(ctx, kind, version); err != nil {
+					return err
+				}
+				// 校验通过才报成功：lifecycle 的 Post-Verify 已按 Docker 实际态确认在运行
+				log.Log(string(model.LogDim), name+" 运行状态校验通过")
+				return nil
 			}},
 		},
 	}

@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.2
+> **文档版本**：v2.9.3
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -67,8 +67,12 @@
 
 | 项 | 权威值 | 来源 |
 |----|-------|------|
-| preflight action 数 | **17** | `preflight()` switch-case |
-| NEEDS_HOME 动作数 | **15** | `NEEDS_HOME` Set |
+| preflight action 数 | **17** | `internal/preflight/preflight.go` 的 `Run` switch-case 与 `AllActions`（`ActionCount`） |
+| NEEDS_HOME 动作数 | **15** | 同文件 `needsHome` map（`NeedsHomeCount`）；对账测试 `TestActionAndNeedsHomeCounts` |
+| §5.6 事件名数 | **17** | 事件协议表（冻结，不新增） |
+| 任务队列载体 | **`Snapshot.Tasks`（`TaskBoard`）** | 随 `state:changed` 推送，不新增事件名 |
+| 任务账本日志保留 | **尾部 500 行** | `internal/task/ledger.go`（`maxLedgerLines`）；写回 `operations` 表（迁移 0008 加 `task_id/label/logs`） |
+| SQLite 迁移数 | **8** | `internal/store/migrate/0001–0008.sql` |
 | VHosts 方法数 | **9** | `VHosts` 对象方法 |
 | 路由数 / 渲染函数数 | **10 / 6** | `NAV` / `VIEWS` |
 | SVC_META 服务数 | **5** | `SVC_META` |
@@ -97,7 +101,7 @@
 | 网络名 | **`phpo-network`** | 见 §5.13.2 |
 | 卷名前缀 | **`phpo-{kind}-{version}-`** | 见 §5.13.2 |
 | 回收站保留期 | **7 天** | 见 §5.13.7 |
-| 操作审计日志 | **`~/.phpo/logs/operations.log`** | 见 §5.13.10 |
+| 操作审计日志 | **`<用户数据目录>/logs/operations.log`** | 见 §5.13.10 · §4.2 |
 | 幂等操作数 | **8** | 见 §5.13.4 |
 | 清理模式数 | **3** | 保守 / 标准 / 激进 |
 | 离线缓存根目录 | **`~/phpo/offline/`** | 见 §5.14.2 |
@@ -585,60 +589,50 @@
 
 ```
 phpo/
-├── main.go                          # GUI 入口
-├── app.go                           # 根 Service
-├── go.mod                           # module phpo；go 1.27
-├── go.sum
+├── main.go                          # GUI 入口（embed all:frontend/dist + 注册根 Service）
+├── app.go                           # 根 Service：唯一对前端暴露的门面（64 个绑定方法）
+├── app_test.go
+├── go.mod  go.sum                   # module phpo；go 1.27
 ├── wails.json                       # Wails 配置
-├── Taskfile.yml                     # 构建编排
+├── Taskfile.yml                     # dev / bindings / frontend:{install,build} / build / test / vet / check / package{,:linux,:windows,:darwin} / version:bump / release:local
 ├── Makefile
-├── README.md                        # 中文主文档
-├── README_EN.md
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── LICENSE
+├── config.example.yaml              # 配置样例：两根 + services.{kind}.{version}.{password,port}
+├── AGENTS.md                        # 本总纲
+├── index.html                       # 原型 SSOT 镜像（由 前端唯一界面来源.txt 逐字派生，禁止手改）
+├── 前端唯一界面来源.txt              # 单文件 HTML 原型 = 前端唯一界面来源
+├── 任务工单.md  实施顺序.md          # 派生工单清单 / 里程碑排期
 ├── .gitignore  .editorconfig
 ├── .golangci.yml  .air.toml
-├── config.example.yaml
 │
-├── internal/                        # 私有业务码
-│   ├── app/
-│   │   ├── assemble.go
-│   │   ├── lifecycle.go             # 启动/关闭钩子（含启动时清理临时目录 + 校准）
-│   │   ├── emitter.go
-│   │   └── di.go
+├── internal/                        # 私有业务码（严格单向依赖，§3.1）
+│   ├── app/                         # 装配层
+│   │   ├── assemble.go              # 装配顺序：config → store → engine → cache → vhost → task → service
+│   │   ├── di.go
+│   │   ├── emitter.go               # §5.6 事件总线封装（17 事件名）
+│   │   ├── mock_emitter.go          # 无后端时的演示事件源
+│   │   └── lifecycle.go             # 启动/关闭钩子（清残留临时目录 + 校准 + 升级回滚探测）
 │   │
-│   ├── config/
+│   ├── config/                      # 配置层
 │   │   ├── config.go
-│   │   ├── paths.go
-│   │   ├── configstore.go              # 单一配置权威（YAML config.yaml：根目录 + 密码 + 端口）
-│   │   ├── userdata.go                 # XDG 用户配置目录解析（config.yaml / phpo.db / logs / trash 落地根）
-│   │   ├── password.go
-│   │   ├── versions.go
-│   │   └── offline.go
+│   │   ├── configstore.go           # 单一配置权威（YAML config.yaml：根目录 + 密码 + 端口）
+│   │   ├── userdata.go              # XDG 用户配置目录解析（config.yaml / phpo.db / logs / trash / updates）
+│   │   ├── paths.go                 # derivePaths / hostToContainer
+│   │   ├── validate.go              # 路径安全校验（§5.4 唯一保留的校验）
+│   │   ├── password.go              # 明文密码，默认 123456
+│   │   ├── versions.go              # 版本建议表（内联，仓库无 configs/versions.json）
+│   │   ├── extensions.go            # PHP 扩展元数据
+│   │   └── offline.go               # 离线缓存 / 临时目录路径常量（§5.14.2）
 │   │
-│   ├── model/
-│   │   ├── service.go
-│   │   ├── site.go
-│   │   ├── task.go
-│   │   ├── backup.go
-│   │   ├── offline.go
-│   │   ├── snapshot.go
-│   │   ├── update.go
-│   │   ├── operation.go
-│   │   ├── resource.go
-│   │   ├── cache_entry.go
-│   │   └── dto.go
+│   ├── model/                       # 领域模型（13 文件）
+│   │   ├── service.go  site.go  task.go  backup.go  offline.go  snapshot.go
+│   │   ├── update.go  operation.go  resource.go  cache_entry.go  dto.go
+│   │   └── cleanup.go  doctor.go
 │   │
-│   ├── store/
-│   │   ├── store.go
-│   │   ├── sqlite.go
-│   │   ├── snapshot.go
-│   │   ├── sync.go
-│   │   ├── port.go
-│   │   ├── operation.go
-│   │   ├── trash.go
-│   │   ├── offline.go
+│   ├── store/                       # 存储层（仅运行态；延迟建库）
+│   │   ├── store.go  sqlite.go  migrate.go  snapshot.go  sync.go
+│   │   ├── port.go                  # CollectUsedPorts / CollectServicePorts（端口占用单一判据）
+│   │   ├── operation.go             # 操作审计 + 任务账本读写
+│   │   ├── trash.go  offline.go  backup.go
 │   │   └── migrate/
 │   │       ├── 0001_init.sql
 │   │       ├── 0002_add_offline.sql
@@ -646,287 +640,164 @@ phpo/
 │   │       ├── 0004_add_operations.sql
 │   │       ├── 0005_add_cache_manifest.sql
 │   │       ├── 0006_add_site_rewrite.sql
-│   │       └── 0007_drop_dir_ready.sql
+│   │       ├── 0007_drop_dir_ready.sql    # dirReady 改快照派生，表下线
+│   │       └── 0008_add_task_ledger.sql   # 任务账本：给 operations 加 task_id / label / logs 三列（不另立表）
 │   │
-│   ├── engine/
-│   │   ├── client.go
-│   │   ├── container.go
-│   │   ├── image.go
-│   │   ├── registry.go
-│   │   ├── network.go
-│   │   ├── volume.go
-│   │   ├── mount.go
-│   │   ├── calibrate.go
-│   │   ├── health.go
-│   │   ├── cleaner.go
-│   │   ├── orphan.go
-│   │   ├── idempotent.go
-│   │   ├── verify.go
-│   │   ├── trash.go
-│   │   ├── snapshot.go
-│   │   └── audit.go
+│   ├── engine/                      # Docker 引擎层（17 文件）
+│   │   ├── client.go  container.go  image.go  registry.go
+│   │   ├── network.go  volume.go  mount.go  inspect.go  exec.go
+│   │   ├── calibrate.go  health.go
+│   │   └── cleaner.go  orphan.go  idempotent.go  verify.go  trash.go  audit.go
 │   │
-│   ├── cache/                       # 离线缓存核心
-│   │   ├── manager.go
-│   │   ├── lookup.go
-│   │   ├── manifest.go
-│   │   ├── image_cache.go
-│   │   ├── extension_cache.go
-│   │   ├── tempdir.go
-│   │   ├── promote.go
-│   │   ├── verifier.go
-│   │   ├── cleaner.go
-│   │   └── stats.go
+│   ├── cache/                       # 离线缓存核心（10 文件）
+│   │   ├── manager.go  lookup.go  manifest.go
+│   │   ├── image_cache.go  extension_cache.go  promote.go
+│   │   ├── tempdir.go  verifier.go  # SHA256 校验直接用标准库（无 pkg/hash/）
+│   │   └── cleaner.go  stats.go
 │   │
 │   ├── template/
-│   │   ├── embed.go
-│   │   ├── render.go
-│   │   └── templates/
+│   │   ├── embed.go  render.go
+│   │   └── templates/               # 按种类分，不按版本分（§5.3）
 │   │       ├── php/php.ini.tmpl  php-fpm.conf.tmpl
 │   │       ├── nginx/nginx.conf.tmpl
 │   │       ├── mysql/my.cnf.tmpl
 │   │       ├── pgsql/postgresql.conf.tmpl  pg_hba.conf.tmpl
 │   │       ├── redis/redis.conf.tmpl
-│   │       └── vhost.conf.tmpl
+│   │       └── vhost.conf.tmpl      # DEFAULT_CONFIGS = 5 服务 7 文件 + vhost 模板
 │   │
 │   ├── vhost/
-│   │   ├── manager.go
-│   │   ├── parse.go
-│   │   ├── upstream.go
-│   │   ├── rewrite.go
-│   │   ├── sync.go
-│   │   ├── validate.go
-│   │   └── hosts/
+│   │   ├── manager.go  parse.go  upstream.go  rewrite.go
+│   │   ├── sync.go  validate.go  reload.go     # 写盘前 nginx -t（硬红线 2）
+│   │   └── hosts/                             # §T402 hosts 三平台提权
+│   │       ├── hosts.go  manager.go
+│   │       └── elevate_linux.go  elevate_darwin.go  elevate_windows.go
 │   │
-│   ├── preflight/
-│   │   ├── preflight.go
-│   │   ├── common.go
-│   │   ├── validators.go
-│   │   ├── rules_service.go
-│   │   ├── rules_site.go
-│   │   ├── rules_ops.go
-│   │   ├── rules_cleanup.go
-│   │   ├── rules_cache.go
-│   │   └── portprobe.go
+│   ├── preflight/                   # 唯一裁决层（§0.2-14）
+│   │   ├── preflight.go             # Run 的 17-case switch + AllActions / needsHome 集合
+│   │   ├── validators.go            # 域名 / 版本 / 路径 / 端口校验
+│   │   ├── rules_service.go  rules_site.go
+│   │   └── rules_ops.go  rules_cache.go
+│   │       # 占用判定内联复用 store.CollectUsedPorts（无独立 portprobe.go）
+│   │       # 清理规则在 cleanup_service 侧（无 rules_cleanup.go）
 │   │
-│   ├── task/
-│   │   ├── manager.go
-│   │   ├── task.go
-│   │   ├── step.go
-│   │   ├── emitter.go
-│   │   ├── rollback.go
+│   ├── task/                        # 三段式任务引擎（硬红线 5）
+│   │   ├── manager.go               # 串行 FIFO 队列 + ErrBusy / ErrQueued + Cancel / CancelQueued
+│   │   ├── task.go  step.go  funcstep.go  emitter.go  rollback.go
+│   │   ├── ledger.go                # 退出即落账（日志尾部 500 行；落账失败不改任务结果）
 │   │   └── steps/
-│   │       ├── steps_home.go
-│   │       ├── steps_service.go
-│   │       ├── steps_site.go
-│   │       ├── steps_extension.go
-│   │       ├── steps_config.go
-│   │       ├── steps_backup.go
-│   │       ├── steps_offline.go
-│   │       ├── steps_update.go
-│   │       └── steps_cleanup.go
+│   │       ├── steps_service.go     # 安装/卸载/启停
+│   │       ├── steps_site.go        # 建站/删站/改端口/切 PHP/伪静态/vhost
+│   │       ├── steps_config.go      # 配置保存并重载
+│   │       └── steps_update.go      # 下载/校验/安装/回滚
+│   │           # 扩展、备份、清理、向导的编排在 service 层内联，不另立 steps_*.go
 │   │
-│   ├── service/
-│   │   ├── registry.go
-│   │   ├── env_service.go
-│   │   ├── lifecycle_service.go
-│   │   ├── php_service.go
-│   │   ├── db_service.go
-│   │   ├── redis_service.go
-│   │   ├── nginx_service.go
-│   │   ├── site_service.go
-│   │   ├── extension_service.go
-│   │   ├── config_service.go
-│   │   ├── backup_service.go
-│   │   ├── offline_service.go
-│   │   ├── doctor_service.go
-│   │   ├── wizard_service.go
-│   │   ├── task_service.go
-│   │   ├── state_service.go
-│   │   ├── prefs_service.go
-│   │   ├── updater_service.go
-│   │   ├── cleanup_service.go
-│   │   └── app_service.go
+│   ├── service/                     # 服务层（18 文件）
+│   │   ├── registry.go              # SVC_META 五服务元数据
+│   │   ├── app_service.go           # GetState（权威快照出口，含 TaskBoard）
+│   │   ├── env_service.go           # 密码 / 端口 / 偏好读写（config.yaml）
+│   │   ├── lifecycle_service.go  php_service.go  db_service.go
+│   │   ├── redis_service.go  nginx_service.go  site_service.go
+│   │   ├── extension_service.go  config_service.go
+│   │   ├── backup_service.go  offline_service.go  doctor_service.go
+│   │   ├── wizard_service.go  workdir.go  cleanup_service.go
+│   │   └── updater_service.go
 │   │
 │   ├── updater/
-│   │   ├── checker.go
-│   │   ├── downloader.go
-│   │   ├── verifier.go
-│   │   ├── installer_windows.go
-│   │   ├── installer_darwin.go
-│   │   ├── installer_linux.go
-│   │   ├── rollback.go
-│   │   └── scheduler.go
+│   │   ├── checker.go  downloader.go  verifier.go   # SHA256 + Ed25519（硬红线 6）
+│   │   ├── update.go  rollback.go  scheduler.go     # 启动时 + 每 24h 检查
+│   │   ├── embed.go                                 # go:embed signing
+│   │   ├── installer.go  installer_windows.go  installer_darwin.go  installer_linux.go
+│   │   └── signing/public.key                       # 公钥随包分发（当前为占位，待持钥者一次性替换）
 │   │
 │   ├── ui/
-│   │   ├── window.go
-│   │   ├── tray.go
-│   │   └── menu.go
-│   │
-│   ├── i18n/
-│   │   ├── i18n.go
-│   │   ├── locales/zh-CN.toml  en-US.toml
-│   │   └── custom.go
+│   │   └── window.go  tray.go  menu.go
 │   │
 │   └── util/
-│       ├── fs.go
-│       ├── string.go
-│       └── trash.go
+│       └── fs.go
+│           # 注：文案 i18n 在前端 locales（无 internal/i18n/）
 │
 ├── pkg/
 │   ├── version/compare.go  semver.go
-│   ├── port/suggest.go  probe.go  sequence.go
-│   ├── execx/exec.go
+│   ├── port/suggest.go  probe.go  sequence.go       # 顺延 + KeepOnConflict + TCP 实探
 │   ├── archive/targz.go
-│   ├── fsutil/tree.go
-│   ├── hash/sha256.go
-│   ├── dockerutil/
-│   │   ├── naming.go
-│   │   ├── inspect.go
-│   │   ├── wait.go
-│   │   └── imageref.go
+│   ├── disk/disk.go  disk_unix.go  disk_windows.go  # 磁盘余量（doctor 用）
+│   ├── dockerutil/naming.go  imageref.go  wait.go   # 容器 inspect 在 engine 侧
 │   └── errs/errors.go  codes.go
+│       # SHA256 用标准库（无 pkg/hash/）；exec 封装在 internal/engine/exec.go（无 pkg/execx/）
 │
 ├── frontend/                        # 前端工程
-│   ├── package.json  pnpm-lock.yaml
+│   ├── package.json  pnpm-lock.yaml  pnpm-workspace.yaml
 │   ├── vite.config.ts  tsconfig.json  tsconfig.node.json
-│   ├── index.html  .wails3.mjs
-│   ├── bindings/
-│   ├── public/favicon.svg
+│   ├── index.html                   # Vite 入口
+│   ├── dist/index.html              # 占位产物（tracked，保证仓库可独立编译；构建后需还原）
+│   ├── bindings/                    # wails3 生成（gitignore）
 │   └── src/
 │       ├── main.ts  App.vue  env.d.ts
-│       ├── api/
-│       │   ├── env.ts  lifecycle.ts  site.ts  extension.ts
-│       │   ├── config.ts  backup.ts  offline.ts  doctor.ts
-│       │   ├── task.ts  prefs.ts  events.ts  versions.ts  state.ts
-│       │   ├── updater.ts  cleanup.ts
-│       │   ├── cache.ts
-│       │   └── index.ts
-│       ├── stores/
+│       ├── router/index.ts          # 10 命名路由（CleanupView 由 CleanupModal 承载，非独立路由）
+│       ├── api/                     # 17 文件
+│       │   ├── env.ts  lifecycle.ts  site.ts  extension.ts  config.ts
+│       │   ├── backup.ts  offline.ts  cache.ts  doctor.ts  task.ts
+│       │   ├── state.ts  updater.ts  cleanup.ts  wizard.ts  docker.ts
+│       │   └── events.ts  mockEvents.ts
+│       ├── stores/                  # Pinia 8
 │       │   ├── appState.ts  taskStore.ts  layoutStore.ts  prefsStore.ts
-│       │   ├── updaterStore.ts  cleanupStore.ts
-│       │   └── cacheStore.ts
-│       ├── router/index.ts
-│       ├── views/                   # 11 个视图
-│       │   ├── SitesView.vue  PhpView.vue  MysqlView.vue
-│       │   ├── PgsqlView.vue  RedisView.vue  NginxView.vue
-│       │   ├── BackupView.vue
-│       │   ├── OfflineView.vue
-│       │   ├── SettingsView.vue  OverviewView.vue
-│       │   └── CleanupView.vue
+│       │   └── updaterStore.ts  cleanupStore.ts  cacheStore.ts  modalStore.ts
+│       ├── views/                   # 12 .vue = 11 路由视图 + ServiceView（服务页共用基座）
+│       │   ├── SitesView.vue  PhpView.vue  MysqlView.vue  PgsqlView.vue
+│       │   ├── RedisView.vue  NginxView.vue  BackupView.vue
+│       │   ├── OfflineView.vue  SettingsView.vue  OverviewView.vue  CleanupView.vue
+│       │   └── ServiceView.vue
 │       ├── components/
-│       │   ├── layout/
-│       │   ├── common/
-│       │   │   ├── ...
-│       │   │   ├── CacheHitBadge.vue
-│       │   │   └── CacheEntryCard.vue
-│       │   └── business/
-│       │       ├── ...
-│       │       ├── CacheDetailModal.vue
-│       │       └── CacheCleanupModal.vue
-│       ├── composables/
-│       │   ├── ...
-│       │   └── useCache.ts
-│       ├── locales/zh-CN.ts  en-US.ts
-│       ├── styles/
-│       ├── types/
-│       └── utils/
+│       │   ├── common/              # 7：ModalShell / ModalRoot / ToastHost / PasswordField
+│       │   │                        #   MountList / PathInfoBar / CacheHitBadge
+│       │   └── business/            # 18：SiteAddModal / SiteConfigModal / RewriteModal / InstallModal
+│       │                            #   ConfigModal / PhpExtensionsModal / TaskDrawer / CmdPalette
+│       │                            #   DangerConfirm / HomeSetupWizard / DockerGate / AppTrayMenu
+│       │                            #   ThemePickerModal / UpdateModal / CleanupModal / TrashViewer
+│       │                            #   CacheDetailModal / CacheCleanupModal（备份与改端口无独立模态）
+│       ├── composables/             # 15：usePreflight / useTask / useStateSync / usePhpSwitch
+│       │                            #   usePortSuggest / useCache / useCleanup / useUpdater / useI18n
+│       │                            #   useModals / useCmdPalette / useDockerPreflight / useToast
+│       │                            #   useZoom / useResize
+│       ├── constants/               # 9：service / mounts / rewrite / cmd / themes / layout / home / configs / ext
+│       ├── locales/index.ts  zh-CN.ts  en-US.ts     # MESSAGES 落点（原型 → 前端）
+│       ├── styles/base.css  styles/themes/           # 6 套主题 + index.css
+│       ├── types/index.ts
+│       └── utils/format.ts  path.ts  str.ts  vhost.ts  # 最终裁决在 internal/preflight
 │
 ├── build/                           # 三平台打包资源
 │   ├── appicon.png
 │   ├── windows/icon.ico  wails.exe.manifest  nsis/installer.nsi
 │   ├── darwin/icon.icns  Info.plist  entitlements.plist
-│   ├── linux/phpo.desktop  icons/256x256.png
-│   ├── bin/
-│   └── signing/public.key
-│
-├── configs/
-│   ├── phpo.default.json
-│   ├── versions.json
-│   ├── ports.json
-│   └── cache.json
+│   ├── linux/phpo.desktop  nfpm.yaml  postinstall.sh  icons/{128x128,256x256,512x512}/phpo.png
+│   └── bin/                         # 打包产物（gitignore）
+│       # 公钥不在 build/signing/，改由 internal/updater/signing/public.key go:embed
 │
 ├── scripts/
-│   ├── dev.sh  dev.ps1
-│   ├── bindings.sh  bindings.bat
-│   ├── build-all.sh  build-all.ps1
-│   ├── pkg.sh  pkg.bat
-│   ├── make-icons.py
-│   ├── check-i18n-keys.go
-│   ├── check-templates.go
-│   ├── check-docker-naming.go
-│   ├── check-cache-manifest.go
-│   ├── sign-release.sh
-│   └── gen-checksums.sh
+│   ├── check-i18n-keys.go  check-templates.go  check-docker-naming.go  check-cache-manifest.go
+│   ├── sign-release.sh  gen-checksums.sh  verify-signing-guard.sh
+│   └── bump-version.sh  version.sh  gen-locales.mjs   # gen-locales 会重写 locales，禁止随意执行
+│       # dev / build / bindings / 打包统一走 Taskfile，无 dev.* / bindings.* / build-all.* / pkg.* 脚本
 │
-├── docs/                            # 全中文文档
-│   ├── 项目概述.md
-│   ├── 架构设计.md
-│   ├── 目录规范.md
-│   ├── 领域模型.md
-│   ├── 接口契约.md
-│   ├── 事件流协议.md
-│   ├── 界面规格.md
-│   ├── 跨平台差异.md
-│   ├── 密码策略.md
-│   ├── 版本策略.md
-│   ├── 域名策略.md
-│   ├── 路径策略.md
-│   ├── PHP切换准确性.md
-│   ├── 状态同步.md
-│   ├── 端口策略.md
-│   ├── 应用升级.md
-│   ├── 最小限制原则.md
-│   ├── 编码行为准则.md              # 对应 §3.4
-│   ├── Docker操作规范.md
-│   ├── 资源清洁机制.md
-│   ├── 回收站机制.md
-│   ├── 离线缓存机制.md
-│   ├── 缓存清单规范.md
-│   ├── 临时目录生命周期.md
-│   ├── 任务取消语义.md
-│   ├── 离线缓存协议.md
-│   ├── 备份脱敏规范.md
-│   ├── 打包发布.md
-│   └── CHANGELOG.md
+├── docs/                            # 全中文文档（32 篇）
+│   ├── 项目概述.md  架构设计.md  目录规范.md  领域模型.md  接口契约.md
+│   ├── 事件流协议.md  界面规格.md  跨平台差异.md
+│   ├── 密码策略.md  版本策略.md  域名策略.md  路径策略.md  端口策略.md
+│   ├── PHP切换准确性.md  状态同步.md  应用升级.md
+│   ├── 最小限制原则.md  编码行为准则.md
+│   ├── Docker操作规范.md  资源清洁机制.md  回收站机制.md
+│   ├── 离线缓存机制.md  缓存清单规范.md  临时目录生命周期.md  离线缓存协议.md
+│   ├── 任务取消语义.md  备份脱敏规范.md  打包发布.md  用户手册.md
+│   ├── CHANGELOG.md
+│   └── M6-集成验收记录.md  T705-Linux真机冒烟记录.md   # 里程碑验收留痕
 │
 ├── test/
-│   ├── unit/
-│   │   ├── ...
-│   │   ├── cache_lookup_test.go
-│   │   ├── cache_manifest_test.go
-│   │   ├── cache_promote_test.go
-│   │   ├── cache_tempdir_test.go
-│   │   ├── cache_verify_test.go
-│   ├── integration/
-│   │   ├── ...
-│   │   ├── cache_hit_test.go
-│   │   ├── cache_miss_test.go
-│   │   ├── cache_promote_test.go
-│   │   ├── cache_fail_cleanup_test.go
-│   │   ├── cache_tempdir_cleanup_test.go
-│   │   ├── offline_install_test.go
-│   ├── e2e/
-│   │   ├── ...
-│   │   ├── cache.spec.ts
-│   ├── fixtures/
-│   │   ├── ...
-│   │   ├── cache_cases.yaml
-│   │   ├── manifest_samples/
-│   └── mocks/
-│       ├── docker_mock.go  service_mock.go  emitter_mock.go
-│       ├── github_mock.go
-│       ├── docker_state_mock.go
-│       └── cache_mock.go
-│
-├── assets/
-│   ├── embed.go
-│   ├── icons/...
-│   ├── images/...
-│   └── migrations/...
-│
-├── data/
-│   └── .gitkeep
+│   └── integration/                 # 真环境 live 用例（PHPO_LIVE=1 + Docker 可用双重 skip 守护）
+│       ├── m3_live_test.go  m4_live_test.go
+│       ├── m5_mysql_live_test.go  m5_pgsql_live_test.go
+│       ├── m5_redis_live_test.go  m5_wordpress_live_test.go
+│       └── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
+│       # 单元测试与包同目录（60 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -936,21 +807,28 @@ phpo/
     └── PULL_REQUEST_TEMPLATE.md
 ```
 
+> **尚未落地的规划交付物**（属 M7 发布线，不得当作已存在引用）：根目录 `README.md` / `README_EN.md` /
+> `CHANGELOG.md`（现仅 `docs/CHANGELOG.md`）/ `CONTRIBUTING.md` / `LICENSE`；`configs/`（默认配置已内联到
+> `internal/config` 与前端 `constants/`）；`assets/`、`data/`；`internal/i18n/`（文案在前端 locales）；
+> `pkg/hash`、`pkg/execx`、`pkg/fsutil`；`frontend/public/favicon.svg`；win/mac 代码签名链（EV 证书 /
+> Developer ID + 公证）与真机冒烟。
+
 ### 4.2 运行时用户数据目录
 
 ```
-~/.phpo/                              # 用户数据目录 · Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
-├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + services.{kind}.{version}.{password,port}
-├── phpo.db                           # SQLite，仅存运行态（installed/running/sites/php_extensions/trash/operations/offline/cache_manifest）；**延迟建库**：装机向导把两根目录写入 config.yaml 后才创建
+$XDG_CONFIG_HOME/phpo/                # 用户数据目录（os.UserConfigDir()/phpo，见 internal/config/userdata.go）
+│                                     # Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
+├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + services.{kind}.{version}.{password,port}；0600
+├── phpo.db                           # SQLite，仅存运行态（installed / running / sites / php_extensions / trash / operations（含任务账本 task_id/label/logs） / offline / cache_manifest）；**延迟建库**：装机向导把两根目录写入 config.yaml 后才创建
 ├── logs/
-│   ├── phpo.log
-│   └── operations.log
-├── themes/
-├── locales/
-├── trash/
-└── updates/
+│   └── operations.log                # 操作审计（JSON Lines，§5.13.10）
+├── trash/                            # 回收站（7 天保留，§5.13.7）
+└── updates/                          # 升级工作区
     ├── downloads/
     └── backups/
+
+# 注：主题、语言、布局、缩放属 UI 偏好，留前端 localStorage（§3.1 原则 5），用户数据目录内不再有 themes/ 与 locales/；
+#     运行日志走标准输出 + 系统日志，未单独落 phpo.log。
 
 ~/phpo/                               # PHPO_HOME
 ├── php/<ver>/{conf,logs}
@@ -1042,6 +920,14 @@ phpo/
 | `cache:corrupted` | `{ kind, version, entry }` | 缓存损坏 |
 | `cache:cleanup` | `{ mode, freed_bytes }` | 缓存清理完成 |
 | `cache:tempdir-cleared` | `{ path, reason }` | 临时目录已清空 |
+
+**事件名冻结为上表 17 个**；队列与进度不新增事件名，按下述三条承载：
+
+1. **队列详情走快照**：`Snapshot.Tasks`（`model.TaskBoard{ Running *TaskBrief, Pending []TaskBrief }`）随 `state:changed` 实时推送——`Running` 是当前任务（含 `step / total` 进度），`Pending` 是其后的 FIFO 排队项。任务状态仍为 **4** 个，运行中 / 排队中由所在分区表达，不设第 5 态。
+2. **实时日志与进度走 `task:*` 事件**：`task:log` 逐行输出（5 种 level），`task:progress` 变更步骤，`task:done` 收尾。`duration` 是 Go `time.Duration`，JSON 序列化为**纳秒**，前端须自行换算单位。
+3. **历史与失败原因走账本**：任务退出时由 `internal/task/ledger.go` 把终态连同等效日志写回 `operations` 表（迁移 `0008` 加 `task_id / label / logs` 三列，日志取尾部 500 行）。落账失败**不改变**任务成败判定；失败原因取最后一条 `err` 级 `task:log`，并在 `operations.error` / `operations.logs` 留档。
+
+`task.Manager` 串行执行：嵌套提交返回 `ErrBusy`，重复标签返回 `ErrQueued`，排队项可经 `CancelQueued(id)` 撤回。preflight **不再持有「已有任务在跑」的全局守卫**——并发写操作按 FIFO 排队，不作校验错误。
 
 ### 5.7 doctor 环境诊断
 
@@ -1135,7 +1021,7 @@ phpo/
 
 #### 5.13.7 回收站机制
 
-`~/.phpo/trash/`，7 天保留。
+`<用户数据目录>/trash/`（Linux `~/.config/phpo/trash/`），7 天保留。
 
 #### 5.13.8 操作前后自检
 
@@ -1147,7 +1033,7 @@ CI 无人值守支持。
 
 #### 5.13.10 操作审计日志
 
-`~/.phpo/logs/operations.log`（JSON Lines）。
+`<用户数据目录>/logs/operations.log`（JSON Lines；Linux `~/.config/phpo/logs/operations.log`，见 `internal/config/userdata.go` 的 `AuditLogPath`）。
 
 #### 5.13.11–12 导入/重装清洁
 
@@ -1446,13 +1332,13 @@ type OfflineService interface {
 | state 全局对象 | `internal/store/ + SQLite` | `stores/appState.ts` |
 | persistState / hydrateState | `internal/store/snapshot.go` | — |
 | preflight()（17 action） | `internal/preflight/preflight.go` | `composables/usePreflight.ts` |
-| NEEDS_HOME（15 action） | `internal/preflight/common.go` | — |
-| validators | `internal/preflight/validators.go` | `utils/validate.ts` |
+| NEEDS_HOME（15 action） | `internal/preflight/preflight.go`（`needsHome` map） | — |
+| validators | `internal/preflight/validators.go` | `composables/usePreflight.ts`（即时反馈）+ `utils/`（无独立 validate.ts） |
 | VHosts（9 方法） | `internal/vhost/manager.go` | `api/site.ts` |
 | parseVhost / replaceListen | `internal/vhost/parse.go` | — |
 | replacePhpUpstream | `internal/vhost/upstream.go` | — |
 | REWRITE_PRESETS（9 种） | `internal/vhost/rewrite.go` | `constants/rewrite.ts` |
-| derivePaths | `internal/config/paths.go` | `stores/setting.ts` |
+| derivePaths | `internal/config/paths.go` | `stores/appState.ts`（快照 `env` 扁平键） |
 | hostToContainer | `internal/config/paths.go` | `utils/path.ts` |
 | MOUNTS / resolveMounts | `internal/engine/mount.go` | `MountList.vue` |
 | DEFAULT_CONFIGS | `internal/template/templates/` | — |
@@ -1461,11 +1347,13 @@ type OfflineService interface {
 | buildScript 日志 | `internal/task/emitter.go` | `TaskDrawer.vue` |
 | applyStateChange | `internal/task/task.go` + `internal/store/sync.go` | — |
 | render() 全量重绘 | — | `composables/useStateSync.ts` |
-| cancelTask | `internal/task/cancel.go` | `api/task.ts` |
+| cancelTask | `internal/task/manager.go#Cancel / CancelQueued` | `api/task.ts` |
+| 任务队列 + 实时进度 | `internal/task/manager.go`（串行 FIFO）+ `model.TaskBoard`（随 `Snapshot.Tasks` 推送） | `taskStore.ts + TaskDrawer.vue` |
+| 任务账本（历史 + 失败原因） | `internal/task/ledger.go` + `internal/store/operation.go`（迁移 0008） | `TaskDrawer.vue`（历史分区）+ 设置页审计入口 |
 | genPassword | `internal/config/password.go` | — |
 | suggestPortFor | `pkg/port/suggest.go` | `utils/format.ts` |
 | cmpVer | `pkg/version/compare.go` | `utils/format.ts` |
-| MESSAGES | `internal/i18n/locales/` | `locales/zh-CN.ts / en-US.ts` |
+| MESSAGES | —（后端不出文案，错误码在 `pkg/errs/codes.go`） | `locales/zh-CN.ts / en-US.ts` |
 | THEMES | — | `styles/themes/*.css` |
 | UI_SCALE / zoom 补偿 | — | `useZoom.ts + useResize.ts` |
 | CMD_ITEMS（20 命令） | — | `CmdPalette.vue` |
@@ -1477,8 +1365,9 @@ type OfflineService interface {
 | offline 离线缓存 | `internal/cache/* + internal/service/offline_service.go` | `OfflineView.vue` + `useCache.ts` + `cacheStore.ts` |
 | 4 条旁路 | `internal/task/steps/*.go` | 统一走 TaskDrawer |
 | 密码明文存储 | `internal/config/configstore.go`（config.yaml） | `PasswordField.vue` |
-| SVC_META.suggested | `configs/versions.json` | `useVersions.ts` |
-| php-select change | `internal/service/site_service.go#SwitchPHP` | `PhpSelect.vue + usePhpSwitch.ts` |
+| SVC_META.suggested | `internal/config/versions.go`（仓库无 `configs/`） | `constants/service.ts` |
+| php-select change | `internal/service/site_service.go#SwitchPHP` | `SitesView.vue` 行内下拉 + `usePhpSwitch.ts` |
+| hosts 绑定 | `internal/vhost/hosts/`（三平台提权） | `SitesView.vue + api/site.ts#addHosts` |
 | stopped 反向推导 | `internal/engine/calibrate.go` | `useStateSync.ts` |
 | 端口默认 80 | `pkg/port/suggest.go` | `SiteAddModal.vue` |
 | 端口顺延 | `pkg/port/sequence.go` + `internal/store/port.go` | `usePortSuggest.ts` |
@@ -1495,7 +1384,8 @@ type OfflineService interface {
 | 回收站 | `internal/engine/trash.go + internal/store/trash.go` | `TrashViewer.vue` |
 | 操作审计 | `internal/engine/audit.go + internal/store/operation.go` | 设置页入口 |
 | 状态校准 | `internal/engine/calibrate.go` | doctor 入口 |
-| 清理任务 | `internal/task/steps/steps_cleanup.go + internal/service/cleanup_service.go` | `CleanupModal.vue` |
+| 清理任务 | `internal/service/cleanup_service.go + internal/engine/{cleaner,trash}.go`（无独立 steps_cleanup.go） | `CleanupModal.vue`（承载 `CleanupView.vue`） |
+| 端口占用三档 | `pkg/port`（`Options.KeepOnConflict` / `Result.Occupied`）+ `internal/preflight`（`conflictKeepWarn` / `conflictAdvance`）+ `store/port.go` | `SiteAddModal.vue`（告警降级）· `usePortSuggest.ts`（改端口顺延） |
 | 镜像缓存命中 | `internal/cache/image_cache.go#LookupImage` | `CacheHitBadge.vue` |
 | 扩展缓存命中 | `internal/cache/extension_cache.go#LookupExtension` | `CacheHitBadge.vue` |
 | 临时目录 | `internal/cache/tempdir.go` | — |
@@ -1616,13 +1506,15 @@ type OfflineService interface {
 
 ### 11.1 三平台安装包
 
-- `phpo-setup-x64.exe`（Windows NSIS）+ `.sig`
-- `phpo-x64.dmg`（macOS 含公证）+ `.sig`
+- `phpo-setup-x64.exe`（Windows NSIS）+ `.sig` —— 资源已就位（`build/windows/`），三平台签名链未落地
+- `phpo-x64.dmg`（macOS 含公证）+ `.sig` —— 资源已就位（`build/darwin/`），公证未接入
 - `phpo-x86_64.AppImage`（Linux）+ `.sig`
-- `phpo_x.x.x_amd64.deb / .rpm`
-- `checksums.txt`
+- `phpo_x.x.x_amd64.deb / .rpm` —— **已在本机产出并真机验证**（`task release:local` → nfpm，见 `docs/T705-Linux真机冒烟记录.md`）
+- `checksums.txt`（`scripts/gen-checksums.sh`）
 
 ### 11.2 中文文档
+
+`docs/` 现有 32 篇（含 `CHANGELOG.md` 与两份里程碑留痕：`M6-集成验收记录.md`、`T705-Linux真机冒烟记录.md`）：
 
 - 项目概述 / 架构设计 / 目录规范
 - 领域模型 / 接口契约 / 事件流协议
@@ -1637,12 +1529,11 @@ type OfflineService interface {
 
 ### 11.3 开发者工具
 
-- CI 流水线
-- i18n 键对齐 / 模板一致性校验
-- 资源命名规范校验
-- 缓存 manifest schema 校验
-- preflight / PHP 切换 / 状态同步 / 端口顺延 / 密码 / 版本 / 域名 / Docker 清洁 / 缓存 测试用例 YAML
-- 升级测试用例 YAML
+- CI 流水线（`.github/workflows/{ci,lint,release}.yml`）
+- i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest 四项门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
+- 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
+- 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
+- 测试：与包同目录的 Go 单测（60 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` 真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -1713,7 +1604,21 @@ type OfflineService interface {
 
 ---
 
-**phpo 项目总纲 v2.9.2**
+**phpo 项目总纲 v2.9.3**
+
+> **v2.9.3 变更（仅同步既有实现的落点，不改任何策略条款）**：§4.1 目录树按仓库真实文件重排——删去从未落地的
+> `configs/`、`internal/i18n/`、`internal/preflight/{common,portprobe,rules_cleanup}.go`、
+> `internal/task/steps/{steps_home,steps_extension,steps_offline,steps_backup,steps_cleanup}.go`、
+> `pkg/{hash,execx,fsutil}`、`test/{unit,mocks,fixtures,e2e}`、`assets/`、`data/`、`build/signing/`；
+> 补入已落地但未登记的 `internal/{config,store,engine,model,service,updater,vhost}` 新文件、`pkg/disk/`、
+> 迁移 `0008`、前端 12 视图 / 17 api / 15 composables / 9 constants。§4.2 用户数据目录改为 `os.UserConfigDir()/phpo`
+> 实测口径（去掉从未创建的 `phpo.log` / `themes/` / `locales/`），§5.13.7 与 §5.13.10 的路径同步。
+> §0.3 补 4 行权威值（事件名 17、队列载体 `Snapshot.Tasks`、账本尾部 500 行、迁移 8），并把 preflight
+> 两项来源指到 `internal/preflight/preflight.go` 的 `Run`/`AllActions`/`needsHome` 与对账测试。
+> §5.6 补「队列/进度/历史三段承载」说明（**不新增事件名、不改 17 事件协议**）；§6 映射表的 `NEEDS_HOME`、
+> `MESSAGES`、`SVC_META.suggested`、`cancelTask`、`PhpSelect.vue`、`stores/setting.ts`、`utils/validate.ts`、
+> `steps_cleanup.go` 等落点改为真实文件；§11 标注 Linux 已出包真机验证、win/mac 签名链未落地。
+> 端口策略、密码策略、离线缓存、硬红线 8 条、三段式写操作等**行为条款一字未改**。
 
 - 技术栈：Wails ≥ 3 + Go ≥ 1.27 + Vue 3.5+ + TypeScript
 - 目标：Windows / macOS / Linux 三平台桌面应用

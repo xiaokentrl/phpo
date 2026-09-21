@@ -103,6 +103,10 @@ func (c *Container) Build() *Assembly {
 			return err
 		}
 		tm := task.NewManager(c.Emitter)
+		// 任务实时反馈三接线（硬红线 4：状态唯一权威在后端）：
+		// 队列详情进快照（store 不反向依赖 task，注入 provider）；终态落账本；队列变化重发 state:changed。
+		st.SetTaskBoard(tm.Board)
+		tm.SetRecorder(st)
 		lc := service.NewLifecycle(cli, st, c.Emitter, env, cfg)
 		cacheMgr := steps.NewCacheManager(env, c.Emitter, cli)
 		c.AppService = service.NewAppService(lc, tm, cacheMgr, cli, env)
@@ -136,6 +140,14 @@ func (c *Container) Build() *Assembly {
 		st.SetHostsProbe(func(domain string) bool {
 			ok, err := hm.Has(domain)
 			return err == nil && ok
+		})
+		// 队列变化（入队/移交/终态）即重发权威快照：排队详情与进度经 state:changed 实时可见，不新增事件名
+		tm.SetQueueWatcher(func() {
+			snap, err := st.BuildSnapshot()
+			if err != nil {
+				return // 首启未建库等场景：无快照可发，任务终态仍由账本与 task:* 事件覆盖
+			}
+			c.Emitter.Emit(EventStateChanged, map[string]any{"snapshot": snap})
 		})
 
 		// M6 扩展门面（T601）：容器内内置工具编译 → commit 固化 phpo/php:{version} → save 提升离线缓存 → 重建

@@ -20,8 +20,9 @@ func (s *Store) AppendOperation(op model.Operation) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`INSERT INTO operations(ts,actor,op,args,status,duration_ms,error) VALUES(?,?,?,?,?,?,?)`,
-		op.TS.Format(time.RFC3339Nano), op.Actor, op.Op, string(args), op.Status, op.DurationMs, op.Error)
+	_, err = db.Exec(`INSERT INTO operations(ts,actor,op,args,status,duration_ms,error,task_id,label,logs) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		op.TS.Format(time.RFC3339Nano), op.Actor, op.Op, string(args), op.Status, op.DurationMs, op.Error,
+		op.TaskID, op.Label, op.Logs)
 	return err
 }
 
@@ -33,7 +34,7 @@ func (s *Store) ListOperations(limit int) ([]model.Operation, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT ts,actor,op,args,status,duration_ms,error FROM operations ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := db.Query(`SELECT ts,actor,op,args,status,duration_ms,error,task_id,label,logs FROM operations ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -41,19 +42,26 @@ func (s *Store) ListOperations(limit int) ([]model.Operation, error) {
 	var out []model.Operation
 	for rows.Next() {
 		var (
-			op     model.Operation
-			ts, a  string
-			errStr *string
+			op                model.Operation
+			ts, a             string
+			errStr, idStr     *string
+			labelStr, logsStr *string
 		)
-		if err := rows.Scan(&ts, &op.Actor, &op.Op, &a, &op.Status, &op.DurationMs, &errStr); err != nil {
+		if err := rows.Scan(&ts, &op.Actor, &op.Op, &a, &op.Status, &op.DurationMs, &errStr, &idStr, &labelStr, &logsStr); err != nil {
 			return nil, err
 		}
 		op.TS, _ = time.Parse(time.RFC3339Nano, ts)
 		_ = json.Unmarshal([]byte(a), &op.Args)
-		if errStr != nil {
-			op.Error = *errStr
-		}
+		op.TaskID, op.Label, op.Logs = deref(idStr), deref(labelStr), deref(logsStr)
+		op.Error = deref(errStr)
 		out = append(out, op)
 	}
 	return out, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

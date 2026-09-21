@@ -62,10 +62,9 @@ const NeedsHomeCount = 15
 
 // World 只读快照 + 运行时上下文（后端唯一权威）
 type World struct {
-	Snap        *model.Snapshot
-	TaskRunning bool
-	Backups     []string // 备份归档文件名
-	Offline     []model.CacheEntry
+	Snap    *model.Snapshot
+	Backups []string // 备份归档文件名
+	Offline []model.CacheEntry
 }
 
 func (w *World) isRunning(kind, version string) bool {
@@ -121,16 +120,17 @@ func (r *run) setAdjustedPort(v int) {
 	r.adjusted["port"] = v
 }
 
-// Run 执行 preflight 裁决：先全局守卫（taskBusy/homeNotReady），再分派 17 action
+// Run 执行 preflight 裁决：先全局守卫（homeNotReady），再分派 17 action。
+//
+// 这里**不拦并发写操作**：task.Manager 是串行 FIFO，前一个任务在跑时再发起的写操作会排队，
+// 排队不是错误（§0.2-16 能警告的不要阻止）。重复提交同一操作由 Manager 以 ErrQueued 当场拒绝——
+// 队列的真实内容只存在于 Manager，preflight 拿不到，也不该另立一套判据。
 func Run(action string, c Ctx, w *World) *model.PreflightResult {
 	r := &run{c: c, w: w}
 	if w.Snap == nil {
 		w.Snap = model.NewSnapshot()
 	}
 
-	if w.TaskRunning {
-		r.errors = append(r.errors, errs.TaskBusy)
-	}
 	if needsHome[action] && !(w.Snap.DirReady["PHPO_HOME"] && w.Snap.DirReady["WWW_ROOT"]) {
 		r.errors = append(r.errors, errs.HomeNotReady)
 	}

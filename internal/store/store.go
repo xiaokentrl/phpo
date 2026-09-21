@@ -10,6 +10,7 @@ import (
 	"errors"
 	"sync"
 
+	"phpo/internal/model"
 	"phpo/pkg/errs"
 )
 
@@ -33,6 +34,7 @@ type Store struct {
 	db    *sql.DB    // nil 表示尚未打开
 	env   EnvProvider
 	hosts HostsProbe
+	board TaskBoardProvider
 }
 
 // New 返回延迟打开的运行态存储：不建目录、不建库、不迁移。装配期用它注入各服务门面。
@@ -47,6 +49,13 @@ type HostsProbe func(domain string) bool
 
 // SetHostsProbe 注入 hosts 探针（装配期一次性调用）
 func (s *Store) SetHostsProbe(p HostsProbe) { s.hosts = p }
+
+// TaskBoardProvider 提供任务队列详情（运行中 + 排队中）。
+// store 不得反向依赖 task 包，故由装配层注入实现（*task.Manager.Board 满足）。未注入即面板为空。
+type TaskBoardProvider func() model.TaskBoard
+
+// SetTaskBoard 注入任务面板 provider（装配期一次性调用，先于任何并发访问）
+func (s *Store) SetTaskBoard(p TaskBoardProvider) { s.board = p }
 
 func (s *Store) Close() error {
 	s.mu.Lock()

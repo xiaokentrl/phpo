@@ -145,6 +145,7 @@ td.col-actions::before,th.col-actions::before{content:'';position:absolute;left:
 .drawer-dot.running{background:var(--accent);animation:pulse 1.4s ease-in-out infinite}
 .drawer-dot.success{background:var(--ok)}
 .drawer-dot.failed{background:var(--danger)}
+.drawer-dot.cancelled{background:var(--warn)}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.82)}}
 .drawer-label{font-size:13px;font-weight:550;white-space:nowrap;color:var(--text)}
 .drawer-cmd{color:var(--text-mute);font-family:var(--mono);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
@@ -168,6 +169,30 @@ td.col-actions::before,th.col-actions::before{content:'';position:absolute;left:
 .log-line.meta{color:var(--accent)}
 .log-line.cmd{color:var(--text);font-weight:550}
 .log-line.dim{color:var(--text-mute)}
+/* 任务队列实时详情（Q6）：运行中 / 排队中（可撤回）/ 历史记录 + 步骤进度 + 失败原因，数据全来自后端权威快照与 task:* 事件 */
+.drawer-queue{display:none;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 14px;border-bottom:1px solid var(--border-2);background:var(--surface);max-height:78px;overflow-y:auto}
+.drawer.expanded .drawer-queue{display:flex}
+.dq-title{font-family:var(--mono);font-size:10.5px;color:var(--text-mute);letter-spacing:.4px;flex-shrink:0}
+.dq-chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:var(--r-xs);border:1px solid var(--border-2);background:var(--surface-2);color:var(--text-dim);max-width:300px;cursor:pointer;transition:border-color var(--motion-fast),color var(--motion-fast)}
+.dq-chip:hover{border-color:var(--accent);color:var(--text)}
+.dq-chip.plain,.dq-chip.plain:hover{cursor:default;border-color:var(--border-2);color:var(--text-mute)}
+.dq-chip.active{border-color:var(--accent);color:var(--text);background:var(--accent-bg)}
+.dq-chip.queued{border-style:dashed;color:var(--text-mute)}
+.dq-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dq-step{color:var(--text-mute);flex-shrink:0}
+.dq-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--text-mute)}
+.dq-dot.running{background:var(--accent);animation:pulse 1.4s ease-in-out infinite}
+.dq-dot.success{background:var(--ok)}
+.dq-dot.failed{background:var(--danger)}
+.dq-dot.cancelled{background:var(--warn)}
+.dq-withdraw{border:0;background:transparent;color:var(--text-mute);cursor:pointer;display:grid;place-items:center;padding:0 2px;border-radius:var(--r-xs);flex-shrink:0}
+.dq-withdraw:hover{color:var(--danger);background:var(--danger-bg)}
+.drawer-progress{display:none;height:2px;background:var(--surface-3);flex-shrink:0}
+.drawer.expanded .drawer-progress{display:block}
+.drawer-progress-bar{height:100%;background:var(--accent);transition:width var(--motion-base)}
+.drawer-error{display:none;align-items:center;gap:6px;padding:5px 14px;background:var(--danger-bg);color:var(--danger);font-family:var(--mono);font-size:11.5px;border-bottom:1px solid var(--border-2);flex-shrink:0}
+.drawer.expanded .drawer-error{display:flex}
+.drawer-error-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .modal-root{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);z-index:100;padding:20px}
 .modal-root.open{display:flex}
 .modal{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:14px;width:100%;max-width:480px;max-height:88vh;box-shadow:var(--shadow);animation:popIn var(--motion-base) cubic-bezier(.2,.9,.3,1.15);display:flex;flex-direction:column;overflow:hidden}

@@ -9,7 +9,7 @@ import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { syncState } from '@/composables/useStateSync'
 import { toast } from '@/composables/useToast'
-import { runTask } from '@/composables/useTask'
+import { submitWrite } from '@/composables/useTask'
 import { addSite, hasBackend } from '@/api/site'
 import { useModalStore } from '@/stores/modalStore'
 import { useAppState } from '@/stores/appState'
@@ -95,13 +95,12 @@ function onOk(): void {
   const finalArgs = ['site', 'add', d, '--port', String(portNum), '--php', php.value, '--rewrite', rewrite.value, '--root', rootPath]
   const finalMeta = { type: 'site-add', domain: d, port: portNum, php: php.value, rewrite: rewrite.value, root: rootPath }
   const label = `${t('siteAdd.title')} ${d}`
-  const submit = async (): Promise<void> => {
-    if (!hasBackend()) { runTask(finalArgs, label, finalMeta); return }
-    try {
+  const submit = (): void => {
+    submitWrite(finalArgs, label, finalMeta, async () => {
       await addSite({ domain: d, port: portNum, php: php.value, root: rootPath, rewrite: rewrite.value })
       // 建站成功后立刻拉一次权威快照，列表当场见新站点（不依赖事件时序）
       await syncState()
-    } catch (e: unknown) { toast(String(e), 'err', 4600) }
+    })
   }
   if (check.warnings.length) {
     emit('close')

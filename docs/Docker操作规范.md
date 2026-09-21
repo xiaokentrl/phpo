@@ -61,7 +61,7 @@ Step 五接口：`Name / Execute / Rollback / Cleanup / Cancelable`（[任务取
 
 不检查冲突 / 不回滚 / 留无名资源 / 删用户数据 / 重装清数据 / 导入不清空 / 状态不一致 / 静默失败 / 非幂等 / 无审计。
 
-审计见 `docs/资源清洁机制.md`（孤儿/清理/回收站）与 `~/.phpo/logs/operations.log`（JSON Lines，§5.13.10）。
+审计见 `docs/资源清洁机制.md`（孤儿/清理/回收站）与 `<用户数据目录>/logs/operations.log`（JSON Lines，§5.13.10）。
 
 ## 相关文档
 

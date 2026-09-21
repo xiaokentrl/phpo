@@ -54,12 +54,18 @@ func TestActionAndNeedsHomeCounts(t *testing.T) {
 
 // —— 全局守卫 ——
 
-func TestTaskBusyGuard(t *testing.T) {
+// 已有任务在跑时再发起写操作 → 排队（task.Manager 串行 FIFO），不是 preflight 错误。
+// 重复提交的去重由 Manager 的 ErrQueued 裁决（它才持有队列真实内容），preflight 不再拦并发。
+func TestConcurrentWriteQueuesNotBlocked(t *testing.T) {
 	w := readyWorld()
-	w.TaskRunning = true
+	w.Snap.Tasks.Running = &model.TaskBrief{ID: "t-1", Label: "安装 php-8.1", Type: "install"}
+	w.Snap.Tasks.Pending = []model.TaskBrief{{ID: "t-2", Label: "安装 mysql-8.4"}}
 	res := Run(ActBackup, Ctx{}, w)
-	if res.Ok || firstErr(res) != errs.TaskBusy {
-		t.Fatalf("任务运行中应报 taskBusy，得 %+v", res.Errors)
+	if !res.Ok {
+		t.Fatalf("已有任务在跑时写操作应排队而非报错，得 %+v", res.Errors)
+	}
+	if firstErr(res) == errs.TaskBusy {
+		t.Fatalf("taskBusy 不得再作为全局守卫出现，得 %+v", res.Errors)
 	}
 }
 

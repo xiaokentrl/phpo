@@ -1,8 +1,12 @@
-// taskStore：任务引擎 mock 状态仓（T109）。忠实迁移原型 buildScript/runTask/playTask/cancelTask。
-// 硬红线 4：日志逐行回放为纯展示；真实状态落地（applyStateChange）由后端事件驱动，属 T110，此处不做前端乐观更新。
+// taskStore：任务状态仓，双通道。
+// ① 实时通道（Q5，真实宿主）：记录、日志、进度、终态与失败原因全部来自后端 task:* 事件 + 权威快照 tasks 队列，
+//    前端不造任务、不改状态、不推断终态（硬红线 4）；写请求的排队/并发由后端 FIFO 队列裁决，前端不再本地忙锁。
+// ② demo 通道（无宿主，纯 Vite 浏览器）：保留原型 buildScript/playTask 的逐行回放，仅用于界面演示与验收。
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useAppState } from '@/stores/appState'
+import { hasBackend } from '@/api/site'
+import { cancelRunning, withdrawQueued, listTaskHistory } from '@/api/task'
 import { verRoot, hostToContainer } from '@/utils/path'
 import { resolveMounts, MOUNTS } from '@/constants/mounts'
 import { getDefaultFiles } from '@/constants/configs'
@@ -10,7 +14,7 @@ import { VERSION_SUBDIRS } from '@/constants/service'
 import { REWRITE_PRESETS } from '@/constants/rewrite'
 import { toast } from '@/composables/useToast'
 import { t as i18nT } from '@/composables/useI18n'
-import type { Env, ServiceKind } from '@/types'
+import type { Env, Operation, ServiceKind, TaskBoard, TaskBrief } from '@/types'
 
 export type TaskStatus = 'running' | 'success' | 'failed' | 'cancelled'
 export type LineType = 'cmd' | 'meta' | 'ok' | 'dim' | 'err'
@@ -24,6 +28,7 @@ export interface TaskMeta {
   [k: string]: any
 }
 export interface TaskRecord {
+  id: string
   args: string[]
   label: string
   meta: TaskMeta
@@ -35,6 +40,13 @@ export interface TaskRecord {
   cancelled: boolean
   abortReason: string | null
   timer: ReturnType<typeof setTimeout> | null
+  // —— 实时通道字段（后端权威，Q5）——
+  live: boolean // true=来自后端事件；false=纯浏览器 demo 回放
+  step: number // 已完成步骤数（task:progress / 快照 tasks）
+  total: number // 总步骤数；0=未知（如账本回放的历史任务）
+  lastErr: string | null // 最近一条 err 日志（终态为 failed 时即失败原因）
+  error: string | null // 失败原因：仅由终态判定写入，避免中途告警被误读为失败
+  durationMs: number | null // 后端 task:done 的权威耗时
 }
 
 // 忙锁文案（原型 PF.taskBusy，1594 行）
@@ -257,28 +269,234 @@ function buildScript(args: string[], meta: TaskMeta): TaskLine[] {
   return lines
 }
 
-export const useTaskStore = defineStore('task', () => {
-  const task = ref<TaskRecord | null>(null)
-  const expanded = ref(false)
+// RECORDS_MAX 记录池上限：终态记录留池供回看，超出裁最旧（正在跑 / 正在看的绝不裁）
+const RECORDS_MAX = 50
 
+export const useTaskStore = defineStore('task', () => {
+  const app = useAppState()
+
+  // 记录池（newest-first）：实时通道（后端事件 / 任务账本）与 demo 回放共用同一形状
+  const records = ref<TaskRecord[]>([])
+  const activeId = ref('')
+  const expanded = ref(false)
+  // 等效命令是前端展示信息、不进后端队列载荷：label 为队列去重键（与任务 1:1），据此关联弹窗提交的 args
+  const cmdByLabel = new Map<string, string[]>()
+  let followedId = '' // 已自动跟随过的运行中任务 ID
+  let demoSeq = 0
+
+  const task = computed<TaskRecord | null>(() => records.value.find((r) => r.id === activeId.value) ?? null)
   const isRunning = computed(() => task.value?.status === 'running')
+  // queueRunning：队列级忙（托盘退出等判定源）。真实宿主只认权威快照，绝不信本地记录
+  const queueRunning = computed(() =>
+    hasBackend() ? !!app.tasks.running : records.value.some((r) => r.status === 'running')
+  )
+  const runningBrief = computed<TaskBrief | null>(() => app.tasks.running ?? null)
+  const pendingBriefs = computed<TaskBrief[]>(() => app.tasks.pending ?? [])
   const visibleLines = computed<TaskLine[]>(() => {
     const t = task.value
-    return t ? t.lines.slice(0, t.cursor) : []
+    if (!t) return []
+    return t.live ? t.lines : t.lines.slice(0, t.cursor)
+  })
+  // progress：实时步骤进度（total=0 表示未知，如账本回放的历史任务，此时不显示进度）
+  const progress = computed(() => {
+    const t = task.value
+    if (!t || t.total <= 0) return null
+    const step = Math.min(t.step, t.total)
+    return { step, total: t.total, percent: Math.round((step / t.total) * 100) }
   })
 
-  function play(): void {
+  function find(id: string): TaskRecord | undefined {
+    return records.value.find((r) => r.id === id)
+  }
+
+  function trim(): void {
+    while (records.value.length > RECORDS_MAX) {
+      const last = records.value[records.value.length - 1]
+      if (last.id === activeId.value || last.status === 'running') return // 绝不裁掉正在看/正在跑的记录
+      records.value.pop()
+    }
+  }
+
+  function newRecord(id: string, label: string, type: string, live: boolean): TaskRecord {
+    return {
+      id,
+      args: label ? cmdByLabel.get(label) ?? [] : [],
+      label: label || id,
+      meta: { type },
+      lines: [],
+      status: 'running',
+      cursor: 0,
+      startedAt: Date.now(),
+      endedAt: null,
+      cancelled: false,
+      abortReason: null,
+      timer: null,
+      live,
+      step: 0,
+      total: 0,
+      lastErr: null,
+      error: null,
+      durationMs: null,
+    }
+  }
+
+  // ensureLive 取/建一条后端任务记录。task:log 可能先于快照到达（跨事件顺序不保证），
+  // 此时以 ID 占位，待队列详情落地后补 label / 类型 / 等效命令。
+  function ensureLive(id: string, label = '', type = '', total = 0): TaskRecord {
+    const cur = find(id)
+    if (cur) {
+      if (label) cur.label = label
+      if (type && !cur.meta.type) cur.meta = { ...cur.meta, type }
+      if (total && !cur.total) cur.total = total
+      if (label && !cur.args.length) cur.args = cmdByLabel.get(label) ?? []
+      return cur
+    }
+    const r = newRecord(id, label, type, true)
+    if (total) r.total = total
+    records.value.unshift(r)
+    trim()
+    return r
+  }
+
+  // ---- 实时通道入口（由 composables/useStateSync.ts 按 §5.6 事件调用；硬红线 4：只落地，不推断）----
+
+  // syncBoard：权威快照的队列详情落地。running 出现即建/更新记录并自动跟随展开抽屉；
+  // 排队项只进队列条（尚无日志），终态一律由 task:done 判定——绝不靠「从队列消失」推断成败。
+  function syncBoard(b?: TaskBoard | null): void {
+    const cur = b?.running
+    if (!cur?.id) return
+    const r = ensureLive(cur.id, cur.label, cur.type, cur.total)
+    r.step = cur.step || r.step
+    if (cur.total) r.total = cur.total
+    const started = Date.parse(cur.startedAt ?? '')
+    if (Number.isFinite(started) && started > 0) r.startedAt = started
+    if (followedId !== cur.id) {
+      followedId = cur.id
+      activeId.value = cur.id
+      expanded.value = true
+    }
+  }
+
+  // appendLog：task:log 一行落地。err 行记为「最近错误」；失败原因只在终态为 failed 时成立
+  // （§5.6 的 task:done 载荷不带 error，可用来源是这一行与账本 error 列）。
+  function appendLog(id: string, level: LineType, text: string): void {
+    if (!id) return
+    const r = ensureLive(id)
+    r.lines.push({ t: level, s: text })
+    if (level === 'err') r.lastErr = text
+  }
+
+  // setProgress：task:progress 落地（快照 tasks 亦带同一进度，两者同源不冲突）
+  function setProgress(id: string, step: number, total: number): void {
+    if (!id) return
+    const r = ensureLive(id)
+    if (total) r.total = total
+    r.step = step
+  }
+
+  // finish：task:done 终态落地。duration 为后端 time.Duration 的 JSON 值（纳秒）。
+  function finish(id: string, status: TaskStatus, durationNs: number): void {
+    if (!id) return
+    const r = ensureLive(id)
+    r.status = status
+    r.endedAt = Date.now()
+    r.durationMs = Number.isFinite(durationNs) ? Math.round(durationNs / 1e6) : null
+    if (status === 'cancelled') {
+      r.cancelled = true
+      r.abortReason = r.abortReason || 'user'
+    }
+    // 失败原因实时收口：优先任务内最后一条 err 日志，退化用取消标记
+    r.error = status === 'failed' ? r.lastErr : null
+    if (!r.total && r.step) r.total = r.step // 进度行已到即总步数收口，避免停在 x/0
+    trim()
+  }
+
+  // cacheNote：把 cache:* 事件如实记为当前运行任务的一行日志（串行队列 ⇒ 归属唯一）。
+  // 无运行中任务（如 doctor 离线校验）时丢弃：这类事件不属于任何任务，不得凭空造记录。
+  function cacheNote(level: LineType, text: string): void {
+    const id = app.tasks.running?.id
+    if (!id) return
+    appendLog(id, level, text)
+  }
+
+  // select：查看某条记录（队列条 / 历史点击）。不改动任何状态。
+  function select(id: string): void {
+    if (!find(id)) return
+    activeId.value = id
+    expanded.value = true
+  }
+
+  // cancel：真实通道只请求后端取消，终态等 task:done（硬红线 4）；demo 通道照原型本地停止回放。
+  function cancel(): void {
     const t = task.value
-    if (!t) return
+    if (!t || t.status !== 'running') return
+    if (t.live) {
+      void cancelRunning()
+      toast(i18nT('task.cancelHint'), 'info', 2600)
+      return
+    }
+    t.cancelled = true
+    if (t.timer) {
+      clearTimeout(t.timer)
+      t.timer = null
+    }
+    t.status = 'cancelled'
+    t.endedAt = Date.now()
+    t.abortReason = 'user'
+    toast(i18nT('task.cancelHint'), 'info', 2600)
+  }
+
+  // withdraw：撤回排队项。命中与否由后端裁决，前端只在后端确认出队后随快照消失（不本地删行）
+  async function withdraw(id: string): Promise<boolean> {
+    const ok = await withdrawQueued(id)
+    if (!ok) toast(i18nT('task.withdrawStale'), 'err', 2600)
+    return ok
+  }
+
+  // loadHistory：从任务账本补齐跨重启的历史记录（含失败原因与日志原文），已在池中的按 ID 跳过。
+  async function loadHistory(): Promise<void> {
+    const rows = await listTaskHistory().catch(() => [] as Operation[])
+    for (const op of rows) {
+      const id = op.taskId
+      if (!id || find(id)) continue
+      const r = newRecord(id, op.label || op.op, op.op, true)
+      r.status = (op.status === 'success' ? 'success' : op.status === 'cancelled' ? 'cancelled' : 'failed') as TaskStatus
+      r.error = op.error || null
+      r.durationMs = op.durationMs || null
+      const started = Date.parse(op.ts)
+      r.startedAt = Number.isFinite(started) ? started : r.startedAt
+      r.endedAt = r.startedAt + (op.durationMs || 0)
+      r.lines = String(op.logs || '')
+        .split('\n')
+        .filter((s) => s !== '')
+        .map((s) => ({ t: /失败|错误|error/i.test(s) ? ('err' as LineType) : ('dim' as LineType), s }))
+      r.cursor = r.lines.length
+      records.value.push(r)
+    }
+    records.value.sort((a, b) => b.startedAt - a.startedAt)
+    trim()
+  }
+
+  function toggle(): void {
+    expanded.value = !expanded.value
+  }
+
+  function setExpanded(v: boolean): void {
+    expanded.value = v
+  }
+
+  // ---- demo 通道（无宿主）：忠实原型 runTask/playTask 的本地逐行回放 ----
+
+  function play(t: TaskRecord): void {
     const next = () => {
-      if (!task.value || task.value !== t || t.cancelled) {
+      if (t.cancelled) {
         t.status = 'cancelled'
         t.endedAt = Date.now()
         t.timer = null
         return
       }
       if (t.cursor >= t.lines.length) {
-        // 硬红线 4：到达末尾后不落地状态；真实落地由后端事件驱动（T110）。mock 仅标记成功。
+        // 硬红线 4：到达末尾后不落地状态；真实落地由后端事件驱动。demo 仅标记成功。
         t.status = 'success'
         t.endedAt = Date.now()
         t.timer = null
@@ -291,53 +509,52 @@ export const useTaskStore = defineStore('task', () => {
     next()
   }
 
-  // start：忠实原型 runTask（2363–2389）。忙锁阻止并发写任务；构建日志行；展开抽屉；逐行回放。
+  // start：写操作的前端入口（runTask 委托到此）。
+  // 真实宿主：任务由后端三段式执行并经事件回流，此处只登记等效命令 + 展开抽屉，绝不伪造日志。
+  // 无宿主：按原型 buildScript 造日志行本地回放，仅用于演示。
   function start(args: string[], label?: string, meta: TaskMeta = { type: args[0] || 'task' }): boolean {
-    if (task.value && task.value.status === 'running') {
+    const lbl = label || args.join(' ')
+    cmdByLabel.set(lbl, args)
+    if (hasBackend()) {
+      expanded.value = true
+      return true
+    }
+    const busy = records.value.find((r) => r.status === 'running')
+    if (busy) {
       toast(TASK_BUSY, 'err', 2200)
       return false
     }
-    if (task.value && task.value.timer) clearTimeout(task.value.timer)
-    task.value = {
-      args,
-      label: label || args.join(' '),
-      meta,
-      lines: buildScript(args, meta),
-      status: 'running',
-      cursor: 0,
-      startedAt: Date.now(),
-      endedAt: null,
-      cancelled: false,
-      abortReason: null,
-      timer: null,
-    }
+    const t: TaskRecord = { ...newRecord(`demo-${++demoSeq}`, lbl, meta.type, false), args, meta, lines: buildScript(args, meta) }
+    records.value.unshift(t)
+    activeId.value = t.id
+    trim()
     expanded.value = true
-    play()
+    play(t)
     return true
   }
 
-  // cancel：忠实原型 cancelTask（2433–2443）。仅运行中可取消；清空定时器、置 cancelled、提示。
-  function cancel(): void {
-    const t = task.value
-    if (!t || t.status !== 'running') return
-    t.cancelled = true
-    if (t.timer) {
-      clearTimeout(t.timer)
-      t.timer = null
-    }
-    t.status = 'cancelled'
-    t.endedAt = Date.now()
-    t.abortReason = 'user'
-    toast(i18nT('task.cancelHint'), 'info', 2600)
+  return {
+    records,
+    task,
+    activeId,
+    expanded,
+    isRunning,
+    queueRunning,
+    runningBrief,
+    pendingBriefs,
+    visibleLines,
+    progress,
+    syncBoard,
+    appendLog,
+    setProgress,
+    finish,
+    cacheNote,
+    select,
+    start,
+    cancel,
+    withdraw,
+    loadHistory,
+    toggle,
+    setExpanded,
   }
-
-  function toggle(): void {
-    expanded.value = !expanded.value
-  }
-
-  function setExpanded(v: boolean): void {
-    expanded.value = v
-  }
-
-  return { task, expanded, isRunning, visibleLines, start, cancel, toggle, setExpanded }
 })

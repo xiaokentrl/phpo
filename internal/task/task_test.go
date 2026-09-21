@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -277,23 +278,36 @@ func TestCancelMidStepSurfacesCancelled(t *testing.T) {
 	}
 }
 
-// —— 单飞：并发提交第二个返回 ErrBusy ——
+// —— 串行执行：并发提交不报错但绝不并行（三段式互斥；后来的排队，见 queue_test.go）——
 
-func TestSingleFlightBusy(t *testing.T) {
+func TestSingleFlightNeverConcurrent(t *testing.T) {
 	m := NewManager(&capturingEmitter{})
 	release := make(chan struct{})
+	var secondStarted atomic.Bool
 	blocker := &testStep{BaseStep: BaseStep{StepName: "blk"}, rec: &recorder{},
 		onRun: func(context.Context) { <-release }}
+	second := &testStep{BaseStep: BaseStep{StepName: "second"}, rec: &recorder{},
+		onRun: func(context.Context) { secondStarted.Store(true) }}
 	go func() { m.Run(context.Background(), &Task{ID: "long", Steps: []Step{blocker}}) }()
-	// 等运行标志置起
 	for !m.Running() {
 		time.Sleep(time.Millisecond)
 	}
-	_, err := m.Run(context.Background(), &Task{ID: "second"})
-	if !errors.Is(err, ErrBusy) {
-		t.Fatalf("并发第二个任务应得 ErrBusy，得 %v", err)
+	done := make(chan struct{})
+	go func() {
+		m.Run(context.Background(), &Task{ID: "second", Steps: []Step{second}})
+		close(done)
+	}()
+	waitFor(t, "第二个任务入队", func() bool { return len(m.Board().Pending) == 1 })
+	time.Sleep(30 * time.Millisecond)
+	if secondStarted.Load() {
+		t.Fatal("两个任务不得并行执行")
 	}
 	close(release)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("前序任务结束后排队项必须接手")
+	}
 	for m.Running() {
 		time.Sleep(time.Millisecond)
 	}

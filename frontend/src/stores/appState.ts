@@ -2,7 +2,7 @@
 // 硬红线 4：本仓只由后端 state:changed / service:changed 事件落地（见 composables/useStateSync.ts），无本地乐观更新。
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
-import type { Backup, DockerStatus, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TrayPrefs } from '@/types'
+import type { Backup, DockerStatus, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TaskBoard, TrayPrefs } from '@/types'
 import { derivePaths } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 
@@ -77,6 +77,17 @@ export const useAppState = defineStore('appState', () => {
   // 由 useDockerPreflight 经 setDocker 落地；checked=false 表示尚未探测（不拦截）。
   const docker = reactive<DockerStatus & { checked: boolean }>({ status: 'unknown', canStart: false, warning: false, checked: false })
 
+  // tasks：任务队列详情（运行中一项 + 其后 FIFO 排队项），来自权威快照的 tasks 字段。
+  // 排队态由「所在分区」表达，不新增第 5 个任务状态（§0.3）；日志明细在 taskStore。
+  const tasks = reactive<TaskBoard>({ running: null, pending: [] })
+
+  // applyTaskBoard：整体替换队列（硬红线 4：只由快照落地，前端不自造排队项）。
+  // 快照缺省（老数据/mock 未带 tasks）时按空队列处理，避免残留脏队列。
+  function applyTaskBoard(b?: TaskBoard | null): void {
+    tasks.running = b?.running ?? null
+    tasks.pending.splice(0, tasks.pending.length, ...(b?.pending ?? []))
+  }
+
   function setDocker(s: DockerStatus): void {
     Object.assign(docker, s, { checked: true })
   }
@@ -100,6 +111,7 @@ export const useAppState = defineStore('appState', () => {
     for (const k of Object.keys(phpExtensions)) delete phpExtensions[k]
     for (const [k, v] of Object.entries(s.phpExtensions)) phpExtensions[k] = [...v]
     Object.assign(dirReady, s.dirReady)
+    applyTaskBoard(s.tasks)
   }
 
   // setServiceRunning：后端 service:changed 单服务增量落地。
@@ -117,5 +129,5 @@ export const useAppState = defineStore('appState', () => {
 
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, homeReady, docker, isServiceRunning, applySnapshot, setServiceRunning, setBackups, setDocker, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, homeReady, docker, tasks, isServiceRunning, applySnapshot, applyTaskBoard, setServiceRunning, setBackups, setDocker, phpVersions }
 })

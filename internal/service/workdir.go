@@ -10,12 +10,15 @@ import (
 
 	"phpo/internal/config"
 	"phpo/internal/model"
+	"phpo/internal/task"
 	"phpo/internal/template"
 )
 
-// prepareService 建目录 + 渲染默认配置；kind 无模板（如未支持种类）时仅建目录树
-func prepareService(env config.Env, kind model.ServiceKind, version string) error {
+// prepareService 建目录 + 渲染默认配置；kind 无模板（如未支持种类）时仅建目录树。
+// log 逐行吐真实落盘位置与新建/保留的配置，用户才能分辨「装到哪了、是否覆盖了我的改动」（可为 nil）。
+func prepareService(env config.Env, kind model.ServiceKind, version string, log task.StepLog) error {
 	root := env.RootFor(string(kind), version)
+	logf(log, model.LogDim, "工作目录: "+root)
 	// 版本子目录树（conf/logs/data/…，§5.13.2 隔离于 phpo 命名空间）
 	for _, sub := range config.VersionSubdirs[string(kind)] {
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
@@ -40,9 +43,11 @@ func prepareService(env config.Env, kind model.ServiceKind, version string) erro
 	if err != nil {
 		return err
 	}
+	kept := 0
 	for _, f := range files {
 		host := filepath.Join(env.PHPOHome, filepath.FromSlash(f.Path))
 		if _, err := os.Stat(host); err == nil {
+			kept++
 			continue // 已存在，不覆盖
 		}
 		if err := os.MkdirAll(filepath.Dir(host), 0o755); err != nil {
@@ -51,6 +56,17 @@ func prepareService(env config.Env, kind model.ServiceKind, version string) erro
 		if err := os.WriteFile(host, []byte(f.Content), 0o644); err != nil {
 			return fmt.Errorf("写入配置失败 %s: %w", host, err)
 		}
+		logf(log, model.LogOk, "写入默认配置 "+host)
+	}
+	if kept > 0 {
+		logf(log, model.LogDim, fmt.Sprintf("保留既有配置 %d 个（重装不覆盖用户改动）", kept))
 	}
 	return nil
+}
+
+// logf 向步骤日志写一行；未注入 logger（只读校验路径）时静默
+func logf(log task.StepLog, level model.LogLevel, text string) {
+	if log != nil {
+		log.Log(string(level), text)
+	}
 }

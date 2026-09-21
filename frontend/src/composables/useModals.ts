@@ -5,7 +5,7 @@ import { useAppState } from '@/stores/appState'
 import { usePreflight } from './usePreflight'
 import { useI18n } from './useI18n'
 import { toast } from './useToast'
-import { runTask, type TaskMeta } from './useTask'
+import { runTask, submitWrite, type TaskMeta } from './useTask'
 import { removeSite, hasBackend } from '@/api/site'
 import { startService as svcStart, stopService as svcStop, removeService as svcRemove } from '@/api/lifecycle'
 import { listBackups, createBackup, restoreBackup, deleteBackup, downloadBackup } from '@/api/backup'
@@ -89,11 +89,12 @@ export function useModals() {
       onConfirm: () => {
         const check = preflight('uninstall', { kind, version })
         if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-        if (!hasBackend()) {
-          runTask([kind, 'uninstall', version], `${t('svc.uninstall')} ${t(meta.titleKey)} ${version}`, { type: 'uninstall', kind, version })
-          return
-        }
-        svcRemove(kind, version).catch((e: unknown) => toast(String(e), 'err', 4600))
+        submitWrite(
+          [kind, 'uninstall', version],
+          `${t('svc.uninstall')} ${t(meta.titleKey)} ${version}`,
+          { type: 'uninstall', kind, version },
+          () => svcRemove(kind, version),
+        )
       },
     })
   }
@@ -110,8 +111,7 @@ export function useModals() {
     const check = preflight(action, { kind, version })
     if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
     const submit = (): void => {
-      if (!hasBackend()) { runTask(mockArgs, label, { type: action, kind, version }); return }
-      real(kind, version).catch((e: unknown) => toast(String(e), 'err', 4600))
+      submitWrite(mockArgs, label, { type: action, kind, version }, () => real(kind, version))
     }
     if (check.warnings.length) {
       modal.open(DangerConfirm, { title: label, warnings: check.warnings.map((w) => ({ text: w })), confirmLabel: t('common.confirm'), onConfirm: submit })
@@ -145,11 +145,12 @@ export function useModals() {
       onConfirm: () => {
         const check = preflight('site-remove', { domain })
         if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-        if (!hasBackend()) {
-          runTask(['site', 'remove', domain], `${t('sites.actions.delete')} ${domain}`, { type: 'site-remove', domain })
-          return
-        }
-        removeSite(domain).catch((e: unknown) => toast(String(e), 'err', 4600))
+        submitWrite(
+          ['site', 'remove', domain],
+          `${t('sites.actions.delete')} ${domain}`,
+          { type: 'site-remove', domain },
+          () => removeSite(domain),
+        )
       },
     })
   }
@@ -207,14 +208,16 @@ export function useModals() {
       onConfirm: () => {
         const check = preflight('restore', { file })
         if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
-        if (!hasBackend()) {
-          runTask(['restore', `${app.env.BACKUP_ROOT}/${file}`], `Restore ${file}`, { type: 'restore', file })
-          return
-        }
-        restoreBackup(file)
-          .then(refreshBackups)
-          .then(() => toast(t('backup.restored', { file }), 'ok', 2600))
-          .catch((e: unknown) => toast(String(e), 'err', 4600))
+        submitWrite(
+          ['restore', `${app.env.BACKUP_ROOT}/${file}`],
+          `Restore ${file}`,
+          { type: 'restore', file },
+          async () => {
+            await restoreBackup(file)
+            await refreshBackups()
+            toast(t('backup.restored', { file }), 'ok', 2600)
+          },
+        )
       },
     })
   }
@@ -225,11 +228,11 @@ export function useModals() {
     const check = preflight('backup', {})
     if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
     const submit = (): void => {
-      if (!hasBackend()) { runTask(['backup'], label, { type: 'backup' }); return }
-      createBackup()
-        .then((bf) => refreshBackups().then(() => bf))
-        .then((bf) => { if (bf) toast(t('backup.created', { file: bf.file }), 'ok', 2600) })
-        .catch((e: unknown) => toast(String(e), 'err', 4600))
+      submitWrite(['backup'], label, { type: 'backup' }, async () => {
+        const bf = await createBackup()
+        await refreshBackups()
+        if (bf) toast(t('backup.created', { file: bf.file }), 'ok', 2600)
+      })
     }
     if (check.warnings.length) {
       modal.open(DangerConfirm, { title: label, warnings: check.warnings.map((w) => ({ text: w })), confirmLabel: t('common.confirm'), onConfirm: submit })

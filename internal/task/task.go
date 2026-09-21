@@ -1,6 +1,6 @@
 // 任务引擎（三段式第二段：task）
 // §5.13.3 三阶段：Pre-Clean → Execute → Post-Verify；失败/取消回滚已执行步骤
-// 后端唯一权威：单飞（同一时刻仅一个运行中任务），完成回调 Apply=applyStateChange
+// 后端唯一权威：串行执行（同一时刻仅一个运行中任务，后来者 FIFO 排队），完成回调 Apply=applyStateChange
 package task
 
 import (
@@ -20,34 +20,38 @@ type Task struct {
 	Apply    func() error                    // applyStateChange：落地并触发 state:changed
 }
 
-// Run 同步执行一个任务，返回终态（由 Manager 提供单飞与事件发射）
+// Run 同步执行一个任务：空闲即执行，忙则 FIFO 排队（由 Manager 移交执行权），
+// 返回终态。未获执行权的任务（嵌套提交 / 重复排队 / 排队中被撤回）不发事件、不落账。
 func (m *Manager) Run(parent context.Context, t *Task) (model.TaskStatus, error) {
-	ctx, release, err := m.acquire(t.ID)
-	defer release()
+	ctx, release, err := m.acquire(parent, t)
 	if err != nil {
-		return "", err
+		return model.TaskCancelled, err
 	}
+	defer release()
 
 	start := time.Now()
-	logger := &stepLogger{em: m.em, id: t.ID}
-	Logf(m.em, t.ID, model.LogMeta, "▶ "+label(t))
+	sink := &logSink{}
+	em := &recordingEmitter{em: m.em, sink: sink}
+	logger := &stepLogger{em: em, id: t.ID}
+	Logf(em, t.ID, model.LogMeta, "▶ "+label(t))
 
-	status, runErr := m.execute(ctx, t, logger)
+	status, runErr := m.execute(ctx, t, logger, em)
 
 	// Cleanup 无论成败/取消必执行（如清空临时目录）
 	for _, s := range t.Steps {
 		s.Cleanup()
 	}
 
-	Donef(m.em, t.ID, status, time.Since(start))
+	Donef(em, t.ID, status, time.Since(start))
+	m.record(t, status, runErr, time.Since(start), sink)
 	return status, runErr
 }
 
-func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger) (model.TaskStatus, error) {
+func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger, em Emitter) (model.TaskStatus, error) {
 	// Pre-Clean
 	if t.PreClean != nil {
 		if err := t.PreClean(ctx); err != nil {
-			Logf(m.em, t.ID, model.LogErr, "预清理失败: "+err.Error())
+			Logf(em, t.ID, model.LogErr, "预清理失败: "+err.Error())
 			return model.TaskFailed, err
 		}
 	}
@@ -60,27 +64,28 @@ func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger) (mod
 			m.rollback(completed)
 			return model.TaskCancelled, ctx.Err()
 		}
-		Logf(m.em, t.ID, model.LogDim, "步骤 "+s.Name())
+		Logf(em, t.ID, model.LogDim, "步骤 "+s.Name())
 		if err := s.Execute(ctx, logger); err != nil {
 			// 步骤执行中被取消（如 pull 阻塞时收到取消）：按取消处理，回滚含当前步
 			if ctx.Err() != nil {
-				Logf(m.em, t.ID, model.LogMeta, "⏹ 已取消: "+s.Name())
+				Logf(em, t.ID, model.LogMeta, "⏹ 已取消: "+s.Name())
 				m.rollback(append(completed, s))
 				return model.TaskCancelled, ctx.Err()
 			}
-			Logf(m.em, t.ID, model.LogErr, s.Name()+" 失败: "+err.Error())
+			Logf(em, t.ID, model.LogErr, s.Name()+" 失败: "+err.Error())
 			m.rollback(append(completed, s))
 			return model.TaskFailed, err
 		}
 		completed = append(completed, s)
-		Progressf(m.em, t.ID, i+1, total)
-		Logf(m.em, t.ID, model.LogOk, s.Name()+" 完成")
+		Progressf(em, t.ID, i+1, total)
+		m.setProgress(i+1, total)
+		Logf(em, t.ID, model.LogOk, s.Name()+" 完成")
 	}
 
 	// Post-Verify
 	if t.Verify != nil {
 		if err := t.Verify(ctx); err != nil {
-			Logf(m.em, t.ID, model.LogErr, "核验失败: "+err.Error())
+			Logf(em, t.ID, model.LogErr, "核验失败: "+err.Error())
 			m.rollback(completed)
 			return model.TaskFailed, err
 		}
@@ -89,7 +94,7 @@ func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger) (mod
 	// applyStateChange
 	if t.Apply != nil {
 		if err := t.Apply(); err != nil {
-			Logf(m.em, t.ID, model.LogErr, "状态落地失败: "+err.Error())
+			Logf(em, t.ID, model.LogErr, "状态落地失败: "+err.Error())
 			m.rollback(completed)
 			return model.TaskFailed, err
 		}

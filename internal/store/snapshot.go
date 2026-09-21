@@ -12,6 +12,10 @@ import (
 
 func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	snap := model.NewSnapshot()
+	// 任务队列详情在运行态库之前给出：首启未建库时也要能显示「正在跑的第一个任务」
+	if s.board != nil {
+		snap.Tasks = s.board()
+	}
 	if s.env != nil {
 		snap.Env = s.env.FlatEnv() // 配置真相来自 ConfigStore（YAML），SQLite 不再持有 env 表
 		home, www := s.env.RootsReady()

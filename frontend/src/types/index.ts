@@ -103,6 +103,22 @@ export interface TrashEntry {
   expiresAt: string
   expired: boolean
 }
+// —— 任务队列（与 internal/model/task.go 逐字对齐；§0.3 任务状态冻结为 4 个）——
+export type TaskStatus = 'running' | 'success' | 'failed' | 'cancelled'
+export interface TaskBrief {
+  id: string
+  label: string
+  type: string
+  step: number // 已完成步骤数
+  total: number
+  startedAt: string
+}
+// TaskBoard 队列详情：所在分区（running / pending）即排队态，不设第 5 个状态
+export interface TaskBoard {
+  running: TaskBrief | null
+  pending: TaskBrief[]
+}
+
 export interface Operation {
   ts: string
   actor: string
@@ -111,6 +127,10 @@ export interface Operation {
   status: string
   durationMs: number
   error?: string
+  // 任务账本三项：由后端在任务终态写入，供历史列表展示与失败原因回放
+  taskId?: string
+  label?: string
+  logs?: string
 }
 
 // —— 离线缓存（T606 / §5.14.10）——
@@ -198,6 +218,7 @@ export interface StateSnapshot {
   env: Record<string, string>
   phpExtensions: Record<string, string[]>
   dirReady: Record<string, boolean>
+  tasks: TaskBoard
 }
 
 // DockerStatus 与后端 model.DockerStatus（internal/model/dto.go）JSON 逐字对齐；
