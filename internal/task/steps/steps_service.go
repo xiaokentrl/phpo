@@ -31,6 +31,11 @@ func (d dockerBackend) LoadImage(ctx context.Context, tarPath string) error {
 	return d.cli.ImageLoad(ctx, tarPath)
 }
 
+// ImageExists 探测镜像是否已在本地 Docker store：未命中离线缓存时据此免拉取就地重建缓存
+func (d dockerBackend) ImageExists(ctx context.Context, ref string) (bool, error) {
+	return d.cli.ImageExists(ctx, ref)
+}
+
 // Download 拉取远程文件到 dstPath（扩展包 apk/pecl 用；M6 T601 复用）
 func (d dockerBackend) Download(ctx context.Context, url, dstPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

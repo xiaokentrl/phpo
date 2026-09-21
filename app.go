@@ -553,12 +553,17 @@ func (a *App) HomeVerify(ctx context.Context, home, www string) (model.HomeVerif
 	return a.container.WizardService.HomeVerify(ctx, home, www)
 }
 
-// HomeEnsure 装机确认：三段式创建工作目录子树并落地派生 env + dirReady，随后广播 state:changed
+// HomeEnsure 装机确认：三段式创建工作目录子树并落地派生 env + dirReady，随后广播 state:changed。
+// 任务成功后立刻重绑对象图（此时队列已空闲）：装配期分发给各门面的 config.Env 是值拷贝，
+// 不重绑则离线缓存根、临时目录、vhost 目录与容器挂载宿主路径仍指向装机前的默认根。
 func (a *App) HomeEnsure(ctx context.Context, home, www string) error {
 	if a.container.WizardService == nil {
 		return errNotReady
 	}
-	return a.container.WizardService.HomeEnsure(ctx, home, www)
+	if err := a.container.WizardService.HomeEnsure(ctx, home, www); err != nil {
+		return err
+	}
+	return a.container.Rebind(ctx)
 }
 
 // HomeDefaults 返回后端已解析的工作目录默认值（config.yaml 已存根目录 > ~/phpo 默认），供装机向导预填与浏览起始目录。

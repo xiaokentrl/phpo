@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"phpo/internal/config"
@@ -81,7 +82,11 @@ func (s *WizardService) HomeEnsure(ctx context.Context, home, www string) error 
 			&task.FuncStep{StepName: "创建工作目录子树", Exec: func(_ context.Context, log task.StepLog) error {
 				lines, fsErrs := ensureTree(h, w)
 				for _, ln := range lines {
-					log.Log(string(model.LogOk), ln)
+					lv := model.LogOk
+					if strings.HasPrefix(ln, "⚠") {
+						lv = model.LogDim // 告警行降级为次要信息，不计入错误
+					}
+					log.Log(string(lv), ln)
 				}
 				if len(fsErrs) > 0 {
 					return fmt.Errorf("%s", fsErrs[0])
@@ -136,6 +141,9 @@ func ensureTree(home, www string) (lines, errsList []string) {
 		probe("子目录", filepath.Join(hRoot, filepath.FromSlash(sd.Path)))
 	}
 	probe("WWW_ROOT", wRoot)
+	if w := gitWorkTreeWarning(hRoot); w != "" {
+		lines = append(lines, w)
+	}
 	return lines, errsList
 }
 
@@ -170,7 +178,27 @@ func probeTree(home, www string) (lines, errsList []string) {
 		check("子目录", filepath.Join(hRoot, filepath.FromSlash(sd.Path)))
 	}
 	check("WWW_ROOT", wRoot)
+	if w := gitWorkTreeWarning(hRoot); w != "" {
+		lines = append(lines, w)
+	}
 	return lines, errsList
+}
+
+// gitWorkTreeWarning 工作根位于 git 工作树内时的告警行（自工作根向上找 .git，目录或文件均算——worktree/submodule 的 .git 是文件）；
+// 不在工作树内返回空串。**只告警不阻断**（§0.2-16 能警告的不要阻止）：工作目录里的镜像/数据/日志会污染仓库工作区，
+// 但把选择权留给用户——有人刻意把 PHPO_HOME 放在项目内（如 画像 D）。返回的行以 ⚠ 起始，供前端按告警着色。
+func gitWorkTreeWarning(root string) string {
+	abs := config.ExpandHome(root)
+	for d := abs; ; {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			return fmt.Sprintf("⚠ %s 位于 git 工作树 %s 内：镜像、数据与日志会污染仓库工作区，建议改用仓库外的目录", filepath.ToSlash(abs), filepath.ToSlash(d))
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return ""
+		}
+		d = parent
+	}
 }
 
 // nearestExistingDir 自父级向上找第一个已存在的目录（文件系统根恒存在，故必返回非空）

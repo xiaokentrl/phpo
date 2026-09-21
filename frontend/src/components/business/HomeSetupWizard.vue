@@ -187,7 +187,7 @@ async function doVerify(): Promise<void> {
     const r = await homeVerify(h, w)
     if (r === null) { await runDemoVerify(h, w); return }
     const segs: Seg[] = [promptSeg(h, w)]
-    for (const ln of r.lines) segs.push({ c: 'ok', x: ln })
+    for (const ln of r.lines) segs.push({ c: ln.startsWith('⚠') ? 'warn' : 'ok', x: ln })
     for (const e of r.errors) segs.push({ c: 'err', x: e })
     verifyLog.value = segs
     verified.value = r.ok

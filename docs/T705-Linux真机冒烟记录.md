@@ -22,7 +22,7 @@
 | 6 | 升级 | `pkexec dpkg -i …0.1.1.deb` | ✅ 覆盖 0.1.0→0.1.1，EXIT=0 |
 | 7 | 回滚（包级） | `pkexec dpkg -i …0.1.0.deb` | ✅ dpkg 降级 0.1.1→0.1.0（提示 downgrading），EXIT=0 |
 | 8 | 卸载 | `pkexec dpkg -r phpo` | ✅ 系统文件移除、dpkg 记录清空 |
-| 9 | 数据保留（硬红线：不破坏用户数据） | 卸载前后对比 | ✅ 卸载仅删系统文件；用户数据目录（`~/.config/phpo/`）、`~/phpo/`（PHPO_HOME）不在包内，`dpkg -r` 不触碰 |
+| 9 | 数据保留（硬红线：不破坏用户数据） | 卸载前后对比 | ✅ 卸载仅删系统文件；`<用户数据目录>/`（Linux `~/.config/phpo/`）与 `./`（PHPO_HOME，本机该次取默认值 `~/phpo`）均不在包内，`dpkg -r` 不触碰 |
 | 10 | GUI 真机启动 | `timeout 8 build/bin/phpo` | ✅ EXIT=124（存活至超时被杀），AssetServer 伺服 `index.html`+`OverviewView`（默认路由渲染），SIGTERM 干净退出 |
 | 11 | 应用内升级回滚逻辑 | `go test ./internal/updater/…` | ✅ ok（marker + `RecoverOnStartup` + SHA256/Ed25519 双校验，T604 覆盖） |
 

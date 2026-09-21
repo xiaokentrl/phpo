@@ -3,7 +3,7 @@ package config
 
 import "path/filepath"
 
-// OfflineImageTar ~/phpo/offline/{kind}/{version}/image.tar
+// OfflineImageTar PHPO_HOME 根下 ./offline/{kind}/{version}/image.tar（根由装机向导选定，见 §0.1.1）
 func (e Env) OfflineImageTar(kind, version string) string {
 	return filepath.ToSlash(e.OfflineRoot + "/" + kind + "/" + version + "/image.tar")
 }
@@ -18,7 +18,7 @@ func (e Env) OfflineExtDir(kind, version, extType string) string {
 	return filepath.ToSlash(e.OfflineRoot + "/" + kind + "/" + version + "/" + extType)
 }
 
-// TempExtDir 临时目录 ~/phpo/{kind}/{version}/ext/（任务结束必清空）
+// TempExtDir 临时目录（PHPO_HOME 根下）./{kind}/{version}/ext/（任务结束必清空）
 func (e Env) TempExtDir(kind, version string) string {
 	return filepath.ToSlash(e.RootFor(kind, version) + "/ext")
 }

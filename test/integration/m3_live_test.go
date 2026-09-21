@@ -30,7 +30,7 @@ type nopEmitter struct{}
 
 func (nopEmitter) Emit(string, any) {}
 
-// newLiveGraph 用临时目录构造真实对象图，避免污染 ~/phpo 与用户数据目录
+// newLiveGraph 用临时目录构造真实对象图，避免污染真机工作目录（PHPO_HOME，默认值 `~/phpo`）与用户数据目录
 func newLiveGraph(t *testing.T) (*service.AppService, *service.LifecycleService, *engine.Client) {
 	t.Helper()
 	home := t.TempDir()

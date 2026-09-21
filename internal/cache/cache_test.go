@@ -41,6 +41,14 @@ type fakeBackend struct {
 	pulled, loaded, saved, downloaded []string
 	saveData, downloadData            []byte
 	pullErr, saveErr, loadErr, dlErr  error
+	exists                            map[string]bool // 本地 Docker store 已有的镜像引用
+	existsErr                         error
+	existsCalls                       []string
+}
+
+func (f *fakeBackend) ImageExists(_ context.Context, ref string) (bool, error) {
+	f.existsCalls = append(f.existsCalls, ref)
+	return f.exists[ref], f.existsErr
 }
 
 func (f *fakeBackend) PullImage(_ context.Context, ref string) error {
@@ -172,6 +180,56 @@ func TestEnsureImageCorruptedFallback(t *testing.T) {
 	}
 	if !contains(eventNames(cap), "cache:corrupted") {
 		t.Fatalf("应发 cache:corrupted，得 %v", eventNames(cap))
+	}
+}
+
+// —— 镜像：缓存未命中但本地 Docker store 已有镜像 → 免网络 save 后提升（断网/内网机器重建缓存的唯一路径）——
+
+func TestEnsureImageMissRebuildsFromLocalImage(t *testing.T) {
+	m, env, cap, fb := newMgr(t)
+	fb.exists = map[string]bool{"nginx:alpine": true}
+	if err := m.EnsureImage(context.Background(), "nginx", "alpine", "nginx:alpine"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fb.pulled) != 0 {
+		t.Fatalf("本地已有镜像不得走网络拉取，得 pulled=%v", fb.pulled)
+	}
+	if len(fb.saved) != 1 {
+		t.Fatalf("应就地 save 一次，得 saved=%v", fb.saved)
+	}
+	if _, err := os.Stat(env.OfflineImageTar("nginx", "alpine")); err != nil {
+		t.Fatalf("save 后应提升进离线缓存: %v", err)
+	}
+	if _, err := os.Stat(env.TempExtDir("nginx", "alpine")); !os.IsNotExist(err) {
+		t.Fatal("提升后临时目录必须清空")
+	}
+	if got := missAction(cap); got != "local" {
+		t.Fatalf("cache:miss 的 action 应为 local，得 %q", got)
+	}
+}
+
+// missAction 取首个 cache:miss 事件的 action（区分真的走了网络还是就地复用本地镜像）
+func missAction(cap *capEmitter) string {
+	for _, e := range cap.Capture() {
+		if e.Name == "cache:miss" {
+			if ev, ok := e.Payload.(model.CacheMissEvent); ok {
+				return ev.Action
+			}
+		}
+	}
+	return ""
+}
+
+// 本地镜像探测失败必须如实报错，不得静默回退网络（否则镜像引擎异常会被掩盖成拉取失败）
+func TestEnsureImagePropagatesLocalImageProbeError(t *testing.T) {
+	m, _, _, fb := newMgr(t)
+	boom := errors.New("docker 引擎不可用")
+	fb.existsErr = boom
+	if err := m.EnsureImage(context.Background(), "redis", "8", "redis:8"); !errors.Is(err, boom) {
+		t.Fatalf("应上报探测错误，得 %v", err)
+	}
+	if len(fb.pulled) != 0 {
+		t.Fatal("探测失败不得继续拉取")
 	}
 }
 

@@ -25,10 +25,11 @@ func (NopEmitter) Emit(string, any) {}
 
 // DockerBackend 网络/引擎侧操作，M3 由 engine 实现；单测注入 fake
 type DockerBackend interface {
-	PullImage(ctx context.Context, ref string) error         // 未命中：拉取到本地 store
-	SaveImage(ctx context.Context, ref, dstTar string) error // docker save 到临时 tar
-	LoadImage(ctx context.Context, tarPath string) error     // 命中：零网络 docker load
-	Download(ctx context.Context, url, dstPath string) error // 扩展包下载（apk/pecl）
+	PullImage(ctx context.Context, ref string) error           // 未命中：拉取到本地 store
+	SaveImage(ctx context.Context, ref, dstTar string) error   // docker save 到临时 tar
+	LoadImage(ctx context.Context, tarPath string) error       // 命中：零网络 docker load
+	ImageExists(ctx context.Context, ref string) (bool, error) // 未命中先探本地 store，已有则免拉取
+	Download(ctx context.Context, url, dstPath string) error   // 扩展包下载（apk/pecl）
 }
 
 // Manager 缓存编排入口

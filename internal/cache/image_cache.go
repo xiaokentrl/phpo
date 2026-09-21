@@ -1,4 +1,4 @@
-// 镜像安装编排（§5.14.3）：查→命中 load 零网络 / 未命中 pull→save→promote→清临时
+// 镜像安装编排（§5.14.3）：查→命中 load 零网络 / 未命中先探本地镜像（已有即免拉取）→save→promote→清临时
 package cache
 
 import (
@@ -28,8 +28,17 @@ func (m *Manager) EnsureImage(ctx context.Context, kind, version, ref string) er
 		return nil
 	}
 
-	// 未命中（含损坏回退）：走网络下载 + 提升 + 必清临时目录
-	m.emitMiss(kind, version, "pull")
+	// 未命中（含损坏回退）：先探本地 Docker store——已有镜像即就地 save 提升，全程不碰网络
+	// （断网/内网机器缓存丢失后重建的唯一路径）；确实没有才拉取。走网络时仍遵守必清临时目录。
+	has, err := m.db.ImageExists(ctx, ref)
+	if err != nil {
+		return err
+	}
+	action := "local"
+	if !has {
+		action = "pull"
+	}
+	m.emitMiss(kind, version, action)
 	reason := ReasonCompileFailed
 	// 取消优先于失败：ctx 被取消时按必清时机 3（cancelled）上报
 	defer func() {
@@ -46,8 +55,10 @@ func (m *Manager) EnsureImage(ctx context.Context, kind, version, ref string) er
 	}
 	tmpTar := filepath.Join(tmpDir, "image.tar")
 
-	if err := m.db.PullImage(ctx, ref); err != nil {
-		return err
+	if !has {
+		if err := m.db.PullImage(ctx, ref); err != nil {
+			return err
+		}
 	}
 	if err := m.db.SaveImage(ctx, ref, tmpTar); err != nil {
 		return err

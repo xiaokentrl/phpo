@@ -50,7 +50,10 @@ func (f *fakeBE) LoadImage(_ context.Context, tar string) error {
 	f.loaded = append(f.loaded, tar)
 	return f.loadErr
 }
-func (f *fakeBE) Download(_ context.Context, url, dst string) error { return nil }
+
+// ImageExists 恒报「本地无镜像」：这些用例锁的是「未命中 → 走网络 pull」路径，缓存提升断言与 action 无关
+func (f *fakeBE) ImageExists(_ context.Context, ref string) (bool, error) { return false, nil }
+func (f *fakeBE) Download(_ context.Context, url, dst string) error       { return nil }
 
 // pulledSnapshot 返回当前已发起 pull 的引用快照（用于测试同步点）
 func (f *fakeBE) pulledSnapshot() []string {

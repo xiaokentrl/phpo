@@ -1,4 +1,4 @@
-// 备份领域模型：~/phpo/backups/backup-*.tar.gz 的归档条目描述（前端 BackupView 直读该形状）
+// 备份领域模型：PHPO_HOME 根下 ./backups/backup-*.tar.gz 的归档条目描述（前端 BackupView 直读该形状）
 package model
 
 // BackupFile 一个备份归档的展示条目；Size/At 已格式化为人类可读串，Items 为归档顶层组数

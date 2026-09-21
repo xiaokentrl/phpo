@@ -74,12 +74,24 @@ func TestHomeVerify_CreatesNothing(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("验证阶段落了盘，base 下出现 %d 个条目", len(entries))
 	}
-	if len(res.Lines) != len(config.HomeSubdirs)+2 {
-		t.Fatalf("预检行数=%d，期望 %d", len(res.Lines), len(config.HomeSubdirs)+2)
+	// 预检行数 = PHPO_HOME + 各子目录 + WWW_ROOT（git 工作树告警行另算，不计入）
+	if got := len(withoutWarnLines(res.Lines)); got != len(config.HomeSubdirs)+2 {
+		t.Fatalf("预检行数=%d，期望 %d", got, len(config.HomeSubdirs)+2)
 	}
 	if !strings.Contains(res.Lines[0], "确认后将创建") {
 		t.Fatalf("不存在的目录应标「确认后将创建」，得 %q", res.Lines[0])
 	}
+}
+
+// withoutWarnLines 剔除 ⚠ 告警行（告警不参与预检行数与 OK 判定）
+func withoutWarnLines(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, ln := range lines {
+		if !strings.HasPrefix(ln, "⚠") {
+			out = append(out, ln)
+		}
+	}
+	return out
 }
 
 // TestHomeVerify_ExistingDirsReportedReady 已存在且可写的目录报 ✓，不误报待创建
@@ -105,7 +117,7 @@ func TestHomeVerify_ExistingDirsReportedReady(t *testing.T) {
 	if !res.OK {
 		t.Fatalf("已就绪目录应全部通过，得 errors=%v", res.Errors)
 	}
-	for _, ln := range res.Lines {
+	for _, ln := range withoutWarnLines(res.Lines) {
 		if !strings.HasPrefix(ln, "✓ ") {
 			t.Fatalf("已存在目录应报 ✓，得 %q", ln)
 		}
@@ -158,6 +170,51 @@ func TestHomeEnsure_CreatesTreeOnConfirm(t *testing.T) {
 	if st.rootsCalls != 1 {
 		t.Fatalf("确认后应落库一次，SetRoots 调用 %d 次", st.rootsCalls)
 	}
+}
+
+// TestGitWorkTreeWarning 工作根落在 git 工作树内只告警、不阻断（最小限制原则 §3.2 原则 7 / §0.2-16）：
+// 预检行以 ⚠ 出现且 OK 仍为 true、Errors 仍为空；不在工作树内则整条告警缺席。
+func TestGitWorkTreeWarning(t *testing.T) {
+	base := t.TempDir()
+	home := filepath.Join(base, "phpo")
+	if err := os.MkdirAll(filepath.Join(base, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if w := gitWorkTreeWarning(home); w == "" || !strings.HasPrefix(w, "⚠") {
+		t.Fatalf("git 工作树内应告警，得 %q", w)
+	}
+	if w := gitWorkTreeWarning("/outside-any-repo"); w != "" {
+		t.Fatalf("非工作树路径不应告警，得 %q", w)
+	}
+
+	svc, _, em := newWizardSvc(t)
+	www := filepath.Join(base, "www")
+	res, err := svc.HomeVerify(context.Background(), home, www)
+	if err != nil {
+		t.Fatalf("HomeVerify err: %v", err)
+	}
+	if !res.OK || len(res.Errors) > 0 {
+		t.Fatalf("git 工作树告警不得升级为错误，得 %+v", res)
+	}
+	if !hasWarnLine(res.Lines) {
+		t.Fatalf("预检应含 ⚠ 告警行，得 %v", res.Lines)
+	}
+
+	if err := svc.HomeEnsure(context.Background(), home, www); err != nil {
+		t.Fatalf("git 工作树内 HomeEnsure 应成功: %v", err)
+	}
+	if !hasWarnLine(em.logs) {
+		t.Fatalf("确认建树的步骤日志应含 ⚠ 告警行，得 %v", em.logs)
+	}
+}
+
+func hasWarnLine(lines []string) bool {
+	for _, ln := range lines {
+		if strings.HasPrefix(ln, "⚠") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestHomeVerify_RejectsTraversal(t *testing.T) {
