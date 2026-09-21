@@ -6,6 +6,18 @@
 /frontend/node_modules/
 /frontend/bindings/
 
+# PHPO_HOME 运行时数据（默认 ~/phpo 与本仓库同路径，app 真机运行会写入仓库根）
+# 全表见 AGENTS.md §4.2；这些目录由装机向导/服务安装产出，不属源码
+/nginx/
+/php/
+/mysql/
+/pgsql/
+/redis/
+/offline/
+/backups/
+/trash/
+/www/
+
 # 本地数据与密钥（签名私钥绝不入库；公钥 build/signing/public.key 入库）
 *.key
 *.pem
