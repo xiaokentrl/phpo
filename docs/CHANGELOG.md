@@ -1,10 +1,23 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.30`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.31`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
 ## [未发布 / M7 收尾]
+
+- **nginx 单例容器名不再写死 `alpine`：vhost 的 `nginx -t` / `reload` 改为每次调用现取（全仓写死路径排查的三项收口）**：`internal/app/di.go` 装配期把容器名定成 `dockerutil.ContainerName("nginx", "alpine")`，而 **nginx 版本由用户开放输入**（§1.6 仅做路径安全校验；仓库自己的建议表除 `alpine` 外还列着 `1.25`）。装了非 `alpine` 版本的机器上，`phpo-nginx-alpine` 是一个**不存在**的容器，`nginx -t` 恒失败 ⇒ 硬红线 2（vhost 写入前必须 `nginx -t` 通过）以「永远校验不过」的形式失效；`nginx -s reload` 同理静默打空。
+  - **实现**：`internal/vhost` 新增 `ContainerFunc func() (string, error)`，`ExecValidator` / `ExecReloader` 由「持有固定 args」改为「持有 `argsF func() ([]string, error)`」——`NewNginxTValidator` / `NewNginxReloader` 每次调用先解析容器名再拼 `docker exec <name> nginx [-t | -s reload]`，解析失败**直接上抛且不再起进程**（不把「解析不到」当作空命令跑掉）；原 `NewExecValidator` / `NewExecReloader` 保留固定命令语义（把 args 一次性 `append` 拷贝后闭包返回），live 用例用 `fixedContainer(name)` 注入自带版本。装配侧新增 `nginxContainerOf(st)`：读 `store.BuildSnapshot()` 的 `Installed[nginx][0]`，**快照报错上抛**、**未安装即报「nginx 未安装，无法校验或重载 vhost」**，刻意不回落到任何默认容器名（回落等于把这条链重新写死）。
+  - **安全性已核**：`AppService.healStep` 的 `ReconcileServe` 排在 `lifecycle.Install`（内含 `commit` 落 `SetInstalled`）之后，解析器看得见刚装的版本；nginx 缺席时 `siteServeReady` 与 preflight 本就跳过 vhost 写入，新的报错路径替换掉的是同样会失败的 `docker exec` 空容器调用，不新增失败面。
+  - **同轮另两处（§0.1.1 口径）**：`build/darwin/entitlements.plist` 的注释写死 `~/phpo` 且残留**已废弃**的 `~/.phpo`，改为「工作目录（PHPO_HOME，装机向导可指向任意目录，默认值 `~/phpo`）」+ 用户数据目录真实 macOS 路径；`frontend/src/stores/appState.ts` 的 demo env 种子重复了一遍 `~/phpo`/`~/www` 字面量，改用 `derivePaths(DEFAULT_HOME, DEFAULT_WWW)`（与原型第 1242 行同口径，常量赋值本身属 §0.1.1 豁免①）。
+  - **排查全景（未改的部分，避免下次重复怀疑）**：`~/` 出现处逐条核过——`config.DefaultHome`/`DefaultWWW`、`frontend/src/utils/path.ts` 常量、`config.example.yaml`、locales（均带「默认」字样）、容器内挂载目标 `/var/www`、`/etc/nginx/sites`、`/usr/local/etc/*`（`paths.go`，容器视角本就该绝对）、`/etc/hosts`、`build/linux/nfpm.yaml` 的 `/usr/bin/phpo` 与 NSIS 安装路径（OS/包固定）、`engine/registry.go` 镜像引用（由 version 派生）、测试 fixture 与 mock、冻结原型 SSOT——**全部合法**。
+  - **新增单测**：`internal/vhost/nginx_exec_test.go` 4 例（两个执行器各锁「两次调用解析到两个不同容器名 ⇒ exec 参数必须跟着变」+「解析报错必须原样上抛且 runner 零调用」）；`internal/app/nginx_container_test.go` 3 例（跟随快照 / 未装即拒且回落不存在默认名 / 快照报错上抛）。改前红（`undefined: nginxContainerOf` 等），改后全绿。
+  - **未触碰**：事件名仍 **17**、preflight action 仍 **17**、8 条硬红线、端口/密码/版本策略、AGENTS.md（冻结 v2.9.6）、`config.yaml` 契约；无新依赖、无前端文案改动（i18n 仍 zh↔en 各 **568** 键）。
+  - **遗留提醒（仅记录未动）**：vhost 的校验/重载是 `exec` 命令行 `docker`（非 Docker SDK），因此依赖 `docker` 在 `PATH` 上；这与 §2 选型「容器引擎 Docker SDK」存在口径差，属既有实现选择，本轮不做越界重构。
+  - **校验**：`gofmt -l .`（除 `frontend/`）无输出、`go vet ./...` 通过、`go build ./...`、`go test ./...` 全绿、四个 `check-*` 全绿、`pnpm exec vue-tsc --noEmit` 退出 0。**未做真机验收**：受「删旧包不出新包」裁定限制，本轮未出包，装非 `alpine` nginx 后的 GUI 走查待下次出包补做。
+
+- **版本号口径：`0.1.31` 已随 `release:local` 自增并出包，本文档同步为单一真实来源**：`scripts/bump-version.sh` 由 `release:local` 触发，patch +1 同步写 `wails.json` 与 `build/linux/nfpm.yaml`，此前只落代码未回写本文档首行的「当前应用版本」。现补齐为 `0.1.31`，并按裁定**保留** `build/bin/` 现有产物（`phpo_0.1.31_amd64.deb` / `phpo-0.1.31.x86_64.rpm`）不重出；同时把 `frontend/dist/index.html` 还原为 391 字节 tracked 占位、删除 gitignore 的 `dist/assets/` 残留（构建后必须还原，AGENTS.md §4.1）。**注意**：`0.1.31` 出包时点是提交 `6a90def` 之后，**不含**上一节的 nginx 容器名修复。
+
 
 - **建站失败连 hosts 一起回滚：`steps.AddHosts` 补齐缺失的 `Rollback`**：删站侧回收 hosts（缺口 ④）落地后，两侧并不对称——`AddHosts` 只有 `Execute`，`Rollback` 落到 `task.BaseStep` 的空实现，而 `steps_site.go` 文件头第 1 行与 `task/step.go` 第 2 行都写着「各自带回滚 / 每个 Step 负责自身可回滚」。建站步骤序是 建目录 →（写 vhost）→ **加 hosts** →（发布站点端口到 Nginx），末步失败时任务逆序回滚会撤目录、删 vhost，**却把刚写进 `/etc/hosts` 的那行留下** ⇒ 一个没建成的站点在系统 hosts 里长期解析到 127.0.0.1，违反 §0.2-19「任何操作失败必须回滚」与 §5.13.13「不留无名资源」。复现（先落失败用例）：注入恒失败的 `NginxPublisher` 后 `SiteService.Add` 返回错误，hosts 文件实测残留 `127.0.0.1\tdemo.test`。
   - **实现**（`internal/task/steps/steps_site.go`）：新增 `added bool` 字段，**只在 `hosts.Result.Changed` 为真时置真**，`Rollback` 据此调 `hosts.Remove(s.domain)` 并把错误原样上抛（由 `task.Manager.rollback` 聚合记账，单个回滚错误不中断其余回滚）。两条分支刻意不回滚：**「条目已在，幂等跳过」**——那行可能是用户手工写的，撤它等于顺手改坏别人的解析；**提权被拒 / 写入报错**——本步什么都没写，且这两档只记 `err` 级日志、不阻断建站（§3.2 原则 7）。
