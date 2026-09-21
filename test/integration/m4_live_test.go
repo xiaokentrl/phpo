@@ -87,8 +87,8 @@ func TestM4_Live(t *testing.T) {
 		vhost.New(env),
 		&fakeHosts{},
 		engine.NewTrash(home+"/trash"),
-		vhost.NewNginxTValidator(nginxContainer), // 真实 docker exec nginx -t
-		vhost.NewNginxReloader(nginxContainer),   // 真实 docker exec nginx -s reload
+		vhost.NewNginxTValidator(fixedContainer(nginxContainer)), // 真实 docker exec nginx -t
+		vhost.NewNginxReloader(fixedContainer(nginxContainer)),   // 真实 docker exec nginx -s reload
 		tm, em, env,
 	)
 
@@ -155,6 +155,11 @@ func TestM4_Live(t *testing.T) {
 	if sites, _ := st.ListSites(); len(sites) != 0 {
 		t.Fatalf("删站后库中不应有站点: %+v", sites)
 	}
+}
+
+// fixedContainer 恒定容器名解析器：live 用例自带 nginx 版本，无需查快照
+func fixedContainer(name string) vhost.ContainerFunc {
+	return func() (string, error) { return name, nil }
 }
 
 // waitNginxReady 轮询直到容器内 nginx master 写出 pidfile（最多 ~30s），

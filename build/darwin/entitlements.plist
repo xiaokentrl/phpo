@@ -2,7 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 不开启 App Sandbox：phpo 需访问 ~/phpo、~/.phpo 与 Docker socket -->
+	<!-- 不开启 App Sandbox：phpo 需访问工作目录（PHPO_HOME，装机向导可指向任意目录，默认值 ~/phpo）、
+	     用户数据目录（macOS ~/Library/Application Support/phpo）与 Docker socket -->
 	<!-- 以 hardened runtime 运行并公证；需 exec 外部 docker CLI，故关闭库校验 -->
 	<key>com.apple.security.cs.disable-library-validation</key>
 	<true/>

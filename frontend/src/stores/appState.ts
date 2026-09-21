@@ -3,12 +3,12 @@
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
 import type { Backup, DockerStatus, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TaskBoard } from '@/types'
-import { derivePaths } from '@/utils/path'
+import { derivePaths, DEFAULT_HOME, DEFAULT_WWW } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 
 function defaultEnv(): Env {
   return {
-    ...derivePaths('~/phpo', '~/www'),
+    ...derivePaths(DEFAULT_HOME, DEFAULT_WWW),
     NGINX_PORT: '80',
     NGINX_VERSION: 'alpine',
     MYSQL_84_PORT: '3384',

@@ -28,12 +28,16 @@ func (noopValidator) Validate(context.Context, string, string) error { return ni
 // Runner 执行一条命令并返回合并输出（stdout+stderr）；注入以便单测免依赖真实 docker/nginx
 type Runner func(ctx context.Context, name string, arg ...string) ([]byte, error)
 
-// ExecValidator 通过外部命令（如 `docker exec phpo-nginx-alpine nginx -t`）核验 vhost 落盘正文。
+// ContainerFunc 惰性解析 nginx 单例容器名：nginx 版本由用户开放输入（§1.6），
+// 校验/重载每次调用都要现取，装配期定死的名字会在换版本后 exec 到不存在的容器上。
+type ContainerFunc func() (string, error)
+
+// ExecValidator 通过外部命令（如 `docker exec phpo-nginx-{version} nginx -t`）核验 vhost 落盘正文。
 // 需 conf 在磁盘上，故实现 FileValidator；命令原始错误一并回传（T406：展示 nginx 错误原文）。
 type ExecValidator struct {
-	run  Runner
-	name string
-	args []string
+	run   Runner
+	name  string
+	argsF func() ([]string, error)
 }
 
 // NewExecValidator 用给定命令（name + args）与执行器构造真实 nginx -t 校验器
@@ -41,17 +45,33 @@ func NewExecValidator(run Runner, name string, args ...string) *ExecValidator {
 	if run == nil {
 		run = defaultRunner
 	}
-	return &ExecValidator{run: run, name: name, args: args}
+	fixed := append([]string(nil), args...)
+	return &ExecValidator{run: run, name: name, argsF: func() ([]string, error) { return fixed, nil }}
 }
 
-// NewNginxTValidator 以 `docker exec <container> nginx -t` 为校验命令（nginx 跑在容器内）
-func NewNginxTValidator(container string) *ExecValidator {
-	return NewExecValidator(nil, "docker", "exec", container, "nginx", "-t")
+// NewNginxTValidator 以 `docker exec <container> nginx -t` 为校验命令（nginx 跑在容器内）。
+// 容器名每次调用现取：nginx 版本由用户开放输入（§1.6），装配期写死即 exec 到不存在的容器。
+func NewNginxTValidator(container ContainerFunc) *ExecValidator {
+	return &ExecValidator{
+		run:  defaultRunner,
+		name: "docker",
+		argsF: func() ([]string, error) {
+			name, err := container()
+			if err != nil {
+				return nil, err
+			}
+			return []string{"exec", name, "nginx", "-t"}, nil
+		},
+	}
 }
 
 // ValidateFile 运行 nginx -t；失败时把命令输出并入错误返回
 func (v *ExecValidator) ValidateFile(ctx context.Context, _ string) error {
-	out, err := v.run(ctx, v.name, v.args...)
+	args, err := v.argsF()
+	if err != nil {
+		return err
+	}
+	out, err := v.run(ctx, v.name, args...)
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {

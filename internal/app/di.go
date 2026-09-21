@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"time"
@@ -196,7 +197,7 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 		_ = cli.Close()
 		return err
 	}
-	nginxContainer := dockerutil.ContainerName(string(model.KindNginx), "alpine")
+	nginxContainer := nginxContainerOf(st)
 	vh := vhost.New(env)
 	hm := hosts.New()
 	c.SiteService = service.NewSiteService(
@@ -299,4 +300,26 @@ func residueEnv() config.Env {
 func rootsKey(cfg *config.ConfigStore) string {
 	e := cfg.ExpandedEnv()
 	return e.PHPOHome + "\x00" + e.WWWRoot
+}
+
+// nginxSnapshotter 取权威快照以现取 nginx 单例版本（*store.Store 满足）
+type nginxSnapshotter interface {
+	BuildSnapshot() (*model.Snapshot, error)
+}
+
+// nginxContainerOf nginx 单例容器名解析器（供 vhost 的 nginx -t / reload 每次调用现取）。
+// 版本不可写死：nginx 版本由用户开放输入（§1.6，UI 建议表就含 alpine 之外的 1.25），
+// 装配期定死成 phpo-nginx-alpine 会让装了其他版本的机器把命令 exec 到不存在的容器上（硬红线 2 失效）。
+func nginxContainerOf(st nginxSnapshotter) vhost.ContainerFunc {
+	return func() (string, error) {
+		snap, err := st.BuildSnapshot()
+		if err != nil {
+			return "", err
+		}
+		vers := snap.Installed[string(model.KindNginx)]
+		if len(vers) == 0 {
+			return "", errors.New("nginx 未安装，无法校验或重载 vhost")
+		}
+		return dockerutil.ContainerName(string(model.KindNginx), vers[0]), nil
+	}
 }

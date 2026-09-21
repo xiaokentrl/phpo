@@ -109,8 +109,8 @@ func TestM5_WordPress_Live(t *testing.T) {
 	siteSvc := service.NewSiteService(
 		st, vhost.New(env), &fakeHosts{},
 		engine.NewTrash(home+"/trash"),
-		vhost.NewNginxTValidator(nginxContainer),
-		vhost.NewNginxReloader(nginxContainer),
+		vhost.NewNginxTValidator(fixedContainer(nginxContainer)),
+		vhost.NewNginxReloader(fixedContainer(nginxContainer)),
 		tm, em, env,
 	)
 
