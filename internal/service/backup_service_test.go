@@ -2,7 +2,7 @@
 //   - Create：暂停运行中的数据服务 → 导出 SQLite 快照 → 打 tar.gz → 自动重启；成功广播 state:changed。
 //   - List：按文件名（含时间戳）倒序，新备份在前。
 //   - Delete：存在即删并广播；缺失/穿越名报错。
-//   - Restore：清空命名空间 → 解包落盘 → 逻辑重放 SQLite（ApplyTaskResult）→ 按快照重建容器（缓存优先镜像 + Install）。
+//   - Restore：解包并校验归档自带 SQLite 快照 → 清空命名空间 → 落盘 → 逻辑重放 SQLite（ApplyTaskResult）→ 按快照重建容器（缓存优先镜像 + Install）。
 package service
 
 import (
@@ -17,6 +17,7 @@ import (
 	"phpo/internal/engine"
 	"phpo/internal/model"
 	"phpo/internal/task"
+	"phpo/pkg/archive"
 )
 
 // ---- 假件 ----
@@ -314,5 +315,35 @@ func TestBackup_Restore_RejectsTraversal(t *testing.T) {
 	}
 	if err := svc.Restore(context.Background(), "backup-20260101-000000.tar.gz"); err == nil {
 		t.Fatal("不存在的归档应报错")
+	}
+}
+
+// 归档缺 db/phpo.db：必须在破坏性步骤之前中止。store.Open 会顺手建库，若让它凭空造一个空快照，
+// 后续「空重放」会抹掉 installed/sites/ext，而容器命名空间已被第一步清空——恢复失败就此升级为数据全丢。
+func TestBackup_Restore_ArchiveWithoutSQLiteSnapshot(t *testing.T) {
+	svc, st, _, _, dock, _, env, _ := newBackupSvc(t)
+	st.snap.Installed["php"] = []string{"8.4"}
+	bf, err := svc.Create(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 重打包：只留 php 顶层，去掉归档内的 SQLite 快照
+	staging := t.TempDir()
+	if _, err := archive.Extract(filepath.Join(env.BackupRoot, bf.File), staging); err != nil {
+		t.Fatal(err)
+	}
+	noDB := filepath.Join(env.BackupRoot, "backup-no-db.tar.gz")
+	if _, err := archive.Create(noDB, []archive.Source{{ArcPrefix: "php", HostPath: filepath.Join(staging, "php")}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Restore(context.Background(), "backup-no-db.tar.gz"); err == nil {
+		t.Fatal("缺 SQLite 快照的归档必须中止恢复")
+	}
+	if len(dock.removed) != 0 {
+		t.Fatalf("中止前不得清空容器命名空间，实得 %v", dock.removed)
+	}
+	if len(st.applied) != 0 {
+		t.Fatalf("不得将空快照重放进运行态库，实得 %+v", st.applied)
 	}
 }

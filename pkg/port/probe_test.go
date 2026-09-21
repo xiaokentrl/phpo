@@ -1,24 +1,31 @@
-// 端口实探测试：占用后探测必须失败、释放后必须成功
+// 端口实探验收：InUse 只把「确实被占」判成占用，权限类失败不得当占用（否则探针无权判定会误拦重建）
 package port
 
 import (
 	"net"
-	"strconv"
-	"strings"
+	"syscall"
 	"testing"
 )
 
-func TestProbeOccupiedThenFree(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+func TestProbeReportsInUseOnBusyPort(t *testing.T) {
+	ln, err := net.Listen("tcp", ":0")
 	if err != nil {
-		t.Skip("环境无法监听本地端口")
+		t.Fatal(err)
 	}
-	p, _ := strconv.Atoi(strings.Split(ln.Addr().String(), ":")[1])
-	if Probe(p) == nil {
-		t.Errorf("端口 %d 被监听，Probe 应报告占用", p)
+	defer ln.Close()
+	p := ln.Addr().(*net.TCPAddr).Port
+	if err := Probe(p); !InUse(err) {
+		t.Fatalf("被占端口应判为 InUse，端口 %d 实得 %v", p, err)
 	}
-	ln.Close()
-	if !Available(p) {
-		t.Errorf("端口 %d 释放后应可用", p)
+}
+
+// TestInUseIgnoresPermissionFailure 非 root 绑 <1024 端口时 net.Listen 返回 *net.OpError{Err: EACCES}
+// （Linux/macOS 常态）：这不是占用。判成占用就把「探测能力不足」变成了阻断，会误杀正在运行的 nginx。
+func TestInUseIgnoresPermissionFailure(t *testing.T) {
+	if InUse(nil) {
+		t.Fatal("空闲（无错误）不得判为占用")
+	}
+	if InUse(&net.OpError{Op: "listen", Net: "tcp", Err: syscall.EACCES}) {
+		t.Fatal("权限错误不得判为占用")
 	}
 }

@@ -312,3 +312,91 @@ func TestSingleFlightNeverConcurrent(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// —— 终态出口统一回流（§5.13.9「每次任务后校准」）——
+// 校准不分成败：失败/预清理失败的任务同样可能已把宿主改了一半（Pre-Clean 删过容器、回滚又失败）。
+
+func TestDoneWatcherFiresOnEveryTerminalOutcome(t *testing.T) {
+	cases := []struct {
+		name    string
+		preErr  error
+		stepErr error
+		want    model.TaskStatus
+	}{
+		{"success", nil, nil, model.TaskSuccess},
+		{"step failed", nil, errors.New("boom"), model.TaskFailed},
+		{"pre-clean failed", errors.New("boom"), nil, model.TaskFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewManager(&capturingEmitter{})
+			rec := &recorder{}
+			calls := 0
+			runningAtCall := true
+			m.SetDoneWatcher(func() {
+				calls++
+				runningAtCall = m.Running()
+			})
+			task := &Task{
+				ID:       "done-" + tc.name,
+				PreClean: func(context.Context) error { return tc.preErr },
+				Steps:    []Step{&testStep{BaseStep: BaseStep{StepName: "a"}, rec: rec, err: tc.stepErr}},
+			}
+			if status, _ := m.Run(context.Background(), task); status != tc.want {
+				t.Fatalf("期望 %v，得 %v", tc.want, status)
+			}
+			if calls != 1 {
+				t.Fatalf("终态回流应触发一次，得 %d", calls)
+			}
+			if runningAtCall {
+				t.Fatal("触发时本任务须已移交执行权，否则校准会把终态任务报成运行中")
+			}
+		})
+	}
+}
+
+// 取消的任务同样要回流（回滚可能失败，DB 与 Docker 仍会背离）
+func TestDoneWatcherFiresOnCancel(t *testing.T) {
+	m := NewManager(&capturingEmitter{})
+	calls := 0
+	m.SetDoneWatcher(func() { calls++ })
+	rec := &recorder{}
+	s1 := newStep(rec, "a")
+	s2 := newStep(rec, "b")
+	s1.onRun = func(context.Context) { m.Cancel() }
+	s2.cancelable = true // 循环入口被 ctx 拦下 → cancelled
+	if status, _ := m.Run(context.Background(), &Task{ID: "cancel-me", Steps: []Step{s1, s2}}); status != model.TaskCancelled {
+		t.Fatalf("期望 cancelled，得 %v", status)
+	}
+	if calls != 1 {
+		t.Fatalf("取消任务也应回流一次，得 %d", calls)
+	}
+}
+
+// 未获执行权的任务不发事件、不落账，同样不得触发回流
+func TestDoneWatcherSkippedWithoutExecutionSlot(t *testing.T) {
+	m := NewManager(&capturingEmitter{})
+	calls := 0
+	m.SetDoneWatcher(func() { calls++ })
+	if _, err := m.Run(context.Background(), &Task{ID: "inner", Steps: []Step{NewNoopStep("noop")}}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("正常任务应回流一次，得 %d", calls)
+	}
+	// 无步骤 + 无 label 的任务：仍会执行，故改用嵌套提交验证「未获执行权」
+	var innerErr error
+	blocker := &testStep{BaseStep: BaseStep{StepName: "blk"}, rec: &recorder{},
+		onRun: func(ctx context.Context) {
+			_, innerErr = m.Run(ctx, &Task{ID: "nested", Label: "嵌套", Steps: []Step{NewNoopStep("noop")}})
+		}}
+	if _, err := m.Run(context.Background(), &Task{ID: "outer", Label: "外层", Steps: []Step{blocker}}); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(innerErr, ErrBusy) {
+		t.Fatalf("嵌套提交应得 ErrBusy，实得 %v", innerErr)
+	}
+	if calls != 2 {
+		t.Fatalf("嵌套提交不得回流，总次数应为 2，得 %d", calls)
+	}
+}

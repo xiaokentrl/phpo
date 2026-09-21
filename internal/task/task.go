@@ -21,13 +21,19 @@ type Task struct {
 }
 
 // Run 同步执行一个任务：空闲即执行，忙则 FIFO 排队（由 Manager 移交执行权），
-// 返回终态。未获执行权的任务（嵌套提交 / 重复排队 / 排队中被撤回）不发事件、不落账。
-func (m *Manager) Run(parent context.Context, t *Task) (model.TaskStatus, error) {
+// 返回终态。未获执行权的任务（嵌套提交 / 重复排队 / 排队中被撤回）不发事件、不落账、不回流。
+func (m *Manager) Run(parent context.Context, t *Task) (status model.TaskStatus, runErr error) {
 	ctx, release, err := m.acquire(parent, t)
 	if err != nil {
 		return model.TaskCancelled, err
 	}
-	defer release()
+	// 终态出口统一回流（§5.13.9「每次任务后校准」）：不分成败——失败/取消的任务同样可能已把宿主改了
+	// 一半（Pre-Clean 删过容器、回滚又失败），不校准就会让 SQLite 与 Docker 长期背离、界面停在虚报的运行态上。
+	// 先 release 再回流：本任务已从队列详情移除，校准后推的快照不会把它仍报成运行中；校准慢也不卡住后续队列。
+	defer func() {
+		release()
+		m.notifyDone()
+	}()
 
 	start := time.Now()
 	sink := &logSink{}
@@ -35,7 +41,7 @@ func (m *Manager) Run(parent context.Context, t *Task) (model.TaskStatus, error)
 	logger := &stepLogger{em: em, id: t.ID}
 	Logf(em, t.ID, model.LogMeta, "▶ "+label(t))
 
-	status, runErr := m.execute(ctx, t, logger, em)
+	status, runErr = m.execute(ctx, t, logger, em)
 
 	// Cleanup 无论成败/取消必执行（如清空临时目录）
 	for _, s := range t.Steps {

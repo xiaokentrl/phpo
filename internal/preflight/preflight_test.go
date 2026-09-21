@@ -4,6 +4,7 @@ package preflight
 import (
 	"testing"
 
+	"phpo/internal/config"
 	"phpo/internal/model"
 	"phpo/pkg/errs"
 )
@@ -132,6 +133,27 @@ func TestInstallBadExt(t *testing.T) {
 	}
 }
 
+// TestInstallPortConflictBlocks 安装期就要拦下被占的服务端口（§5.8 服务端口报错、不顺延）：
+// install 现在携带用户所填端口，裁决必须与「装完再改端口」同口径，否则容器建起来才发现绑不上。
+func TestInstallPortConflictBlocks(t *testing.T) {
+	w := readyWorld()
+	w.Snap.Env[config.EnvKeyPort("mysql", "8.4")] = "3306"
+	res := Run(ActInstall, Ctx{Kind: "pgsql", Version: "17", Port: 3306}, w)
+	if res.Ok || !contains(res.Errors, errs.PortInUse+": 3306 (mysql 8.4)") {
+		t.Fatalf("装到 mysql 已占的 3306 应报 portInUse，得 %+v", res.Errors)
+	}
+	if res := Run(ActInstall, Ctx{Kind: "pgsql", Version: "17", Port: 5433}, w); !res.Ok {
+		t.Fatalf("空闲端口应放行，得 %+v", res.Errors)
+	}
+	// 站点端口同样在占用表内：nginx 装到 80 而 demo.test 正在 80 上服务 → 拦
+	wNoNginx := readyWorld()
+	wNoNginx.Snap.Installed["nginx"] = nil
+	if res := Run(ActInstall, Ctx{Kind: "nginx", Version: "1.27", Port: 80}, wNoNginx); res.Ok ||
+		!contains(res.Errors, errs.PortInUse+": 80 (site demo.test)") {
+		t.Fatalf("nginx 装到站点已占的 80 应报 portInUse，得 %+v", res.Errors)
+	}
+}
+
 // —— uninstall ——
 
 func TestUninstallHasDependents(t *testing.T) {
@@ -192,6 +214,19 @@ func TestUpdateConfigPortExcludeCurrent(t *testing.T) {
 	w.Snap.Env["MYSQL_84_PORT"] = "3306"
 	// 改成当前端口自身：exclude 命中 → ok
 	res := Run(ActUpdateConfig, Ctx{Kind: "mysql", Version: "8.4", Field: "port", NewValue: "3306"}, w)
+	if !res.Ok {
+		t.Fatalf("改回当前端口应通过，得 %+v", res.Errors)
+	}
+}
+
+// TestUpdateConfigNginxPortReadsVersionedKey nginx 的端口键与其它服务同源（{KIND}_{VER}_PORT，
+// 快照 env 由 config.FlatEnv 按版本扁平化产出）。旧代码读的版本无关键 NGINX_PORT 从不存在，
+// 于是「当前值」恒空、exclude 恒空：改回自己已在服务的端口也被判成冲突。
+func TestUpdateConfigNginxPortReadsVersionedKey(t *testing.T) {
+	w := readyWorld()
+	// 端口 env 键形态由 config.EnvKeyPort 定义（版本段只去点、不大写），站点/服务读写两侧同源
+	w.Snap.Env[config.EnvKeyPort("nginx", "alpine")] = "80" // 站点 demo.test 正在 80 上服务
+	res := Run(ActUpdateConfig, Ctx{Kind: "nginx", Version: "alpine", Field: "port", NewValue: "80"}, w)
 	if !res.Ok {
 		t.Fatalf("改回当前端口应通过，得 %+v", res.Errors)
 	}

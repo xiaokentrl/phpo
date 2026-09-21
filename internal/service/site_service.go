@@ -432,6 +432,12 @@ func (s *SiteService) newID(op string) string {
 	return fmt.Sprintf("%s-%d", op, s.seq.Add(1))
 }
 
+// PublishPorts 当前应发布给 nginx 的权威站点端口集（实现 NginxPortSource）。
+// 装/重建 nginx 与站点写链路走同一判据，避免「nginx 按另一套端口起来、站点绑不上」。
+func (s *SiteService) PublishPorts() []int {
+	return s.publishPorts(mustSites(s.store), "", 0)
+}
+
 // republishStep 产出「重发布站点端口到 nginx」步骤；publisher 为 nil 时返回 nil（调用方据此不加入任务）。
 func (s *SiteService) republishStep(ports []int) task.Step {
 	if s.publisher == nil {

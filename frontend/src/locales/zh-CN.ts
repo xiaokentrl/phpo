@@ -103,7 +103,6 @@ const messages: Record<string, string> = {
   "svc.rebuild.desc": "端口与密码只在建容器时落定，所以改完要重建才会进到这个版本里；数据卷和宿主目录都会保留，不丢数据。",
   "svc.rebuild.warn1": "重建期间 {kind} {version} 会短暂停止，正在连它的应用会断线。",
   "svc.rebuild.warn2": "新端口被其他服务占用时会拒绝重建，正在运行的容器原样保留。",
-  "svc.portFixed": "Nginx 发布 80 及各自站点的端口，由站点列表自动并集发布，此处不可修改。",
   "svc.password": "密码",
   "svc.showPassword": "显示密码",
   "svc.hidePassword": "隐藏密码",

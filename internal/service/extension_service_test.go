@@ -60,6 +60,11 @@ func (f *fakeExtRuntime) RemoveContainer(_ context.Context, name string) error {
 func (f *fakeExtRuntime) PreCleanContainer(ctx context.Context, name string) error {
 	return f.RemoveContainer(ctx, name)
 }
+
+// PublishedPorts 扩展链路不重建 nginx，宿主端口实探恒空
+func (f *fakeExtRuntime) PublishedPorts(context.Context, string) ([]int, error) {
+	return nil, nil
+}
 func (f *fakeExtRuntime) ContainerRunning(_ context.Context, name string) (bool, error) {
 	return f.running[name], nil
 }

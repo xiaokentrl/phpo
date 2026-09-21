@@ -42,6 +42,7 @@ type Manager struct {
 	pending []*ticket
 	rec     Recorder
 	onQueue func() // 队列变化通知（装配层注入：重建权威快照并发 state:changed）
+	onDone  func() // 任务终态通知（装配层注入：§5.13.9「每次任务后校准」，不分成败）
 }
 
 func NewManager(em Emitter) *Manager {
@@ -56,6 +57,10 @@ func (m *Manager) SetRecorder(r Recorder) { m.rec = r }
 
 // SetQueueWatcher 注入队列变化回调。回调在 Manager 锁外调用，可安全回读 Board()。
 func (m *Manager) SetQueueWatcher(fn func()) { m.onQueue = fn }
+
+// SetDoneWatcher 注入任务终态回调（成功/失败/取消各一次）。回调在执行权移交后、锁外调用，
+// 可安全访问 Docker 与快照；未获执行权的任务不触发。
+func (m *Manager) SetDoneWatcher(fn func()) { m.onDone = fn }
 
 // Running 当前是否有任务在跑
 func (m *Manager) Running() bool {
@@ -120,6 +125,13 @@ func (m *Manager) CancelQueued(id string) bool {
 func (m *Manager) notify() {
 	if m.onQueue != nil {
 		m.onQueue()
+	}
+}
+
+// notifyDone 任务终态通知（锁外调用；调用方须先移交执行权，回调读到的 Board 已不含本任务）
+func (m *Manager) notifyDone() {
+	if m.onDone != nil {
+		m.onDone()
 	}
 }
 

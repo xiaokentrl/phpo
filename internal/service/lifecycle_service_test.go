@@ -21,10 +21,11 @@ type fakeDocker struct {
 	containers map[string]bool
 	volumes    map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
 	lastSpec   map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
+	published  map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
 }
 
 func newFakeDocker() *fakeDocker {
-	return &fakeDocker{containers: map[string]bool{}, volumes: map[string]bool{"phpo-mysql-8.4-data": true}, lastSpec: map[string]engine.ContainerSpec{}}
+	return &fakeDocker{containers: map[string]bool{}, volumes: map[string]bool{"phpo-mysql-8.4-data": true}, lastSpec: map[string]engine.ContainerSpec{}, published: map[string][]int{}}
 }
 
 func (f *fakeDocker) ManagedContainers(context.Context) ([]engine.ActualState, error) {
@@ -46,6 +47,13 @@ func (f *fakeDocker) CreateServiceContainer(_ context.Context, _ config.Env, spe
 		f.lastSpec = map[string]engine.ContainerSpec{}
 	}
 	f.lastSpec[name] = spec
+	var held []int
+	for _, hostPort := range spec.PortMap {
+		if p, err := strconv.Atoi(hostPort); err == nil {
+			held = append(held, p)
+		}
+	}
+	f.published[name] = held
 	return "fake-id", nil
 }
 func (f *fakeDocker) StartContainer(_ context.Context, name string) error {
@@ -64,11 +72,23 @@ func (f *fakeDocker) StopContainer(_ context.Context, name string) error {
 }
 func (f *fakeDocker) RemoveContainer(_ context.Context, name string) error {
 	delete(f.containers, name) // 只删容器；卷保留
+	delete(f.published, name)
 	return nil
 }
 func (f *fakeDocker) PreCleanContainer(_ context.Context, name string) error {
 	delete(f.containers, name)
+	delete(f.published, name)
 	return nil
+}
+
+// PublishedPorts 返回假世界里该容器当前占住的宿主端口（副本，调用方不得改）
+func (f *fakeDocker) PublishedPorts(_ context.Context, name string) ([]int, error) {
+	if len(f.published[name]) == 0 {
+		return nil, nil
+	}
+	out := make([]int, len(f.published[name]))
+	copy(out, f.published[name])
+	return out, nil
 }
 
 func parseName(name string) (kind, ver string, ok bool) {

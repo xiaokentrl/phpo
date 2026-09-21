@@ -38,8 +38,12 @@ func (s *Store) ApplyTaskResult(meta model.TaskMeta, snap *model.Snapshot) error
 		return err
 	}
 	for _, st := range snap.Sites {
-		if _, err := tx.Exec(`INSERT INTO sites(domain,port,php,root,rewrite) VALUES(?,?,?,?,?)`,
-			st.Domain, st.Port, st.PHP, st.Root, st.Rewrite); err != nil {
+		customized := 0
+		if st.VhostCustomized {
+			customized = 1
+		}
+		if _, err := tx.Exec(`INSERT INTO sites(domain,port,php,root,rewrite,rewrite_rule,vhost_customized) VALUES(?,?,?,?,?,?,?)`,
+			st.Domain, st.Port, st.PHP, st.Root, st.Rewrite, st.RewriteRule, customized); err != nil {
 			return err
 		}
 	}

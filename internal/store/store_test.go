@@ -107,7 +107,8 @@ func TestApplyTaskResultFullSnapshot(t *testing.T) {
 	snap := model.NewSnapshot()
 	snap.Installed["php"] = []string{"8.4", "8.3"}
 	snap.Running["php"] = []string{"8.4"}
-	snap.Sites = []model.Site{{Domain: "demo.test", Port: 81, PHP: "8.4", Root: "~/www/demo.test", Rewrite: "laravel"}}
+	snap.Sites = []model.Site{{Domain: "demo.test", Port: 81, PHP: "8.4", Root: "~/www/demo.test", Rewrite: "laravel",
+		RewriteRule: "rewrite ^/x(/.*)$ /index.php$1 break;", VhostCustomized: true}}
 	snap.Env["PHPO_HOME"] = "~/phpo"
 	snap.PHPExtensions["8.4"] = []string{"redis", "zip"}
 	snap.DirReady["PHPO_HOME"] = false // 就绪态为派生量：任务结果里的 dirReady/env 不参与落库
@@ -124,6 +125,10 @@ func TestApplyTaskResultFullSnapshot(t *testing.T) {
 	}
 	if got.Sites[0].Port != 81 || got.Sites[0].Rewrite != "laravel" {
 		t.Errorf("sites 物化错误: %+v", got.Sites)
+	}
+	// 自定义伪静态原文与 vhost 手改标记必须随快照一并重放：丢了就等于恢复后改写规则凭空消失
+	if got.Sites[0].RewriteRule == "" || !got.Sites[0].VhostCustomized {
+		t.Errorf("rewrite_rule/vhost_customized 未重放: %+v", got.Sites[0])
 	}
 	if len(got.PHPExtensions["8.4"]) != 2 {
 		t.Errorf("扩展物化错误: %+v", got.PHPExtensions)

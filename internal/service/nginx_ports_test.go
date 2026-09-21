@@ -1,13 +1,19 @@
-// 站点端口发布增强验收：nginxSpec 端口并集/去重/回落、RepublishNginx 重建幂等且未装 nginx 时跳过、
-// SiteService 在 publisher 注入下建站/改端口会触发重发布（端口并集正确）。
+// 站点端口发布增强验收：nginxSpec 端口并集/去重/回落、用户配置的 nginx 服务端口真正进容器 spec、
+// RepublishNginx 重建幂等且未装 nginx 时跳过、端口被外部进程占用时在 Pre-Clean 之前拒绝、
+// 站点/安装链路走同一份权威发布集（SiteService.PublishPorts）。
 package service
 
 import (
 	"context"
+	"net"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	"phpo/internal/config"
+	"phpo/internal/engine"
+	"phpo/internal/model"
 	"phpo/pkg/dockerutil"
 )
 
@@ -21,7 +27,7 @@ func portKeys(m map[string]string) []string {
 }
 
 func TestNginxSpec_FallsBackToRegistryPort(t *testing.T) {
-	spec, err := nginxSpec(config.DerivePaths("~/phpo", "~/www"), "alpine", nil)
+	spec, err := nginxSpec(config.DerivePaths("~/phpo", "~/www"), "alpine", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +37,7 @@ func TestNginxSpec_FallsBackToRegistryPort(t *testing.T) {
 }
 
 func TestNginxSpec_UnionDedupAndSkipInvalid(t *testing.T) {
-	spec, err := nginxSpec(config.DerivePaths("~/phpo", "~/www"), "alpine", []int{8090, 80, 8090, 0, -5})
+	spec, err := nginxSpec(config.DerivePaths("~/phpo", "~/www"), "alpine", []int{8090, 80, 8090, 0, -5}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +46,124 @@ func TestNginxSpec_UnionDedupAndSkipInvalid(t *testing.T) {
 	}
 	if spec.PortMap["8090/tcp"] != "8090" {
 		t.Fatalf("应 1:1 发布 host==container，实得 %v", spec.PortMap)
+	}
+}
+
+// TestNginxSpec_ConfiguredPortIsPublished 用户在装机弹窗改过的 nginx 服务端口必须进容器 spec：
+// 界面（服务卡片 / 站点页汇总）显示的正是这个值，落不了地就是虚报（硬红线 4）。
+func TestNginxSpec_ConfiguredPortIsPublished(t *testing.T) {
+	st := newFakeStore()
+	st.setPort(string(model.KindNginx), "alpine", 8080)
+	spec, err := nginxSpec(config.DerivePaths("~/phpo", "~/www"), "alpine", []int{8090}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := portKeys(spec.PortMap); len(got) != 2 || got[0] != "8080/tcp" || got[1] != "8090/tcp" {
+		t.Fatalf("应发布 {配置的 8080} ∪ {站点 8090}，实得 %v", got)
+	}
+}
+
+// TestNginxSpec_DefaultPortNotForcedAlongsideSites 未配置端口时不把注册表默认 80 硬塞进发布集：
+// 没有站点监听 80 却绑 80，只会让本机 Apache/IIS 占着 80 的机器整站起不来（能警告的不要阻止）。
+func TestNginxSpec_DefaultPortNotForcedAlongsideSites(t *testing.T) {
+	spec, err := nginxSpec(config.DerivePaths("~/phpo", "~/www"), "alpine", []int{8090}, newFakeStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := portKeys(spec.PortMap); len(got) != 1 || got[0] != "8090/tcp" {
+		t.Fatalf("无配置端口 + 有站点时应只发布站点端口，实得 %v", got)
+	}
+}
+
+// fixedPorts 权威站点发布集的假件（真实实现：*SiteService.PublishPorts）
+type fixedPorts []int
+
+func (f fixedPorts) PublishPorts() []int { return []int(f) }
+
+// TestInstallNginx_PublishesSitePorts 装 nginx 时按当时站点并集发布端口：
+// 只发布默认 80 会让 8090 上的站点整片 404，而界面照常显示「运行中」。
+func TestInstallNginx_PublishesSitePorts(t *testing.T) {
+	l, d, _, _ := newSvc()
+	l.SetNginxPortSource(fixedPorts{8090, 8081})
+	if err := l.Install(context.Background(), model.KindNginx, "alpine"); err != nil {
+		t.Fatal(err)
+	}
+	got := portKeys(d.lastSpec[dockerutil.ContainerName("nginx", "alpine")].PortMap)
+	if !contains(got, "8090/tcp") || !contains(got, "8081/tcp") {
+		t.Fatalf("安装 nginx 应发布站点端口并集，实得 %v", got)
+	}
+}
+
+// TestReinstallNginx_PublishesSitePorts 重建走同一入口（配置只有建容器时才落定）
+func TestReinstallNginx_PublishesSitePorts(t *testing.T) {
+	l, d, s, _ := newSvc()
+	_ = s.SetInstalled("nginx", "alpine", true)
+	l.SetNginxPortSource(fixedPorts{8090})
+	if err := l.Reinstall(context.Background(), model.KindNginx, "alpine"); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.lastSpec[dockerutil.ContainerName("nginx", "alpine")].PortMap; got["8090/tcp"] != "8090" {
+		t.Fatalf("重建 nginx 应发布站点端口 8090，实得 %v", got)
+	}
+}
+
+// TestRepublishNginx_RefusesOccupiedPortBeforeDestroyingRunning 新站点端口被本机外部进程占了，
+// 就不得先把在跑的 nginx 删掉：Pre-Clean 之后建容器必然绑不上端口，回滚只能删壳——全站瘫痪。
+// 反向也要成立：容器自己已发布的端口在宿主上确实「被占」（docker-proxy 持着），探针不得把它当成外部占用，
+// 否则任何一次重发布都会被自己的端口拦死。
+func TestRepublishNginx_RefusesOccupiedPortBeforeDestroyingRunning(t *testing.T) {
+	own, blocked := listenPort(t), listenPort(t)
+
+	l, d, s, _ := newSvc()
+	_ = s.SetInstalled("nginx", "alpine", true)
+	name := dockerutil.ContainerName("nginx", "alpine")
+	d.containers[name] = true
+	d.published[name] = []int{own}
+	d.lastSpec[name] = engine.ContainerSpec{Kind: "nginx", Version: "alpine", PortMap: map[string]string{portProto(own): strconv.Itoa(own)}}
+
+	if err := l.RepublishNginx(context.Background(), []int{own}); err != nil {
+		t.Fatalf("端口 %d 是本容器自己发布的，探针不得判成外部占用，实得 %v", own, err)
+	}
+	before := d.lastSpec[name]
+	if err := l.RepublishNginx(context.Background(), []int{own, blocked}); err == nil ||
+		!strings.Contains(err.Error(), strconv.Itoa(blocked)) {
+		t.Fatalf("外部占用的新端口应拒绝重建并点明端口号，实得 %v", err)
+	}
+	if !d.containers[name] {
+		t.Fatal("拒绝重建时不得删掉正在运行的 nginx")
+	}
+	if got := d.lastSpec[name]; got.PortMap[portProto(own)] != before.PortMap[portProto(own)] || len(got.PortMap) != 1 {
+		t.Fatalf("拒绝重建时旧容器应原样保留，实得 %v", got.PortMap)
+	}
+}
+
+// listenPort 占住一个随机端口直到用例结束，模拟本机上的其它监听者
+func listenPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// TestSiteService_PublishPortsIsSharedAuthority PublishPorts 是 nginx 建容器的唯一发布集判据：
+// 与站点写链路同源（只收 vhost 已落盘、未被数据服务占用的端口），不另立标准。
+func TestSiteService_PublishPortsIsSharedAuthority(t *testing.T) {
+	ctx := context.Background()
+	s, st, _, _ := newSiteSvc(t, nil)
+	if err := s.Add(ctx, AddInput{Domain: "a.test", Port: 8090, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	st.snap.Installed["mysql"] = []string{"3306"}
+	st.snap.Env[config.EnvKeyPort("mysql", "3306")] = "3306"
+	// b.test 选 mysql 已占的 3306 → 降级（vhost 不落盘），其端口不得进发布集
+	if err := s.Add(ctx, AddInput{Domain: "b.test", Port: 3306, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.PublishPorts(); len(got) != 1 || got[0] != 8090 {
+		t.Fatalf("权威发布集应只含已落盘的 8090，实得 %v", got)
 	}
 }
 

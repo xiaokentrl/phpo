@@ -186,6 +186,54 @@ func TestGateRestoreAndPruneRequireExistingEntries(t *testing.T) {
 	}
 }
 
+// ---- 安装期端口/密码（install 必须携带配置：未安装态过不了 update-config 守卫）----
+
+// cfgRec 记录安装期配置写入口的调用（*service.EnvService 的 SetPort/SetPassword 满足）
+type cfgRec struct {
+	ports map[string]int
+	pws   map[string]string
+}
+
+func (r *cfgRec) SetPort(kind model.ServiceKind, version string, port int) error {
+	r.ports[string(kind)+" "+version] = port
+	return nil
+}
+
+func (r *cfgRec) SetPassword(kind model.ServiceKind, version, password string) error {
+	r.pws[string(kind)+" "+version] = password
+	return nil
+}
+
+// TestApplyInstallOptionsPersistsProvidedConfig 安装弹窗填的端口/密码要先落 config.yaml：
+// 二者只在建容器那一刻被读走（{KIND}_{VER}_PORT / _PASSWORD），装配后再改端口只能靠重建。
+func TestApplyInstallOptionsPersistsProvidedConfig(t *testing.T) {
+	rec := &cfgRec{ports: map[string]int{}, pws: map[string]string{}}
+	if err := applyInstallOptions(rec, "mysql", "8.4", model.InstallOptions{Port: 3307, Password: "", HasPassword: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.ports["mysql 8.4"]; got != 3307 {
+		t.Fatalf("用户所填端口应落库供建容器读取，实得 %d", got)
+	}
+	if _, ok := rec.pws["mysql 8.4"]; !ok {
+		t.Fatal("HasPassword 时必须落密码：空密码是合法值（§1.5），不能当作「未提供」丢掉")
+	}
+	if rec.pws["mysql 8.4"] != "" {
+		t.Fatalf("密码应原样落库（可为空），实得 %q", rec.pws["mysql 8.4"])
+	}
+}
+
+// TestApplyInstallOptionsSkipsUnprovided 未提供端口/密码时一笔都不写：
+// php 无宿主端口，写 0 会把「未设置」变成「设成 0」，快照与建容器都会读到脏值。
+func TestApplyInstallOptionsSkipsUnprovided(t *testing.T) {
+	rec := &cfgRec{ports: map[string]int{}, pws: map[string]string{}}
+	if err := applyInstallOptions(rec, "php", "8.4", model.InstallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.ports) != 0 || len(rec.pws) != 0 {
+		t.Fatalf("未提供的配置不得写库，实得 ports=%v pws=%v", rec.ports, rec.pws)
+	}
+}
+
 // TestGateDirReadyBlocksNeedsHome 两根未就绪时 15 个 needsHome action 一律拦截
 func TestGateDirReadyBlocksNeedsHome(t *testing.T) {
 	src := pfSrc{snap: model.NewSnapshot(), backups: []string{"backup-1.tar.gz"}}

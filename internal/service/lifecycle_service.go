@@ -24,6 +24,7 @@ type DockerOps interface {
 	StopContainer(ctx context.Context, name string) error
 	RemoveContainer(ctx context.Context, name string) error
 	PreCleanContainer(ctx context.Context, name string) error
+	PublishedPorts(ctx context.Context, name string) ([]int, error)
 }
 
 // StateStore SQLite 权威视图读写子集（*store.Store 满足）
@@ -51,13 +52,16 @@ type LifecycleService struct {
 	emitter  Emitter
 	env      config.Env
 	services map[model.ServiceKind]Service
+	nginx    *NginxService
 }
 
 func NewLifecycle(docker DockerOps, store StateStore, emitter Emitter, env config.Env, reader EnvReader) *LifecycleService {
 	svc := &LifecycleService{docker: docker, store: store, emitter: emitter, env: env, services: map[model.ServiceKind]Service{}}
-	// PHP / Nginx 无需 env 读取；MySQL / PgSQL / Redis 需读明文密码与按版本端口，reader 为 ConfigStore（config.yaml）
+	// Nginx 需读服务端口（用户配过的基准端口）；MySQL / PgSQL / Redis 需读明文密码与按版本端口，reader 为 ConfigStore（config.yaml）
+	ng := NewNginxService(reader)
+	svc.nginx = ng
 	for _, s := range []Service{
-		PHPService{}, NginxService{},
+		PHPService{}, ng,
 		NewDBService(model.KindMySQL, reader),
 		NewDBService(model.KindPgsql, reader),
 		NewRedisService(reader),
@@ -66,6 +70,10 @@ func NewLifecycle(docker DockerOps, store StateStore, emitter Emitter, env confi
 	}
 	return svc
 }
+
+// SetNginxPortSource 注入站点端口来源（di 装配期，SiteService 就绪后调用）：
+// 让装/重建 nginx 与站点写链路发布同一份端口并集，不出现「nginx 起来了、站点端口没绑」的空档。
+func (l *LifecycleService) SetNginxPortSource(src NginxPortSource) { l.nginx.SetPortSource(src) }
 
 // ---- 校准 ----
 
@@ -156,6 +164,11 @@ func (l *LifecycleService) specFor(kind model.ServiceKind, version string) (engi
 // installSpec 三阶段建/启容器并落库：Pre-Clean 同名 → create+start → Post-Verify → commit
 func (l *LifecycleService) installSpec(ctx context.Context, kind model.ServiceKind, version string, spec engine.ContainerSpec, label string) error {
 	name := dockerutil.ContainerName(string(kind), version)
+	if kind == model.KindNginx {
+		if err := l.assertSitePortsBindable(ctx, name, spec); err != nil {
+			return err
+		}
+	}
 	op := engine.Op{
 		Name:     label + " " + name,
 		PreClean: func(ctx context.Context) error { return l.docker.PreCleanContainer(ctx, name) },
@@ -176,6 +189,7 @@ func (l *LifecycleService) installSpec(ctx context.Context, kind model.ServiceKi
 
 // RepublishNginx 重建 nginx 单例容器以重绑站点端口并集（1:1 host==container）。
 // Docker 端口绑定只能在建容器时确定，改站点端口须重建 nginx；未安装 nginx 则跳过（建站不应强起 nginx）。
+// 本次新增的宿主端口先实探再动手：占用即在 Pre-Clean 之前拒绝，保住正在服务的 nginx。
 func (l *LifecycleService) RepublishNginx(ctx context.Context, ports []int) error {
 	snap, err := l.store.BuildSnapshot()
 	if err != nil {
@@ -186,11 +200,14 @@ func (l *LifecycleService) RepublishNginx(ctx context.Context, ports []int) erro
 		return nil
 	}
 	ver := vers[0]
-	spec, err := nginxSpec(l.env, ver, ports)
+	spec, err := l.nginx.specWith(l.env, ver, ports)
 	if err != nil {
 		return err
 	}
 	name := dockerutil.ContainerName(string(model.KindNginx), ver)
+	if err := l.assertSitePortsBindable(ctx, name, spec); err != nil {
+		return err
+	}
 	op := engine.Op{
 		Name:     "重发布 nginx 站点端口 " + name,
 		PreClean: func(ctx context.Context) error { return l.docker.PreCleanContainer(ctx, name) },
@@ -260,7 +277,8 @@ func (l *LifecycleService) Remove(ctx context.Context, kind model.ServiceKind, v
 // ---- 内部助手 ----
 
 // hostPortKinds 只有数据服务发布单个「服务端口」（§5.8：占用即报 portInUse，不顺延）。
-// php 不发布宿主端口；nginx 发布的是 80 + 站点端口并集，那些端口以站点名义登记，不适用本判据。
+// php 不发布宿主端口；nginx 发布的是基准端口 + 站点端口并集，那些端口以站点名义登记，不适用本判据
+// （改走 assertSitePortsBindable 的本机 TCP 实探）。
 var hostPortKinds = map[model.ServiceKind]bool{model.KindMySQL: true, model.KindPgsql: true, model.KindRedis: true}
 
 // assertHostPortsFree 逐个校验 spec 要发布的宿主端口：占用判定复用权威快照的同一判据
@@ -279,6 +297,32 @@ func assertHostPortsFree(snap *model.Snapshot, kind model.ServiceKind, version s
 		}
 		if owner, ok := used[p]; ok {
 			return fmt.Errorf("%s：端口 %d 已被 %s 占用，%s/%s 未重建（在跑的容器与数据均未改动）", errs.PortInUse, p, owner, kind, version)
+		}
+	}
+	return nil
+}
+
+// assertSitePortsBindable nginx 专属预检：本次要发布、且不在当前 nginx 容器上的宿主端口逐个本机实探。
+// 站点端口的占用者以「站点」名义登记在权威表里（表内看不出真凶），而真凶常是宿主上的 Apache / IIS /
+// 另一个 Docker 容器——逻辑表判不出来，只有 bind 一次才知道。占用了却照常 Pre-Clean，就会出现
+// 「在跑的 nginx 已删、新容器绑不上端口、回滚只能删壳」，把整站在用的 nginx 拖下线（§5.13.13）。
+// 已被本容器发布的端口必须先剔除：那些端口正被 Docker 占着，再探必然误判为占用。
+func (l *LifecycleService) assertSitePortsBindable(ctx context.Context, name string, spec engine.ContainerSpec) error {
+	held, err := l.docker.PublishedPorts(ctx, name)
+	if err != nil {
+		return err
+	}
+	own := make(map[int]bool, len(held))
+	for _, p := range held {
+		own[p] = true
+	}
+	for _, hostPort := range spec.PortMap {
+		p, err := strconv.Atoi(hostPort)
+		if err != nil || own[p] {
+			continue
+		}
+		if err := port.Probe(p); port.InUse(err) {
+			return fmt.Errorf("%s：端口 %d 已被本机其它进程占用，Nginx 未重建（在跑的容器与站点均未改动）", errs.PortInUse, p)
 		}
 	}
 	return nil

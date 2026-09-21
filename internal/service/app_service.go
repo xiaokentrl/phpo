@@ -1,6 +1,6 @@
 // AppService：M3 集成验收的服务门面——把 LifecycleService 的原子操作编排进 task.Manager，
 // 使所有写操作走三段式（硬红线 5）并经事件总线推送 task:* / cache:* / state:changed（硬红线 4：后端唯一权威）。
-// Install 前置缓存优先镜像步（T303）以兑现离线铁律与硬红线 7 门禁；每次任务后按 §5.13.9 触发校准。
+// Install 前置缓存优先镜像步（T303）以兑现离线铁律与硬红线 7 门禁；每任务后的校准由 task.Manager 终态出口统一触发（§5.13.9）。
 package service
 
 import (
@@ -183,13 +183,11 @@ func (s *AppService) one(op, label string, fn func(ctx context.Context) error, e
 	return s.run(context.Background(), t)
 }
 
-// run 执行任务；失败直接上抛，成功后按 §5.13.9 触发一次校准（漂移时补发 state-drift/changed）
+// run 执行任务并原样上抛结果；§5.13.9 的「每次任务后校准」已由 task.Manager 终态出口统一触发
+// （见 internal/app/di.go 的 SetDoneWatcher），此处不再重复校准，也不把校准失败算成任务失败。
 func (s *AppService) run(ctx context.Context, t *task.Task) error {
-	if _, err := s.tasks.Run(ctx, t); err != nil {
-		return err
-	}
-	_, cerr := s.lifecycle.Calibrate(context.Background())
-	return cerr
+	_, err := s.tasks.Run(ctx, t)
+	return err
 }
 
 func (s *AppService) newID(op string) string {

@@ -211,6 +211,8 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	)
 	// 站点端口并集发布到 nginx（增删改站点端口后重建 nginx 容器以重绑宿主端口）
 	c.SiteService.SetNginxPublisher(lc)
+	// 反向并集：装/重装 nginx 时按当前站点端口集发布宿主端口，单一权威在站点侧（§5.8）
+	lc.SetNginxPortSource(c.SiteService)
 	// nginx 由停到起后补齐降级站点的 vhost 与端口发布（建站门禁在 preflight：nginx 未装即阻断）
 	c.AppService.SetSiteHealer(c.SiteService)
 	// 快照站点 hosts 真值探针（列表 Hosts 列）：store 不反向依赖 hosts 包，由装配层注入
@@ -225,6 +227,12 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 			return // 首启未建库等场景：无快照可发，任务终态仍由账本与 task:* 事件覆盖
 		}
 		c.Emitter.Emit(EventStateChanged, map[string]any{"snapshot": snap})
+	})
+	// §5.13.9「每次任务后校准」接在任务终态出口：不分成败（失败/取消同样可能已改宿主），也不分门面——
+	// 站点/配置/备份/清理/缓存各走自己的 tasks.Run，逐个补校准必然漏。Docker 缺席或首启未落两根时
+	// 校准必报错，静默降级即可：漂移留给下次成功校准或手动「同步状态」，绝不把校准失败算成任务失败。
+	tm.SetDoneWatcher(func() {
+		_, _ = lc.Calibrate(context.Background())
 	})
 
 	// M6 扩展门面（T601）：容器内内置工具编译 → commit 固化 phpo/php:{version} → save 提升离线缓存 → 重建

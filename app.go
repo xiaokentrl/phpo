@@ -183,12 +183,43 @@ func (a *App) Running() bool {
 	return a.container.AppService != nil && a.container.AppService.Running()
 }
 
-// Install 安装并启动服务版本（缓存优先镜像 → 容器）
-func (a *App) Install(ctx context.Context, kind model.ServiceKind, version string) error {
-	if a.container.AppService == nil {
+// installConfigWriter 安装期配置的落库出口（*service.EnvService 满足）
+type installConfigWriter interface {
+	SetPort(kind model.ServiceKind, version string, port int) error
+	SetPassword(kind model.ServiceKind, version, password string) error
+}
+
+// applyInstallOptions 把安装弹窗填的端口/密码落到 config.yaml，容器 spec 建容器时据此装配。
+// 走 install 而不是「先 setPort 再 install」：update-config 要求版本已安装（原型同口径），
+// 未装态会被 notInstalled 拦下，等于任何带端口的服务都装不起来。
+func applyInstallOptions(w installConfigWriter, kind model.ServiceKind, version string, opts model.InstallOptions) error {
+	if opts.Port > 0 {
+		if err := w.SetPort(kind, version, opts.Port); err != nil {
+			return err
+		}
+	}
+	if opts.HasPassword {
+		if err := w.SetPassword(kind, version, opts.Password); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Install 安装并启动服务版本（缓存优先镜像 → 容器）；opts 携带安装期端口/密码
+func (a *App) Install(ctx context.Context, kind model.ServiceKind, version string, opts model.InstallOptions) error {
+	if a.container.AppService == nil || a.container.EnvService == nil {
 		return errNotReady
 	}
-	if err := a.guard(preflight.ActInstall, preflight.Ctx{Kind: string(kind), Version: version}); err != nil {
+	c := preflight.Ctx{Kind: string(kind), Version: version}
+	if opts.Port > 0 {
+		c.Port = opts.Port
+	}
+	// 裁决在先：端口被占（§5.8 服务端口不顺延）时不得留下半套配置
+	if err := a.guard(preflight.ActInstall, c); err != nil {
+		return err
+	}
+	if err := applyInstallOptions(a.container.EnvService, kind, version, opts); err != nil {
 		return err
 	}
 	return a.container.AppService.Install(ctx, kind, version)

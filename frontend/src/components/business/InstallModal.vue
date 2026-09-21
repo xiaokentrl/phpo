@@ -9,7 +9,7 @@ import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
 import { submitWrite } from '@/composables/useTask'
 import { installService } from '@/api/lifecycle'
-import { setPassword, setPort } from '@/api/env'
+import { applyExtensions } from '@/api/extension'
 import { useAppState } from '@/stores/appState'
 import { SVC_META } from '@/constants/service'
 import { needsPassword, needsPort, suggestPortFor } from '@/utils/format'
@@ -70,12 +70,13 @@ function onOk(): void {
   const label = `${t('svc.install')} ${t(meta.value.titleKey)} ${v}`
   const taskMeta = { type: 'install', kind: props.kind, version: v, port: ctx.port, password: ctx.password, extensions: ctx.extensions }
   emit('close')
-  // 真实链路：先落库端口/密码（Install 时容器据此装配），再安装；状态由后端事件回流。
-  const portNum = ctx.port ? parseInt(ctx.port, 10) : 0
+  // 真实链路：安装期填的端口/密码随 install 一次带过（后端先落 config.yaml 再建容器，状态由事件回流）；
+  // 扩展是另一条链路（容器内编译 → 固化镜像 → 重建），排在安装任务之后作为第二个任务。
+  const portNum = ctx.port ? parseInt(ctx.port, 10) : undefined
+  const exts = ctx.extensions ? ctx.extensions.split(',').map((s) => s.trim()).filter(Boolean) : []
   submitWrite(args, label, taskMeta, async () => {
-    if (ctx.port) await setPort(props.kind, v, portNum)
-    if (ctx.password !== null) await setPassword(props.kind, v, ctx.password)
-    await installService(props.kind, v)
+    await installService(props.kind, v, { port: portNum, password: ctx.password ?? undefined, hasPassword: ctx.password !== null })
+    if (exts.length) await applyExtensions(v, exts)
   })
 }
 </script>

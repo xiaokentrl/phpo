@@ -27,6 +27,15 @@ type DockerStatus struct {
 	Hint     string `json:"hint,omitempty"`
 }
 
+// InstallOptions 安装期配置：端口与密码只在「建容器那一刻」被读走，而未安装态过不了
+// update-config 守卫（§5.8 服务端口占用报错）——故由 install 携带并先落 config.yaml，
+// 对应原型 applyStateChange 的 type==='install' 分支（meta.port / meta.password）。
+type InstallOptions struct {
+	Port        int    `json:"port,omitempty"`
+	Password    string `json:"password,omitempty"`
+	HasPassword bool   `json:"hasPassword,omitempty"` // 空密码合法（§1.5），须区分「未提供」与「提供空串」
+}
+
 // TaskMeta runTask 的业务上下文（applyStateChange 按 Type 落地）
 type TaskMeta struct {
 	Type    string   `json:"type"`

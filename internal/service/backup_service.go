@@ -1,10 +1,11 @@
 // T602 · 备份 / 恢复 / 删除备份：把 PHPO_HOME 配置/数据、WWW 站点、离线缓存与 SQLite 快照打成 tar.gz，
-// 并支持异机恢复（清空 phpo 命名空间 → 解包落盘 → 应用内逻辑重放 SQLite → 重建容器，§5.13.11）。
+// 并支持异机恢复（解包并验货 → 清空 phpo 命名空间 → 落盘 → 应用内逻辑重放 SQLite → 重建容器，§5.13.11）。
 // 全程三段式（硬红线 5）+ 后端权威广播（硬红线 4）；不含 Docker 镜像（原型 restore warn4）；config.yaml/密码原样随 SQLite 快照打包（用户裁决）。
 package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -203,7 +204,7 @@ func (s *BackupService) Create(ctx context.Context) (model.BackupFile, error) {
 	return model.BackupFile{File: name, Size: humanSize(size), At: ts.Format("2006-01-02 15:04"), Items: items}, nil
 }
 
-// Restore 恢复（异机口径，§5.13.11）：清空 phpo 命名空间 → 解包 → 落盘 → 逻辑重放 SQLite → 重建容器
+// Restore 恢复（异机口径，§5.13.11）：解包并校验归档自带 SQLite 快照 → 清空 phpo 命名空间 → 落盘 → 逻辑重放 SQLite → 重建容器
 func (s *BackupService) Restore(ctx context.Context, file string) error {
 	host, err := s.archivePath(file)
 	if err != nil {
@@ -222,17 +223,23 @@ func (s *BackupService) Restore(ctx context.Context, file string) error {
 		Label: "恢复备份 " + file,
 		Meta:  meta,
 		Steps: []task.Step{
-			&task.FuncStep{StepName: "清空 phpo 容器命名空间", Exec: func(ctx context.Context, _ task.StepLog) error {
-				return s.clearNamespace(ctx)
-			}},
 			&task.FuncStep{StepName: "解包归档", Exec: func(_ context.Context, log task.StepLog) error {
 				n, err := archive.Extract(host, staging)
 				if err != nil {
 					return err
 				}
+				// 解包后立即验货：归档必须自带 SQLite 快照，缺快照即在此中止。
+				// 这一步特意排在清命名空间之前——store.Open 会顺手建库，凭空造出的空快照
+				// 一旦被重放，就会连容器带运行态一起抹掉，把「恢复失败」升级成「数据全丢」。
+				if info, e := os.Stat(filepath.Join(staging, "db", "phpo.db")); e != nil || info.Size() == 0 {
+					return errors.New("归档缺少数据库快照 db/phpo.db，已中止恢复（未清空容器、未落盘）")
+				}
 				log.Log(string(model.LogOk), fmt.Sprintf("解出 %d 个文件", n))
 				return nil
 			}, Clean: func() { _ = os.RemoveAll(staging) }},
+			&task.FuncStep{StepName: "清空 phpo 容器命名空间", Exec: func(ctx context.Context, _ task.StepLog) error {
+				return s.clearNamespace(ctx)
+			}},
 			&task.FuncStep{StepName: "落盘配置/数据/站点/缓存", Exec: func(_ context.Context, _ task.StepLog) error {
 				return s.materialize(staging)
 			}},

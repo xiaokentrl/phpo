@@ -124,12 +124,9 @@ func (r *run) updateConfig() {
 		return
 	}
 	if c.Field == "port" {
-		var cur string
-		if c.Kind == "nginx" {
-			cur = r.w.Snap.Env["NGINX_PORT"]
-		} else {
-			cur = r.w.Snap.Env[config.EnvKeyPort(c.Kind, c.Version)]
-		}
+		// 当前端口一律按版本键读（config.FlatEnv 只产出 {KIND}_{VER}_PORT，不存在无关键的 NGINX_PORT）；
+		// 读得出「自己现在占着哪个端口」，改回同一端口才不会被当成冲突（§5.8 服务端口占用报错的口径）
+		cur := r.w.Snap.Env[config.EnvKeyPort(c.Kind, c.Version)]
 		if pp := r.validatePort(asString(c.NewValue), parseIntSlice(cur), nil, conflictBlock); !pp.Ok {
 			r.errf("%s", pp.Msg)
 		}

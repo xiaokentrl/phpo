@@ -37,7 +37,7 @@ function extCount(version: string): number {
   return (state.phpExtensions[version] || []).length
 }
 
-// 端口行内编辑：仅数据服务（mysql/pgsql/redis）的宿主端口会进容器 spec；nginx 由站点端口自动发布，只读
+// 端口行内编辑：needsPort 的服务端口都会进容器 spec（nginx 是基准端口，与站点端口并集一起发布）
 const portEditing = ref('')
 const portDraft = ref('')
 const portSaving = ref('')
@@ -116,10 +116,8 @@ async function commitPort(version: string): Promise<void> {
         <div>
           <div v-if="needsPort(kind)" class="kv">
             <span class="k">{{ t('svc.port') }}</span>
-            <!-- nginx 宿主端口 = 80 + 站点端口并集，由站点驱动、建容器时定死，不在卡片里改（改了没有消费方） -->
-            <span v-if="kind === 'nginx'" class="v" :title="t('svc.portFixed')">{{ portValue(version) }}</span>
+            <!-- 与原型一致：needsPort 的服务端口一律可行内改。nginx 的这项是「基准端口」，与站点端口并集一起发布 -->
             <span
-              v-else
               class="inline-edit"
               :class="{ editing: portEditing === version, saving: portSaving === version }"
               data-inline="port"
@@ -185,8 +183,9 @@ async function commitPort(version: string): Promise<void> {
           </button>
           <button v-if="state.isServiceRunning(kind, version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version" @click="modals.stopService(kind, version)">{{ t('svc.stop') }}</button>
           <button v-else class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version" @click="modals.startService(kind, version)">{{ t('svc.start') }}</button>
-          <!-- 端口与密码只在建容器时落定：数据服务给一条把配置送进容器的路（重建，数据卷保留） -->
-          <button v-if="needsPassword(kind)" class="btn btn-sm" data-action="rebuild-service" :data-kind="kind" :data-version="version" :title="t('svc.rebuild.hint')" @click="modals.openRebuildModal(kind, version)">{{ t('svc.rebuild') }}</button>
+          <!-- 端口与密码只在建容器时落定：凡有宿主端口发布/密码的服务都给一条把配置送进容器的路（重建，数据卷保留）。
+               nginx 的基准端口同属这一类，改完同样要重建才重新绑宿主端口 -->
+          <button v-if="needsPort(kind)" class="btn btn-sm" data-action="rebuild-service" :data-kind="kind" :data-version="version" :title="t('svc.rebuild.hint')" @click="modals.openRebuildModal(kind, version)">{{ t('svc.rebuild') }}</button>
           <button class="btn btn-sm btn-danger" data-action="uninstall" :data-kind="kind" :data-version="version" @click="modals.openUninstallModal(kind, version)">{{ t('svc.uninstall') }}</button>
         </div>
       </article>

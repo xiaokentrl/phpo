@@ -74,7 +74,7 @@ function buildScript(args: string[], meta: TaskMeta): TaskLine[] {
       for (const sub of VERSION_SUBDIRS[kind] || []) lines.push({ t: 'ok', s: `  ✓ ${verRoot(env, kind, version)}/${sub}/` })
       lines.push({ t: 'meta', s: '[3/6] Write config.yaml' })
       if (meta.port) {
-        const key = kind === 'nginx' ? 'NGINX_PORT' : `${kind.toUpperCase()}_${version.replace(/\./g, '')}_PORT`
+        const key = `${kind.toUpperCase()}_${version.replace(/\./g, '')}_PORT`
         lines.push({ t: 'ok', s: `  ✓ ${key}=${meta.port}` })
       }
       if (meta.password) {

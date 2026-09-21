@@ -103,7 +103,6 @@ const messages: Record<string, string> = {
   "svc.rebuild.desc": "Ports and passwords are fixed when the container is created, so a rebuild is what pushes your edit into this version. Data volumes and host directories are preserved.",
   "svc.rebuild.warn1": "{kind} {version} stops briefly during the rebuild; apps connected to it will drop.",
   "svc.rebuild.warn2": "If the new port is taken by another service, the rebuild is refused and the running container stays untouched.",
-  "svc.portFixed": "Nginx publishes port 80 plus every site port automatically; it cannot be changed here.",
   "svc.password": "Password",
   "svc.showPassword": "Show password",
   "svc.hidePassword": "Hide password",

@@ -44,7 +44,7 @@ function normPath(p: string): string {
   return String(p || '').trim().replace(/\/+/g, '/').replace(/\/+$/, '')
 }
 
-// portKey：与后端 store.EnvKeyPort 对齐（大写种类 + 去点版本）；nginx 例外走 NGINX_PORT
+// portKey：与后端 config.EnvKeyPort 对齐（大写种类 + 去点版本）；nginx 同键，无版本无关键
 function portKey(kind: string, version: string): string {
   return `${kind.toUpperCase()}_${String(version).replace(/\./g, '')}_PORT`
 }
@@ -221,7 +221,7 @@ export function usePreflight() {
         if (!SVC_META[kind as ServiceKind]) { errors.push(PF.svcMissing); break }
         if (!installed(kind).includes(version)) { errors.push(`${PF.notInstalled}: ${kind} ${version}`); break }
         if (field === 'port') {
-          const cur = kind === 'nginx' ? app.env.NGINX_PORT : app.env[portKey(kind, version)]
+          const cur = app.env[portKey(kind, version)]
           const pp = validatePort(newValue, { exclude: parseInt(String(cur), 10) })
           if (!pp.ok) errors.push(pp.msg!)
         }
