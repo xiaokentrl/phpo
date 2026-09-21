@@ -555,6 +555,37 @@ func TestSiteService_Remove_HostsWarningKeepsGoing(t *testing.T) {
 	}
 }
 
+// failingPublisher 模拟建站最后一步（发布端口到 nginx）失败，用于验证整体回滚
+type failingPublisher struct{ err error }
+
+func (f failingPublisher) RepublishNginx(context.Context, []int) error { return f.err }
+
+// TestSiteService_Add_RollsBackHostsWhenLaterStepFails 建站末步失败必须连 hosts 一起回滚：
+// 站点没建成却在 /etc/hosts 留下解析行 = 脏状态（§0.2-19 失败必须回滚、§5.13.13 不留无名资源）
+func TestSiteService_Add_RollsBackHostsWhenLaterStepFails(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	hostsPath := filepath.Join(filepath.Dir(env.PHPOHome), "hosts")
+	svc.SetNginxPublisher(failingPublisher{err: errors.New("nginx 容器重建失败")})
+
+	if err := svc.Add(ctx, AddInput{Domain: "demo.test", Port: 8090, PHP: "8.4"}); err == nil {
+		t.Fatal("发布端口失败应让建站失败")
+	}
+	b, e := os.ReadFile(hostsPath)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if hosts.Has(string(b), "127.0.0.1", "demo.test") {
+		t.Fatalf("建站失败后 hosts 仍留着该域名（孤儿条目）:\n%s", b)
+	}
+	if !hosts.Has(string(b), "127.0.0.1", "localhost") {
+		t.Fatalf("回滚不得动无关条目:\n%s", b)
+	}
+	if len(st.sites) != 0 {
+		t.Fatalf("任务失败不应执行 Apply 段落库: %+v", st.sites)
+	}
+}
+
 // TestSiteService_AddHosts 手动补写 hosts 走真实 Manager：缺失→补上→再点幂等，且广播快照
 func TestSiteService_AddHosts(t *testing.T) {
 	ctx := context.Background()

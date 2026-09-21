@@ -16,6 +16,7 @@ permissions:
 env:
   GO_VERSION: "1.27"
   NODE_VERSION: "22"
+  WAILS_VERSION: "v3.0.0-beta.23"
 
 jobs:
   go:
@@ -49,11 +50,19 @@ jobs:
           go run ./scripts/check-docker-naming.go
           go run ./scripts/check-cache-manifest.go
 
+  # 说明：本作业与 go 作业共用同一构建口径（wails3 task），且必须先有 TS 绑定。
+  # frontend/bindings/ 是 wails3 生成物且被 gitignore（§4.1），全新 checkout 里并不存在，
+  # 而 vue-tsc --noEmit 静态导入它——直接 pnpm build 会因 20 处 TS2307 恒红。
+  # bindings 的生成已收进 Taskfile 的 frontend:build 依赖，这里不再单列，避免两处口径漂移。
   frontend:
     name: Frontend build
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
 
       - uses: pnpm/action-setup@v4
         with:
@@ -65,8 +74,18 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
+      - name: Install webkit2gtk toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
       - name: Install deps
         run: pnpm -C frontend install --frozen-lockfile
 
       - name: Build
-        run: pnpm -C frontend build
+        run: wails3 task frontend:build

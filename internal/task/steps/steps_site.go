@@ -98,11 +98,13 @@ func (s *WriteVHost) Rollback(_ context.Context) error {
 	return s.mgr.DeleteFile(s.domain)
 }
 
-// AddHosts 追加 hosts 条目；提权被拒/不可写仅记录 warning，不阻断建站
+// AddHosts 追加 hosts 条目；提权被拒/不可写仅记录 warning，不阻断建站。
+// 回滚撤下本步写入的行：建站任务后续步骤（如发布端口）失败时，不能给一个没建成的站点留下解析。
 type AddHosts struct {
 	task.BaseStep
 	hosts  HostsOps
 	domain string
+	added  bool // 仅当本步真写入过才回滚——「已存在跳过」的条目可能是用户手工写的
 }
 
 func NewAddHosts(name string, h HostsOps, domain string) *AddHosts {
@@ -120,11 +122,20 @@ func (s *AddHosts) Execute(_ context.Context, log task.StepLog) error {
 		log.Log("err", res.Warning)
 	}
 	if res.Changed {
+		s.added = true
 		log.Log("ok", "已添加 hosts: 127.0.0.1 "+s.domain)
 	} else {
 		log.Log("dim", "hosts 已存在，跳过")
 	}
 	return nil
+}
+
+func (s *AddHosts) Rollback(_ context.Context) error {
+	if !s.added {
+		return nil
+	}
+	_, err := s.hosts.Remove(s.domain)
+	return err
 }
 
 // RemoveHosts 删除 hosts 条目（删站回收，不留孤儿行）；提权被拒/不可写仅记录警告，不阻断删站。

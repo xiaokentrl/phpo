@@ -27,8 +27,11 @@ tasks:
     cmds:
       - pnpm -C frontend install --frozen-lockfile
 
+  # bindings 是 gitignore 的生成物（§4.1），而 pnpm build 的 vue-tsc 依赖它——在全新 checkout
+  # （CI / release runner）上缺它就恒红，所以把生成挂成前端构建的前置，不靠开发者手工记得跑。
   frontend:build:
-    desc: 构建前端产物到 frontend/dist
+    desc: 构建前端产物到 frontend/dist（先生成 TS 绑定）
+    deps: [bindings]
     cmds:
       - pnpm -C frontend build
 

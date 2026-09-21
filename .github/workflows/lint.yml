@@ -13,6 +13,7 @@ permissions:
 env:
   GO_VERSION: "1.27"
   NODE_VERSION: "22"
+  WAILS_VERSION: "v3.0.0-beta.23"
 
 jobs:
   go-lint:
@@ -50,11 +51,17 @@ jobs:
             | sh -s -- -b "$(go env GOPATH)/bin" v1.61.0
           "$(go env GOPATH)/bin/golangci-lint" run ./...
 
+  # vue-tsc 静态导入 frontend/bindings/（wails3 生成物且被 gitignore），全新 checkout 必须先出绑定，
+  # 否则 typecheck 作业与 CI 的前端作业一样恒红。工具链同 ci.yml frontend 作业。
   frontend-lint:
     name: Frontend typecheck
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
 
       - uses: pnpm/action-setup@v4
         with:
@@ -65,6 +72,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install webkit2gtk toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+
+      - name: Install Wails CLI
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Generate TS bindings
+        run: wails3 generate bindings -ts -clean
 
       - name: Install deps
         run: pnpm -C frontend install --frozen-lockfile
