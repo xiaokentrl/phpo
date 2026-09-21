@@ -18,10 +18,11 @@ import (
 
 // fakeDocker 内存容器世界（name -> running）+ 数据卷（卸载不得触碰）
 type fakeDocker struct {
-	containers map[string]bool
-	volumes    map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
-	lastSpec   map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
-	published  map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
+	containers  map[string]bool
+	volumes     map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
+	lastSpec    map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
+	published   map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
+	createCalls int                             // 建容器次数（「未变即不重建」的判据）
 }
 
 func newFakeDocker() *fakeDocker {
@@ -43,6 +44,7 @@ func (f *fakeDocker) ManagedContainers(context.Context) ([]engine.ActualState, e
 func (f *fakeDocker) CreateServiceContainer(_ context.Context, _ config.Env, spec engine.ContainerSpec) (string, error) {
 	name := dockerutil.ContainerName(spec.Kind, spec.Version)
 	f.containers[name] = false // 新建即停止
+	f.createCalls++
 	if f.lastSpec == nil {
 		f.lastSpec = map[string]engine.ContainerSpec{}
 	}
@@ -89,6 +91,11 @@ func (f *fakeDocker) PublishedPorts(_ context.Context, name string) ([]int, erro
 	out := make([]int, len(f.published[name]))
 	copy(out, f.published[name])
 	return out, nil
+}
+
+// ContainerRunning 假世界以 containers[name] 记运行态；无容器即 false（不报错）
+func (f *fakeDocker) ContainerRunning(_ context.Context, name string) (bool, error) {
+	return f.containers[name], nil
 }
 
 func parseName(name string) (kind, ver string, ok bool) {

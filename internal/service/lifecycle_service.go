@@ -25,6 +25,7 @@ type DockerOps interface {
 	RemoveContainer(ctx context.Context, name string) error
 	PreCleanContainer(ctx context.Context, name string) error
 	PublishedPorts(ctx context.Context, name string) ([]int, error)
+	ContainerRunning(ctx context.Context, name string) (bool, error)
 }
 
 // StateStore SQLite 权威视图读写子集（*store.Store 满足）
@@ -189,6 +190,9 @@ func (l *LifecycleService) installSpec(ctx context.Context, kind model.ServiceKi
 
 // RepublishNginx 重建 nginx 单例容器以重绑站点端口并集（1:1 host==container）。
 // Docker 端口绑定只能在建容器时确定，改站点端口须重建 nginx；未安装 nginx 则跳过（建站不应强起 nginx）。
+// 只在 nginx **正在服务**时动手：用户主动停掉（或手工删掉）的容器不得被站点写链路悄悄拉起，
+// 停机期间站点保持降级（§5.8），端口等 nginx 下次启动的就绪补齐再绑。
+// 发布集与容器当前绑定一致即跳过：重建等于把整站白闪断一次，而校对会被补齐链路反复触发。
 // 本次新增的宿主端口先实探再动手：占用即在 Pre-Clean 之前拒绝，保住正在服务的 nginx。
 func (l *LifecycleService) RepublishNginx(ctx context.Context, ports []int) error {
 	snap, err := l.store.BuildSnapshot()
@@ -200,11 +204,25 @@ func (l *LifecycleService) RepublishNginx(ctx context.Context, ports []int) erro
 		return nil
 	}
 	ver := vers[0]
+	name := dockerutil.ContainerName(string(model.KindNginx), ver)
+	running, err := l.docker.ContainerRunning(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !running {
+		return nil
+	}
 	spec, err := l.nginx.specWith(l.env, ver, ports)
 	if err != nil {
 		return err
 	}
-	name := dockerutil.ContainerName(string(model.KindNginx), ver)
+	held, err := l.docker.PublishedPorts(ctx, name)
+	if err != nil {
+		return err
+	}
+	if sameHostPorts(spec.PortMap, held) {
+		return nil
+	}
 	if err := l.assertSitePortsBindable(ctx, name, spec); err != nil {
 		return err
 	}
@@ -221,6 +239,24 @@ func (l *LifecycleService) RepublishNginx(ctx context.Context, ports []int) erro
 		Rollback:   func(ctx context.Context) error { return l.docker.RemoveContainer(ctx, name) },
 	}
 	return op.Run(ctx)
+}
+
+// sameHostPorts 容器当前发布到宿主的端口集是否已与目标一致（顺序无关；重复值按集合比）
+func sameHostPorts(want map[string]string, held []int) bool {
+	got := make(map[int]bool, len(held))
+	for _, p := range held {
+		got[p] = true
+	}
+	if len(got) != len(want) {
+		return false
+	}
+	for _, hostPort := range want {
+		p, err := strconv.Atoi(hostPort)
+		if err != nil || !got[p] {
+			return false
+		}
+	}
+	return true
 }
 
 // Start 启动已安装容器（幂等：已运行则 Post-Verify 直接通过）

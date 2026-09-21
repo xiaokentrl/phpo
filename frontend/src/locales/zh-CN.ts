@@ -221,7 +221,7 @@ const messages: Record<string, string> = {
   "settings.appearance.hint": "即时生效",
   "settings.language": "语言",
   "settings.tray": "托盘",
-  "settings.tray.hint": "即时生效",
+  "settings.tray.hint": "即时生效（需系统托盘支持）",
   "settings.tray.minimize": "关闭窗口时最小化到托盘",
   "settings.tray.pushFailed": "托盘偏好未能下发到系统托盘：界面已保存，但原生托盘未同步。请重试勾选，或检查系统托盘支持（Linux 需 libappindicator）。",
   "settings.tray.show": "显示托盘图标",

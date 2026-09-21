@@ -460,13 +460,14 @@ func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
 		t.Fatalf("补齐后应发布 {8081}，实得 %v", pub.calls)
 	}
 
-	// 幂等：再次补齐不重复发布（无待补站点）
+	// 幂等仍需校对端口：站点全都有 conf 时不写盘，但 nginx 容器实际绑的端口集可能已与站点不符
+	// （停机期间删过站、或重发布被跳过）。是否真重建由 RepublishNginx 按发布集判等决定。
 	pub.calls = nil
 	if err := svc.ReconcileServe(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(pub.calls) != 0 {
-		t.Fatalf("无待补站点时不应重发布，实得 %v", pub.calls)
+	if len(pub.calls) != 1 || !containsInt(pub.calls[0], 8081) || containsInt(pub.calls[0], 3306) {
+		t.Fatalf("无待补站点时仍应以权威发布集 {8081} 校对一次，实得 %v", pub.calls)
 	}
 }
 

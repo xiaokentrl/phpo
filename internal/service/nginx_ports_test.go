@@ -185,6 +185,55 @@ func TestRepublishNginx_RecreatesRunningWithPorts(t *testing.T) {
 	}
 }
 
+// TestRepublishNginx_SkipsWhenStopped 用户停掉（或手工删掉）nginx 后，站点写链路不得把它悄悄拉起：
+// 停机期间站点维持降级（§5.8），端口等 nginx 下次启动的就绪补齐再绑——
+// 「我关掉了 nginx，它却因为我在改站点又活了并占回 80」是不可接受的越权。
+func TestRepublishNginx_SkipsWhenStopped(t *testing.T) {
+	l, d, s, _ := newSvc()
+	_ = s.SetInstalled("nginx", "alpine", true)
+	name := dockerutil.ContainerName("nginx", "alpine")
+	d.containers[name] = false // 已装、已停
+
+	if err := l.RepublishNginx(context.Background(), []int{8090}); err != nil {
+		t.Fatal(err)
+	}
+	if d.containers[name] {
+		t.Fatal("站点写链路不得启动用户已停止的 nginx")
+	}
+	if d.createCalls != 0 {
+		t.Fatalf("停止的 nginx 不得被重建，实得建容器 %d 次", d.createCalls)
+	}
+}
+
+// TestRepublishNginx_SkipsRebuildWhenPortsUnchanged 在跑容器的发布集与目标一致时不重建：
+// 端口校对会被补齐链路反复触发，无差异也重建等于每次白闪断一次整站。
+func TestRepublishNginx_SkipsRebuildWhenPortsUnchanged(t *testing.T) {
+	l, d, s, _ := newSvc()
+	_ = s.SetInstalled("nginx", "alpine", true)
+	name := dockerutil.ContainerName("nginx", "alpine")
+	d.containers[name] = true
+	d.published[name] = []int{80, 8090}
+
+	// 目标并集与容器当前发布集相同（顺序无关）：不重建、不重启
+	if err := l.RepublishNginx(context.Background(), []int{8090, 80}); err != nil {
+		t.Fatal(err)
+	}
+	if d.createCalls != 0 {
+		t.Fatalf("端口集未变不应重建 nginx，实得 %d 次", d.createCalls)
+	}
+
+	// 删站让开 8090 后校对：发布集变小即必须重建，否则 nginx 白占着已无人使用的宿主端口
+	if err := l.RepublishNginx(context.Background(), []int{80}); err != nil {
+		t.Fatal(err)
+	}
+	if d.createCalls != 1 {
+		t.Fatalf("端口集变了应重建一次，实得 %d 次", d.createCalls)
+	}
+	if got := d.lastSpec[name].PortMap; len(got) != 1 || got["80/tcp"] != "80" {
+		t.Fatalf("重建应只绑 {80}，实得 %v", got)
+	}
+}
+
 func TestRepublishNginx_SkipsWhenNotInstalled(t *testing.T) {
 	l, d, _, _ := newSvc() // nginx 未安装
 	if err := l.RepublishNginx(context.Background(), []int{8090}); err != nil {

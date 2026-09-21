@@ -221,7 +221,7 @@ const messages: Record<string, string> = {
   "settings.appearance.hint": "Instant",
   "settings.language": "Language",
   "settings.tray": "Tray",
-  "settings.tray.hint": "Instant",
+  "settings.tray.hint": "Instant (needs system tray support)",
   "settings.tray.minimize": "Minimize to tray on close",
   "settings.tray.pushFailed": "Tray preferences were saved in the app but could not be applied to the system tray. Toggle again to retry, or check tray support (Linux needs libappindicator).",
   "settings.tray.show": "Show tray icon",

@@ -141,11 +141,19 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 	return err
 }
 
-// ReconcileServe 补齐降级站点：nginx 就绪（安装/启动）后，把「本应对外服务但 conf 缺失」的站点正文写盘、
-// 重载 nginx 并重发布站点端口。幂等：已落盘或仍不就绪（PHP 缺失 / 端口被占）的站点跳过，不重复触发发布。
+// ReconcileServe 就绪入口（nginx 安装/启动、PHP 装重建、数据服务卸载后）：补齐降级站点，
+// 并额外用权威发布集校对一次宿主端口——停机期间的站点写操作可能没发布成功，容器绑的端口已与站点不符。
+func (s *SiteService) ReconcileServe(ctx context.Context) error {
+	return s.reconcileServe(ctx, true)
+}
+
+// reconcileServe 补齐降级站点：把「本应对外服务但 conf 缺失」的站点正文写盘、重载 nginx，再按需在发布集
+// 变化后重绑宿主端口。幂等：已落盘或仍不就绪（PHP 缺失 / 端口被占）的站点跳过补写。
+// checkPorts=true 时即使没有站点待补 vhost 也校对一次宿主端口（容器绑的集可能已与站点不符）；
+// false 只在补写过 vhost 后才发布——站点写链路自身已在步骤里发布过一份并集，避免同一次操作重复重建 nginx。
 // 单站写失败不阻断其余站点，失败域名聚合为一个错误交由调用方记日志——站点维持降级，后续任一站点写操作仍可自愈。
 // 由 nginx 安装/启动任务内联调用，故自身不再产出 task（task.Manager 单飞，嵌套运行会 ErrBusy）。
-func (s *SiteService) ReconcileServe(ctx context.Context) error {
+func (s *SiteService) reconcileServe(ctx context.Context, checkPorts bool) error {
 	sites, err := s.store.ListSites()
 	if err != nil {
 		return err
@@ -174,21 +182,23 @@ func (s *SiteService) ReconcileServe(ctx context.Context) error {
 		}
 		healed = append(healed, st.Domain)
 	}
+	if len(healed) > 0 && s.reload != nil {
+		if err := s.reload.Reload(ctx); err != nil {
+			return fmt.Errorf("补齐 %d 个站点后重载 nginx 失败: %w", len(healed), err)
+		}
+	}
+	// 端口校对与补写盘解耦：就绪入口即使没有站点待补 vhost，在跑容器的宿主端口集也可能已与站点不符
+	// （停机期间删过站、重发布当时被跳过）。是否真重建由 RepublishNginx 按发布集判等决定。
+	if s.publisher != nil && (checkPorts || len(healed) > 0) {
+		if err := s.publisher.RepublishNginx(ctx, s.publishPorts(sites, "", 0)); err != nil {
+			return err
+		}
+	}
 	if len(healed) == 0 {
 		if len(failed) > 0 {
 			return fmt.Errorf("部分站点 vhost 补齐失败: %s", strings.Join(failed, ", "))
 		}
 		return nil
-	}
-	if s.reload != nil {
-		if err := s.reload.Reload(ctx); err != nil {
-			return fmt.Errorf("补齐 %d 个站点后重载 nginx 失败: %w", len(healed), err)
-		}
-	}
-	if s.publisher != nil {
-		if err := s.publisher.RepublishNginx(ctx, s.publishPorts(sites, "", 0)); err != nil {
-			return err
-		}
 	}
 	if err := s.emit(); err != nil {
 		return err
@@ -397,9 +407,10 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 
 // healFreed 本次站点写操作让出的端口（删站、改端口）可能正卡着别的降级站点：落库后顺手补齐它们。
 // 只能挂在 Apply 段末尾——步骤阶段库里仍是旧占用表，那时补齐会照旧判定「端口被占」而空跑。
+// 不校对宿主端口（checkPorts=false）：本次操作已按当轮并集发布过，只有真补齐了 vhost 才需再发一次。
 // 失败只记一行 task:log 不上抛：本次删除/改动已成功，让补齐失败回滚整任务与本意相反（§3.2 原则 7）。
 func (s *SiteService) healFreed(taskID string, ctx context.Context) {
-	if err := s.ReconcileServe(ctx); err != nil {
+	if err := s.reconcileServe(ctx, false); err != nil {
 		task.Logf(s.emitter, taskID, model.LogErr, "补齐其他降级站点失败: "+err.Error())
 	}
 }
