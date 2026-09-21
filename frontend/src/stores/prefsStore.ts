@@ -1,6 +1,8 @@
-// 主题与托盘偏好：6 套 data-theme + 托盘开关，仅存 localStorage（§3.1 原则 5：UI 偏好留前端）
+// 主题与托盘偏好：6 套 data-theme + 托盘开关，仅存 localStorage（§3.1 原则 5：UI 偏好留前端）；
+// 托盘两项额外投影到原生外壳（api/state.ts#setTrayPrefs），localStorage 仍是唯一权威。
 import { defineStore } from 'pinia'
 import { reactive, ref, watchEffect } from 'vue'
+import { setTrayPrefs } from '@/api/state'
 import type { TrayPrefs } from '@/types'
 
 export const THEME_IDS = ['midnight', 'light', 'oled', 'forest', 'ocean', 'sakura'] as const
@@ -53,6 +55,19 @@ export const usePrefsStore = defineStore('prefs', () => {
     }
   })
 
+  // 后端挂载完成前不投影：绑定注入晚于组件 setup，抢跑会拿到「服务尚未初始化」。
+  // 由 App.vue 在 waitForBackend() 之后调 syncTrayPrefs() 起闸，此后勾选变化自动跟随。
+  let mirroring = false
+  function mirrorTray(): void {
+    if (!mirroring) return
+    void setTrayPrefs(tray.enabled, tray.minimizeOnClose).catch(() => {})
+  }
+
+  function syncTrayPrefs(): void {
+    mirroring = true
+    mirrorTray()
+  }
+
   // 托盘偏好持久化：设置页勾选必须跨重启保留，否则重启即回弹为默认（点击无长期效果）
   watchEffect(() => {
     try {
@@ -60,7 +75,8 @@ export const usePrefsStore = defineStore('prefs', () => {
     } catch {
       /* 忽略 */
     }
+    mirrorTray()
   })
 
-  return { theme, tray, setTheme, THEME_IDS }
+  return { theme, tray, setTheme, syncTrayPrefs, THEME_IDS }
 })

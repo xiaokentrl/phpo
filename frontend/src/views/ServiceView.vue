@@ -185,6 +185,8 @@ async function commitPort(version: string): Promise<void> {
           </button>
           <button v-if="state.isServiceRunning(kind, version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version" @click="modals.stopService(kind, version)">{{ t('svc.stop') }}</button>
           <button v-else class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version" @click="modals.startService(kind, version)">{{ t('svc.start') }}</button>
+          <!-- 端口与密码只在建容器时落定：数据服务给一条把配置送进容器的路（重建，数据卷保留） -->
+          <button v-if="needsPassword(kind)" class="btn btn-sm" data-action="rebuild-service" :data-kind="kind" :data-version="version" :title="t('svc.rebuild.hint')" @click="modals.openRebuildModal(kind, version)">{{ t('svc.rebuild') }}</button>
           <button class="btn btn-sm btn-danger" data-action="uninstall" :data-kind="kind" :data-version="version" @click="modals.openUninstallModal(kind, version)">{{ t('svc.uninstall') }}</button>
         </div>
       </article>

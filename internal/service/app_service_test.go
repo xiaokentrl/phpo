@@ -158,6 +158,50 @@ type versionProbe struct {
 
 func (p versionProbe) Detect(context.Context) (string, error) { return p.ver, p.err }
 
+// TestAppService_Reinstall_AppliesNewPortAndKeepsData 改端口/密码后必须重建容器才生效（Start 只启停同名容器）；
+// 重建走同一条三段式任务通道，且只换容器不动数据卷。
+func TestAppService_Reinstall_AppliesNewPortAndKeepsData(t *testing.T) {
+	a, d, s, em, _, _ := newApp(t, nil)
+	ctx := context.Background()
+	if err := a.Install(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	s.setPort("mysql", "8.4", 3307)
+
+	if err := a.Reinstall(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got := publishedPort(d, "phpo-mysql-8.4", "3306/tcp"); got != "3307" {
+		t.Fatalf("重建后应发布新端口 3307，实得 %q", got)
+	}
+	if !d.volumes["phpo-mysql-8.4-data"] {
+		t.Fatal("重建不得动数据卷（§5.13.7）")
+	}
+	for _, want := range []string{"task:done", "service:changed", "state:changed"} {
+		if !em.has(want) {
+			t.Fatalf("应发 %s，实得 %v", want, em.events)
+		}
+	}
+}
+
+// TestAppService_Reinstall_BlockedWhenDockerDown 硬红线 7：Docker 不可用即拒绝，且在跑容器原样保留
+func TestAppService_Reinstall_BlockedWhenDockerDown(t *testing.T) {
+	a, d, s, _, _, _ := newApp(t, nil)
+	ctx := context.Background()
+	if err := a.Install(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	s.setPort("mysql", "8.4", 3307)
+	a.probe = okProbe{err: engine.ErrDockerNotRunning}
+
+	if err := a.Reinstall(ctx, model.KindMySQL, "8.4"); err == nil {
+		t.Fatal("Docker 未运行应拒绝重建")
+	}
+	if got := publishedPort(d, "phpo-mysql-8.4", "3306/tcp"); got != "3306" {
+		t.Fatalf("门禁失败时旧容器应原样保留，端口实得 %q", got)
+	}
+}
+
 // TestAppService_DockerStatus 覆盖首启/轮询门禁的四种探测结论（硬红线 7 判定源）
 func TestAppService_DockerStatus(t *testing.T) {
 	cases := []struct {

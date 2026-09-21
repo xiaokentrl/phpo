@@ -104,7 +104,7 @@ func (s *SiteService) Add(ctx context.Context, in AddInput) error {
 	return err
 }
 
-// Remove 删站：根目录入回收站（保留 7 天）→ 删 vhost 文件 → 落库删除；源码目录可经回收站恢复
+// Remove 删站：根目录入回收站（保留 7 天）→ 删 vhost 文件 → 回收 hosts 条目 → 落库删除；源码目录可经回收站恢复
 func (s *SiteService) Remove(ctx context.Context, domain string) error {
 	site, ok := s.find(domain)
 	if !ok {
@@ -117,6 +117,7 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 	stepsList := []task.Step{
 		trashStep,
 		steps.NewDeleteVHostFile("移除 vhost", s.vhosts, domain, prevContent),
+		steps.NewRemoveHosts("回收 hosts", s.hosts, domain),
 	}
 	if rp := s.republishStep(s.publishPorts(mustSites(s.store), domain, 0)); rp != nil {
 		stepsList = append(stepsList, rp)

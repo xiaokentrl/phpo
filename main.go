@@ -26,13 +26,13 @@ func main() {
 		},
 		Services: []application.Service{application.NewService(root)},
 		Mac: application.MacOptions{
-			// 关闭主窗口后驻留托盘，不退出进程
+			// 最后一个窗口关闭不代表退出：退出与否由托盘偏好裁决（见 InstallTray 的 WindowClosing 钩子）
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 	})
-	root.Attach(app)
-
-	app.Window.NewWithOptions(ui.MainWindowOptions())
+	// 窗口必须先于 Attach 创建：托盘要绑定它，点图标才能唤回窗口
+	window := app.Window.NewWithOptions(ui.MainWindowOptions())
+	root.Attach(app, window)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

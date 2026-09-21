@@ -93,11 +93,16 @@ func (m *Manager) mutate(domain string, add bool) (Result, error) {
 		}
 		// 直写被拒：有提权器则经 polkit / UAC / osascript 重写整份；被拒或无提权器降级为人话警告，
 		// 不阻断调用方（§5.7 doctor 口径「无法修改 hosts。请以管理员身份运行」）
+		verb := "添加"
+		if !add {
+			verb = "删除"
+		}
+		guide := fmt.Sprintf("请以管理员身份运行后手动%s：%s %s", verb, m.ip, domain)
 		if m.elevate == nil {
-			return Result{Warning: fmt.Sprintf("无法修改 hosts（%s）。请以管理员身份运行后手动添加：%s %s", m.path, m.ip, domain)}, nil
+			return Result{Warning: fmt.Sprintf("无法修改 hosts（%s）。%s", m.path, guide)}, nil
 		}
 		if e := m.elevate(next); e != nil {
-			return Result{Warning: fmt.Sprintf("提权写入 hosts 失败（%s）：%v。请以管理员身份运行后手动添加：%s %s", m.path, e, m.ip, domain)}, nil
+			return Result{Warning: fmt.Sprintf("提权写入 hosts 失败（%s）：%v。%s", m.path, e, guide)}, nil
 		}
 	}
 	return Result{Changed: true}, nil

@@ -15,7 +15,7 @@ export function usePortSuggest() {
   const { preflight } = usePreflight()
 
   function applyPort(domain: string, desired: number): void {
-    const check = preflight('site-port', { domain, port: desired })
+    const check = preflight('site-port', { domain, newValue: desired })
     if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
     const finalPort = (check.adjusted.port as number | undefined) ?? desired
     const changed = finalPort !== desired

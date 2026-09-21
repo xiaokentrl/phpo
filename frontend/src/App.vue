@@ -10,6 +10,7 @@ import { startDockerPreflight, stopDockerPreflight } from '@/composables/useDock
 import { useAppState } from '@/stores/appState'
 import { hasBackend, waitForBackend } from '@/api/site'
 import { useLayoutStore } from '@/stores/layoutStore'
+import { usePrefsStore } from '@/stores/prefsStore'
 import { useModals } from '@/composables/useModals'
 import { toast } from '@/composables/useToast'
 import ModalRoot from '@/components/common/ModalRoot.vue'
@@ -23,11 +24,13 @@ const { t } = useI18n()
 const app = useAppState()
 const { openThemePicker, openHomeSetupWizard } = useModals()
 useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
+const prefs = usePrefsStore()
 
 onMounted(async () => {
   // 先等宿主 Core 就绪（有界超时）：window._wails 的宿主字段在 WindowLoadFinished 才注入，
   // 可能晚于本挂载钩子。未就绪时 hasBackend 误判为 false 会走 demo、跳过真实 Docker 探测。
   await waitForBackend()
+  prefs.syncTrayPrefs() // 宿主就绪后才把托盘偏好投影到原生外壳；此后勾选变化由 store 自动跟随
   startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
   subscribeUpdater() // 订阅 update:* 事件：后台发现新版本即时提示（硬红线 4）
   subscribeCache() // 订阅 6 类 cache:* 事件：缓存命中/未命中/提升/损坏/清理/临时目录清空落地 cacheStore

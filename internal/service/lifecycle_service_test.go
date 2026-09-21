@@ -4,6 +4,8 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	"phpo/internal/config"
@@ -85,11 +87,12 @@ func parseName(name string) (kind, ver string, ok bool) {
 
 // fakeStore 实现 StateStore
 type fakeStore struct {
-	snap *model.Snapshot
+	snap  *model.Snapshot
+	ports map[string]int // "kind version" → 已落库宿主端口（与 snap.Env 同源，模拟 config.yaml）
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{snap: model.NewSnapshot()}
+	return &fakeStore{snap: model.NewSnapshot(), ports: map[string]int{}}
 }
 func (s *fakeStore) BuildSnapshot() (*model.Snapshot, error) { return s.snap, nil }
 func (s *fakeStore) SetInstalled(kind, version string, installed bool) error {
@@ -115,9 +118,18 @@ func (s *fakeStore) SetRunning(kind, version string, running bool) error {
 	return nil
 }
 
-// EnvReader 子集：假件恒返回未设置，使 DBService/RedisService 回落默认密码与端口
+// EnvReader 子集：密码恒回落默认；端口读 setPort 预置值（未设时回落注册表默认）
 func (s *fakeStore) GetPassword(_, _ string) (string, bool, error) { return "", false, nil }
-func (s *fakeStore) GetServicePort(_, _ string) (int, bool, error) { return 0, false, nil }
+func (s *fakeStore) GetServicePort(kind, version string) (int, bool, error) {
+	p, ok := s.ports[kind+"/"+version]
+	return p, ok, nil
+}
+
+// setPort 模拟「改服务端口并落库 config.yaml」：reader 与快照 env 同源，故两处一起写
+func (s *fakeStore) setPort(kind, version string, port int) {
+	s.ports[kind+"/"+version] = port
+	s.snap.Env[config.EnvKeyPort(kind, version)] = strconv.Itoa(port)
+}
 
 // fakeEmitter 捕获事件名序列
 type fakeEmitter struct {
@@ -251,6 +263,94 @@ func TestInstall_UnknownKindErrors(t *testing.T) {
 	// 五类服务（php/nginx/mysql/pgsql/redis）均已注册；未注册种类应报错
 	if err := l.Install(context.Background(), model.ServiceKind("mongodb"), "1"); err == nil {
 		t.Fatal("未注册的服务种类应报错")
+	}
+}
+
+// ---- 重建生效（§5.13.4 幂等「重装」：端口与密码 env 只能在建容器时落定）----
+
+// publishedPort 读 fake 记录的最近一次创建 spec 里某容器端口发布到的宿主端口
+func publishedPort(d *fakeDocker, name, containerPort string) string {
+	return d.lastSpec[name].PortMap[containerPort]
+}
+
+func TestReinstall_AppliesNewHostPortAndPreservesVolumes(t *testing.T) {
+	l, d, s, em := newSvc()
+	ctx := context.Background()
+	if err := l.Install(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got := publishedPort(d, "phpo-mysql-8.4", "3306/tcp"); got != "3306" {
+		t.Fatalf("安装应发布默认端口 3306，实得 %q", got)
+	}
+	s.setPort("mysql", "8.4", 3307)
+
+	// 停/起只是启停同名容器，不重建 → 端口不变（这正是「改了端口不生效」的根因）
+	if err := l.Stop(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Start(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got := publishedPort(d, "phpo-mysql-8.4", "3306/tcp"); got != "3306" {
+		t.Fatalf("Start 不得改端口，实得 %q", got)
+	}
+
+	before := len(d.volumes)
+	if err := l.Reinstall(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got := publishedPort(d, "phpo-mysql-8.4", "3306/tcp"); got != "3307" {
+		t.Fatalf("重建后应发布新端口 3307，实得 %q", got)
+	}
+	if !d.containers["phpo-mysql-8.4"] {
+		t.Fatal("重建后应在运行")
+	}
+	if len(d.volumes) != before {
+		t.Fatalf("重建只换容器，不得动数据卷，卷数 %d→%d", before, len(d.volumes))
+	}
+	if !em.has("state:changed") {
+		t.Fatalf("重建应发 state:changed，实得 %v", em.events)
+	}
+}
+
+// TestReinstall_BusyPortFailsBeforeDestroyingRunningContainer 端口被别的服务占了就拒绝重建：
+// 否则 Pre-Clean 已删掉在跑的容器，新容器却绑不上端口——服务白丢（§5.13.13 不留脏状态）
+func TestReinstall_BusyPortFailsBeforeDestroyingRunningContainer(t *testing.T) {
+	l, d, s, _ := newSvc()
+	ctx := context.Background()
+	if err := l.Install(ctx, model.KindRedis, "8"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Install(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	s.setPort("mysql", "8.4", 6379) // 改到 redis 已在用的端口
+
+	err := l.Reinstall(ctx, model.KindMySQL, "8.4")
+	if err == nil || !strings.Contains(err.Error(), "6379") {
+		t.Fatalf("端口冲突应报错并点明端口号，实得 %v", err)
+	}
+	if !d.containers["phpo-mysql-8.4"] {
+		t.Fatal("冲突时不得已删/停正在运行的容器")
+	}
+	if got := publishedPort(d, "phpo-mysql-8.4", "3306/tcp"); got != "3306" {
+		t.Fatalf("冲突时旧容器应原样保留，端口实得 %q", got)
+	}
+	if got := publishedPort(d, "phpo-redis-8", "6379/tcp"); got != "6379" {
+		t.Fatalf("redis 不应被牵连，端口实得 %q", got)
+	}
+}
+
+func TestReinstall_RequiresInstalled(t *testing.T) {
+	l, d, _, _ := newSvc()
+	// Docker 里有同名容器，但库里未记为已安装 → 重建不是卸载/安装的替代入口，应拒绝且不碰容器
+	d.containers["phpo-mysql-8.4"] = true
+	if err := l.Reinstall(context.Background(), model.KindMySQL, "8.4"); err == nil ||
+		!strings.Contains(err.Error(), "未安装") {
+		t.Fatalf("未安装的服务重建应报未安装，实得 %v", err)
+	}
+	if !d.containers["phpo-mysql-8.4"] {
+		t.Fatal("拒绝重建时不得动容器")
 	}
 }
 

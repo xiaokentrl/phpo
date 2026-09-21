@@ -92,6 +92,27 @@ func TestManager_MissingFileTreatedEmpty(t *testing.T) {
 	}
 }
 
+// TestManager_RemoveWarningSaysDelete 删除路径的警告必须让用户「手动删除」，不能沿用添加措辞
+func TestManager_RemoveWarningSaysDelete(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 下写只读文件不会失败，降级分支不触发")
+	}
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte("127.0.0.1 localhost demo.test\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	res, err := NewAt(path).Remove("demo.test")
+	if err != nil || res.Changed {
+		t.Fatalf("只读文件应降级为警告: %+v %v", res, err)
+	}
+	if !strings.Contains(res.Warning, "手动删除") || strings.Contains(res.Warning, "手动添加") {
+		t.Fatalf("删除的警告应指向手动删除该条目: %q", res.Warning)
+	}
+	if !strings.Contains(res.Warning, "127.0.0.1 demo.test") {
+		t.Fatalf("警告要给出待删的具体条目: %q", res.Warning)
+	}
+}
+
 // TestManager_Elevate 直写被拒时的两条降级路径：提权成功即写入；提权失败回人话警告而不是 error（§5.7）
 func TestManager_Elevate(t *testing.T) {
 	if os.Geteuid() == 0 {

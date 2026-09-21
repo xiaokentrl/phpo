@@ -34,10 +34,18 @@ import (
 )
 
 // fakeHosts 满足 steps.HostsOps：记录域名而不写系统 hosts（验收只关注 nginx/vhost 真链路）
-type fakeHosts struct{ added []string }
+type fakeHosts struct {
+	added   []string
+	removed []string
+}
 
 func (f *fakeHosts) Add(domain string) (hosts.Result, error) {
 	f.added = append(f.added, domain)
+	return hosts.Result{Changed: true}, nil
+}
+
+func (f *fakeHosts) Remove(domain string) (hosts.Result, error) {
+	f.removed = append(f.removed, domain)
 	return hosts.Result{Changed: true}, nil
 }
 

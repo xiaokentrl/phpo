@@ -39,7 +39,11 @@ async function persist(next: string, prev: string): Promise<void> {
   revealed.value = false
   try {
     await setPassword(props.kind, props.version, next)
-    if (hasBackend()) await syncState() // 写后拉权威快照：回显与 config.yaml 即刻一致（硬红线 4）
+    if (hasBackend()) {
+      await syncState() // 写后拉权威快照：回显与 config.yaml 即刻一致（硬红线 4）
+      // 密码经容器 env 注入，只能在建容器时落定：不重建就还是旧密码在跑，如实说不假装已切换
+      toast(t('svc.passwordPending'), 'info', 5600)
+    }
   } catch (e) {
     toast(String(e), 'err', 4600)
     return

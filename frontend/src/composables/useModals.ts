@@ -7,7 +7,8 @@ import { useI18n } from './useI18n'
 import { toast } from './useToast'
 import { runTask, submitWrite, type TaskMeta } from './useTask'
 import { removeSite, hasBackend } from '@/api/site'
-import { startService as svcStart, stopService as svcStop, removeService as svcRemove } from '@/api/lifecycle'
+import { startService as svcStart, stopService as svcStop, removeService as svcRemove, reinstallService as svcReinstall } from '@/api/lifecycle'
+import { envKeyPort } from '@/api/env'
 import { listBackups, createBackup, restoreBackup, deleteBackup, downloadBackup } from '@/api/backup'
 import { SVC_META } from '@/constants/service'
 import InstallModal from '@/components/business/InstallModal.vue'
@@ -126,6 +127,26 @@ export function useModals() {
   function stopService(kind: string, version: string): void {
     const label = `${t('svc.stop')} ${t(kindMeta(kind).titleKey)} ${version}`
     dispatchLifecycle('service-stop', kind, version, label, svcStop, [kind, 'stop', version])
+  }
+  // openRebuildModal 重建生效：服务端口与密码只在建容器时落定，改完必须重建（数据卷保留，非危险操作）
+  function openRebuildModal(kind: string, version: string): void {
+    const label = `${t('svc.rebuild')} ${t(kindMeta(kind).titleKey)} ${version}`
+    modal.open(DangerConfirm, {
+      title: label,
+      description: t('svc.rebuild.desc'),
+      warnings: [
+        { text: t('svc.rebuild.warn1', { kind, version }) },
+        { text: t('svc.rebuild.warn2', { kind, version }), keep: true },
+      ],
+      cliPreview: `phpo ${kind} reinstall ${version}`,
+      confirmLabel: t('svc.rebuild'),
+      onConfirm: () => {
+        // 复用 update-config 裁决（端口占用/未安装）；真正的占用预检在后端 Pre-Clean 之前，冲突即拒绝且不碰容器
+        const check = preflight('update-config', { kind, version, field: 'port', newValue: app.env[envKeyPort(kind, version)] || '' })
+        if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
+        submitWrite([kind, 'reinstall', version], label, { type: 'update-config', kind, version }, () => svcReinstall(kind, version))
+      },
+    })
   }
 
   function openSiteRemoveModal(domain: string): void {
@@ -279,7 +300,7 @@ export function useModals() {
     openConfigModal, openPhpExtensionsModal, openThemePicker, openHomeSetupWizard,
     openUpdateModal, openCleanupModal, openTrashModal,
     openUninstallModal, openSiteRemoveModal, openDeleteBackupModal, openRestoreModal,
-    startService, stopService,
+    startService, stopService, openRebuildModal,
     runGuardedTask,
     runBackup, downloadBackupFile, refreshBackups,
   }

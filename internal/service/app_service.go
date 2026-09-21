@@ -101,25 +101,49 @@ func (s *AppService) Install(ctx context.Context, kind model.ServiceKind, versio
 	t := &task.Task{
 		ID:    s.newID("install"),
 		Label: "安装 " + name,
-		Steps: []task.Step{
-			steps.NewInstallImageStep("准备镜像", s.cache, s.probe, s.env, string(kind), version),
-			&task.FuncStep{StepName: "落盘工作目录与配置", Exec: func(_ context.Context, log task.StepLog) error {
-				return prepareService(s.env, kind, version, log)
-			}},
-			&task.FuncStep{StepName: "创建并启动 " + name, Exec: func(ctx context.Context, log task.StepLog) error {
-				if err := s.lifecycle.Install(ctx, kind, version); err != nil {
-					return err
-				}
-				// 校验通过才报成功：lifecycle 的 Post-Verify 已按 Docker 实际态确认在运行
-				log.Log(string(model.LogDim), name+" 运行状态校验通过")
-				return nil
-			}},
-		},
+		Steps: s.serviceSteps(kind, version, s.lifecycle.Install),
 	}
 	if st := s.healStep(kind); st != nil {
 		t.Steps = append(t.Steps, st)
 	}
 	return s.run(ctx, t)
+}
+
+// Reinstall 重建容器，让只有建容器时才落定的配置真正生效：宿主端口发布 + 密码 env。
+// 改完端口/密码后 Start 只启停同名容器，配置不会进运行中的容器，必须走这里（§5.13.4 幂等「重装」）。
+// 与 Install 共用前置两步（镜像、工作目录与配置），差别只在末段走 lifecycle.Reinstall：
+// 未安装即拒绝，端口被占在 Pre-Clean 之前拒绝，在跑的容器与数据卷都不动。
+func (s *AppService) Reinstall(ctx context.Context, kind model.ServiceKind, version string) error {
+	name := dockerutil.ContainerName(string(kind), version)
+	t := &task.Task{
+		ID:    s.newID("reinstall"),
+		Label: "重建 " + name,
+		Steps: s.serviceSteps(kind, version, s.lifecycle.Reinstall),
+	}
+	if st := s.healStep(kind); st != nil {
+		t.Steps = append(t.Steps, st)
+	}
+	return s.run(ctx, t)
+}
+
+// serviceSteps 安装/重建共用的三步：缓存优先备镜像 → 落盘工作目录与配置 → 建（同名先清）并启动容器；
+// apply 为末段的生命周期动作（Install 或 Reinstall）
+func (s *AppService) serviceSteps(kind model.ServiceKind, version string, apply func(context.Context, model.ServiceKind, string) error) []task.Step {
+	name := dockerutil.ContainerName(string(kind), version)
+	return []task.Step{
+		steps.NewInstallImageStep("准备镜像", s.cache, s.probe, s.env, string(kind), version),
+		&task.FuncStep{StepName: "落盘工作目录与配置", Exec: func(_ context.Context, log task.StepLog) error {
+			return prepareService(s.env, kind, version, log)
+		}},
+		&task.FuncStep{StepName: "创建并启动 " + name, Exec: func(ctx context.Context, log task.StepLog) error {
+			if err := apply(ctx, kind, version); err != nil {
+				return err
+			}
+			// 校验通过才报成功：lifecycle 的 Post-Verify 已按 Docker 实际态确认在运行
+			log.Log(string(model.LogDim), name+" 运行状态校验通过")
+			return nil
+		}},
+	}
 }
 
 // Start 启动已安装容器

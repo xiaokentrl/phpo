@@ -472,14 +472,87 @@ func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
 
 // hostsFake 可编排的 HostsOps：记录调用次数，按预设返回 Result/error
 type hostsFake struct {
-	res   hosts.Result
-	err   error
-	calls int
+	res       hosts.Result
+	err       error
+	calls     int
+	removeRes hosts.Result
+	removeErr error
+	removeGot []string
 }
 
 func (f *hostsFake) Add(string) (hosts.Result, error) {
 	f.calls++
 	return f.res, f.err
+}
+
+func (f *hostsFake) Remove(domain string) (hosts.Result, error) {
+	f.removeGot = append(f.removeGot, domain)
+	return f.removeRes, f.removeErr
+}
+
+// TestSiteService_Remove_RecyclesHosts 删站必须连带回收该域名的 hosts 条目（不留孤儿行）
+func TestSiteService_Remove_RecyclesHosts(t *testing.T) {
+	ctx := context.Background()
+	svc, _, env, _ := newSiteSvc(t, nil)
+	hostsPath := filepath.Join(filepath.Dir(env.PHPOHome), "hosts")
+
+	if err := svc.Add(ctx, AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(hostsPath); !hosts.Has(string(b), "127.0.0.1", "demo.test") {
+		t.Fatalf("建站应先写入 hosts 条目:\n%s", b)
+	}
+	if err := svc.Remove(ctx, "demo.test"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(hostsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hosts.Has(string(b), "127.0.0.1", "demo.test") {
+		t.Fatalf("删站后 hosts 仍留着该域名（孤儿条目）:\n%s", b)
+	}
+	if !hosts.Has(string(b), "127.0.0.1", "localhost") {
+		t.Fatalf("不得动无关条目:\n%s", b)
+	}
+}
+
+// TestSiteService_Remove_HostsWarningKeepsGoing hosts 需提权/写不进时只警告，删站照常完成（§3.2 原则 7）
+func TestSiteService_Remove_HostsWarningKeepsGoing(t *testing.T) {
+	ctx := context.Background()
+	svc, st, _, _ := newSiteSvc(t, nil)
+	hf := &hostsFake{removeRes: hosts.Result{Warning: "无法修改 hosts（/etc/hosts）。请以管理员身份运行后手动删除：127.0.0.1 demo.test"}}
+	if err := svc.Add(ctx, AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	svc.hosts = hf
+
+	if err := svc.Remove(ctx, "demo.test"); err != nil {
+		t.Fatalf("hosts 未回收是警告，不该让删站失败: %v", err)
+	}
+	if len(hf.removeGot) != 1 || hf.removeGot[0] != "demo.test" {
+		t.Fatalf("删站应回收本站域名，实得 %v", hf.removeGot)
+	}
+	if len(st.sites) != 0 {
+		t.Fatalf("站点仍应注销: %+v", st.sites)
+	}
+
+	// 只删本站域名：多站点共存时不得顺手删掉别人的条目
+	svc2, _, _, _ := newSiteSvc(t, nil)
+	if err := svc2.Add(ctx, AddInput{Domain: "a.test", Port: 8080, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc2.Add(ctx, AddInput{Domain: "b.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	hf2 := &hostsFake{}
+	svc2.hosts = hf2
+	if err := svc2.Remove(ctx, "a.test"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(hf2.removeGot, ",") != "a.test" {
+		t.Fatalf("只应回收 a.test，实得 %v", hf2.removeGot)
+	}
 }
 
 // TestSiteService_AddHosts 手动补写 hosts 走真实 Manager：缺失→补上→再点幂等，且广播快照

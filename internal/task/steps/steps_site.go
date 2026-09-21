@@ -16,6 +16,7 @@ import (
 // HostsOps 抽象系统 hosts 写入（*hosts.Manager 满足）；不可写时返回 warning 而非 error
 type HostsOps interface {
 	Add(domain string) (hosts.Result, error)
+	Remove(domain string) (hosts.Result, error)
 }
 
 // VHosts 抽象 vhost 管理器写盘部分（*vhost.Manager 满足）
@@ -124,6 +125,47 @@ func (s *AddHosts) Execute(_ context.Context, log task.StepLog) error {
 		log.Log("dim", "hosts 已存在，跳过")
 	}
 	return nil
+}
+
+// RemoveHosts 删除 hosts 条目（删站回收，不留孤儿行）；提权被拒/不可写仅记录警告，不阻断删站。
+// 回滚把条目加回：任务失败即站点没删，域名解析也不该跟着丢。
+type RemoveHosts struct {
+	task.BaseStep
+	hosts   HostsOps
+	domain  string
+	removed bool
+}
+
+func NewRemoveHosts(name string, h HostsOps, domain string) *RemoveHosts {
+	return &RemoveHosts{BaseStep: task.BaseStep{StepName: name}, hosts: h, domain: domain}
+}
+
+func (s *RemoveHosts) Execute(_ context.Context, log task.StepLog) error {
+	res, err := s.hosts.Remove(s.domain)
+	if err != nil {
+		// hosts 回收失败不阻断删站：仅警告（§5.7），残留条目由用户自行处理
+		log.Log("err", "hosts 回收失败（站点仍删除成功）: "+err.Error())
+		return nil
+	}
+	if res.Warning != "" {
+		log.Log("err", res.Warning)
+		return nil
+	}
+	if res.Changed {
+		s.removed = true
+		log.Log("ok", "已回收 hosts: 127.0.0.1 "+s.domain)
+	} else {
+		log.Log("dim", "hosts 无该条目，跳过")
+	}
+	return nil
+}
+
+func (s *RemoveHosts) Rollback(_ context.Context) error {
+	if !s.removed {
+		return nil
+	}
+	_, err := s.hosts.Add(s.domain)
+	return err
 }
 
 // TrashSiteDir 把站点根目录移入回收站；回滚从回收站恢复

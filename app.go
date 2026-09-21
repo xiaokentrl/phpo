@@ -8,12 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	phpapp "phpo/internal/app"
 	"phpo/internal/config"
 	"phpo/internal/model"
+	"phpo/internal/preflight"
 	"phpo/internal/service"
 	"phpo/internal/template"
 	"phpo/internal/ui"
@@ -38,7 +40,8 @@ type App struct {
 	wails          *application.App
 	container      *phpapp.Container
 	assembly       *phpapp.Assembly
-	restartPending bool // 前端已请求重启：ServiceShutdown 收尾后重新拉起自身
+	tray           *ui.Tray // 原生托盘句柄；未 Attach 前为 nil，偏好下发据此拒绝
+	restartPending bool     // 前端已请求重启：ServiceShutdown 收尾后重新拉起自身
 }
 
 func NewApp() *App {
@@ -46,13 +49,26 @@ func NewApp() *App {
 	return &App{container: c, assembly: c.Build()}
 }
 
-// Attach 在 application.New 之后注入 Wails 实例：替换真实发射器并安装托盘
-func (a *App) Attach(app *application.App) {
+// Attach 在 application.New 之后注入 Wails 实例：替换真实发射器并安装托盘。
+// window 必须先创建——托盘图标点击与「关闭时最小化」都要绑定主窗口才有效果。
+func (a *App) Attach(app *application.App, window *application.WebviewWindow) {
 	a.wails = app
 	emitter := wailsEmitter{app: app}
 	a.container.Emitter = emitter
 	a.assembly.Emitter = emitter
-	ui.InstallTray(app, emitter)
+	a.tray = ui.InstallTray(app, emitter, window)
+}
+
+// SetTrayPrefs 把前端 prefsStore（localStorage 权威，§3.1 原则 5）的两项托盘偏好投影到原生外壳。
+//
+// 不走 preflight：§5.6 事件名与 17 个 preflight action 均已冻结，且 UI 偏好不含端口/路径/版本，
+// 无裁决对象；三段式（硬红线 5）约束的是业务状态写操作，偏好既不落 config.yaml 也不落 SQLite。
+func (a *App) SetTrayPrefs(showTray, minimizeOnClose bool) error {
+	if a.tray == nil {
+		return errNotReady
+	}
+	a.tray.SetPrefs(showTray, minimizeOnClose)
+	return nil
 }
 
 // ServiceStartup 实现 Wails v3 服务生命周期（启动钩子含残留临时目录清理，自 T211 注册）
@@ -74,6 +90,74 @@ func (a *App) assemblyLifecycleCtx() context.Context {
 		return a.wails.Context()
 	}
 	return context.Background()
+}
+
+// ---- 后端最终裁决接线（§0.2 #14：UI 层校验仅作即时反馈，最终裁决在 internal/preflight/）----
+
+// preflightSource 裁决的三份只读输入：权威快照 + 备份归档名 + 离线缓存条目。
+// *App 的真实实现经服务门面读取（硬红线 4：后端唯一权威）；单测注入替身，以便独立覆盖接线本身。
+type preflightSource interface {
+	snapshot() (*model.Snapshot, error)
+	backupFiles() ([]string, error)
+	cacheEntries() ([]model.CacheEntry, error)
+}
+
+// runGuard 执行一次后端裁决，只把 Errors 转成拒绝：
+// ① Warnings 不阻断（§0.2 #16「能警告的不要阻止」），其展示由前端镜像 usePreflight.ts 在提交前完成；
+// ② Adjusted 不消费——站点端口顺延由写链路按同一份占用表（store.CollectUsedPorts）自行判定并落盘；
+// ③ 备份/缓存清单只在消费它们的 action 才读：清单读取失败不得牵连无关的写操作。
+func runGuard(src preflightSource, action string, c preflight.Ctx) error {
+	snap, err := src.snapshot()
+	if err != nil {
+		return err
+	}
+	w := &preflight.World{Snap: snap}
+	switch action {
+	case preflight.ActRestore, preflight.ActBackupDelete:
+		if w.Backups, err = src.backupFiles(); err != nil {
+			return err
+		}
+	case preflight.ActOfflinePrune:
+		if w.Offline, err = src.cacheEntries(); err != nil {
+			return err
+		}
+	}
+	if res := preflight.Run(action, c, w); !res.Ok {
+		return errors.New(strings.Join(res.Errors, "\n"))
+	}
+	return nil
+}
+
+// guard 门面自身的裁决入口。放在 package main 而非 service 层：internal 严格单向依赖，
+// service 不得反向引用 preflight（§0.2 #12），装配层（根 Service）才是三段式的首段调用点。
+func (a *App) guard(action string, c preflight.Ctx) error {
+	return runGuard(a, action, c)
+}
+
+func (a *App) snapshot() (*model.Snapshot, error) { return a.GetState() }
+
+// backupFiles 备份归档文件名（restore / backup-delete 的裁决输入）
+func (a *App) backupFiles() ([]string, error) {
+	if a.container.BackupService == nil {
+		return nil, errNotReady
+	}
+	list, err := a.container.BackupService.List()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(list))
+	for _, b := range list {
+		out = append(out, b.File)
+	}
+	return out, nil
+}
+
+// cacheEntries 离线缓存条目（offline-prune 的裁决输入）
+func (a *App) cacheEntries() ([]model.CacheEntry, error) {
+	if a.container.OfflineService == nil {
+		return nil, errNotReady
+	}
+	return a.container.OfflineService.ListCacheEntries(context.Background())
 }
 
 // AppInfo 供前端确认绑定链路已通
@@ -104,13 +188,29 @@ func (a *App) Install(ctx context.Context, kind model.ServiceKind, version strin
 	if a.container.AppService == nil {
 		return errNotReady
 	}
+	if err := a.guard(preflight.ActInstall, preflight.Ctx{Kind: string(kind), Version: version}); err != nil {
+		return err
+	}
 	return a.container.AppService.Install(ctx, kind, version)
+}
+
+// Reinstall 重建容器，让改过的服务端口/密码生效（端口与密码 env 只在建容器时落定，Start 改不动）。
+// 不接 preflight action（§0.3 冻结 17 条，重装不是独立 action）：其裁决是「未安装即拒 + 新端口在
+// Pre-Clean 之前判占用」，由 LifecycleService.Reinstall 就地兑现——在此处拦一次反而拿不到即将发布的端口集合。
+func (a *App) Reinstall(ctx context.Context, kind model.ServiceKind, version string) error {
+	if a.container.AppService == nil {
+		return errNotReady
+	}
+	return a.container.AppService.Reinstall(ctx, kind, version)
 }
 
 // Start 启动已安装容器
 func (a *App) Start(ctx context.Context, kind model.ServiceKind, version string) error {
 	if a.container.AppService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActServiceStart, preflight.Ctx{Kind: string(kind), Version: version}); err != nil {
+		return err
 	}
 	return a.container.AppService.Start(ctx, kind, version)
 }
@@ -120,6 +220,9 @@ func (a *App) Stop(ctx context.Context, kind model.ServiceKind, version string) 
 	if a.container.AppService == nil {
 		return errNotReady
 	}
+	if err := a.guard(preflight.ActServiceStop, preflight.Ctx{Kind: string(kind), Version: version}); err != nil {
+		return err
+	}
 	return a.container.AppService.Stop(ctx, kind, version)
 }
 
@@ -127,6 +230,9 @@ func (a *App) Stop(ctx context.Context, kind model.ServiceKind, version string) 
 func (a *App) Remove(ctx context.Context, kind model.ServiceKind, version string) error {
 	if a.container.AppService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActUninstall, preflight.Ctx{Kind: string(kind), Version: version}); err != nil {
+		return err
 	}
 	return a.container.AppService.Remove(ctx, kind, version)
 }
@@ -169,6 +275,13 @@ func (a *App) SiteAdd(ctx context.Context, in service.AddInput) error {
 	if a.container.SiteService == nil {
 		return errNotReady
 	}
+	c := preflight.Ctx{Domain: in.Domain, PHP: in.PHP, Root: in.Root}
+	if in.Port > 0 {
+		c.Port = in.Port // 0 = 前端未填，交服务层回落默认 80，不参与端口裁决
+	}
+	if err := a.guard(preflight.ActSiteAdd, c); err != nil {
+		return err
+	}
 	return a.container.SiteService.Add(ctx, in)
 }
 
@@ -176,6 +289,9 @@ func (a *App) SiteAdd(ctx context.Context, in service.AddInput) error {
 func (a *App) SiteRemove(ctx context.Context, domain string) error {
 	if a.container.SiteService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActSiteRemove, preflight.Ctx{Domain: domain}); err != nil {
+		return err
 	}
 	return a.container.SiteService.Remove(ctx, domain)
 }
@@ -185,6 +301,9 @@ func (a *App) SiteSetPort(ctx context.Context, domain string, port int) error {
 	if a.container.SiteService == nil {
 		return errNotReady
 	}
+	if err := a.guard(preflight.ActSitePort, preflight.Ctx{Domain: domain, NewValue: port}); err != nil {
+		return err
+	}
 	return a.container.SiteService.SetPort(ctx, domain, port)
 }
 
@@ -192,6 +311,9 @@ func (a *App) SiteSetPort(ctx context.Context, domain string, port int) error {
 func (a *App) SiteSwitchPHP(ctx context.Context, domain, php string) error {
 	if a.container.SiteService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActPhpSwitch, preflight.Ctx{Domain: domain, NewPhp: php}); err != nil {
+		return err
 	}
 	return a.container.SiteService.SwitchPHP(ctx, domain, php)
 }
@@ -201,6 +323,9 @@ func (a *App) SiteSetRewrite(ctx context.Context, domain, preset, rule string) e
 	if a.container.SiteService == nil {
 		return errNotReady
 	}
+	if err := a.guard(preflight.ActRewrite, preflight.Ctx{Domain: domain}); err != nil {
+		return err
+	}
 	return a.container.SiteService.SetRewrite(ctx, domain, preset, rule)
 }
 
@@ -208,6 +333,9 @@ func (a *App) SiteSetRewrite(ctx context.Context, domain, preset, rule string) e
 func (a *App) SiteSetVhostContent(ctx context.Context, domain, content string) error {
 	if a.container.SiteService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActSiteVhost, preflight.Ctx{Domain: domain, Content: &content}); err != nil {
+		return err
 	}
 	return a.container.SiteService.SetVhostContent(ctx, domain, content)
 }
@@ -231,9 +359,13 @@ func (a *App) GetServicePassword(kind model.ServiceKind, version string) (string
 }
 
 // SetServicePassword 明文写入密码（空串/任意长度合法，零校验零加密）
+// 裁决只走 update-config 的「服务存在 + 已安装」两条：密码按 §1.5 不做任何格式校验。
 func (a *App) SetServicePassword(kind model.ServiceKind, version, password string) error {
 	if a.container.EnvService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActUpdateConfig, preflight.Ctx{Kind: string(kind), Version: version, Field: "password", NewValue: password}); err != nil {
+		return err
 	}
 	return a.container.EnvService.SetPassword(kind, version, password)
 }
@@ -250,6 +382,10 @@ func (a *App) GetServicePort(kind model.ServiceKind, version string) (int, error
 func (a *App) SetServicePort(kind model.ServiceKind, version string, port int) error {
 	if a.container.EnvService == nil {
 		return errNotReady
+	}
+	// 服务端口占用报错、不顺延（§5.8）；改完要生效仍需「重建生效」（Reinstall）
+	if err := a.guard(preflight.ActUpdateConfig, preflight.Ctx{Kind: string(kind), Version: version, Field: "port", NewValue: port}); err != nil {
+		return err
 	}
 	return a.container.EnvService.SetPort(kind, version, port)
 }
@@ -269,6 +405,13 @@ func (a *App) ConfigSaveFiles(ctx context.Context, kind model.ServiceKind, versi
 	if a.container.ConfigService == nil {
 		return errNotReady
 	}
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, f.Name)
+	}
+	if err := a.guard(preflight.ActServiceCfg, preflight.Ctx{Kind: string(kind), Version: version, Files: names}); err != nil {
+		return err
+	}
 	return a.container.ConfigService.Save(ctx, kind, version, files)
 }
 
@@ -286,6 +429,9 @@ func (a *App) ExtList(version string) ([]string, error) {
 func (a *App) ExtApply(ctx context.Context, version string, enabled []string) error {
 	if a.container.ExtensionService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActExtensions, preflight.Ctx{Version: version, FinalExts: enabled}); err != nil {
+		return err
 	}
 	return a.container.ExtensionService.Apply(ctx, version, enabled)
 }
@@ -321,6 +467,9 @@ func (a *App) BackupCreate(ctx context.Context) (model.BackupFile, error) {
 	if a.container.BackupService == nil {
 		return model.BackupFile{}, errNotReady
 	}
+	if err := a.guard(preflight.ActBackup, preflight.Ctx{}); err != nil {
+		return model.BackupFile{}, err
+	}
 	return a.container.BackupService.Create(ctx)
 }
 
@@ -329,6 +478,9 @@ func (a *App) BackupRestore(ctx context.Context, file string) error {
 	if a.container.BackupService == nil {
 		return errNotReady
 	}
+	if err := a.guard(preflight.ActRestore, preflight.Ctx{File: file}); err != nil {
+		return err
+	}
 	return a.container.BackupService.Restore(ctx, file)
 }
 
@@ -336,6 +488,9 @@ func (a *App) BackupRestore(ctx context.Context, file string) error {
 func (a *App) BackupDelete(ctx context.Context, file string) error {
 	if a.container.BackupService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActBackupDelete, preflight.Ctx{File: file}); err != nil {
+		return err
 	}
 	return a.container.BackupService.Delete(ctx, file)
 }
@@ -499,6 +654,9 @@ func (a *App) OfflineCleanupCache(ctx context.Context, mode string) (model.Clean
 func (a *App) OfflineRemoveEntry(ctx context.Context, kind, version string) error {
 	if a.container.OfflineService == nil {
 		return errNotReady
+	}
+	if err := a.guard(preflight.ActOfflinePrune, preflight.Ctx{Svc: kind, Ver: version}); err != nil {
+		return err
 	}
 	return a.container.OfflineService.RemoveCacheEntry(ctx, kind, version)
 }
