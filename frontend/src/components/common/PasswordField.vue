@@ -6,6 +6,7 @@ import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
 import { hasBackend } from '@/api/site'
+import { syncState } from '@/composables/useStateSync'
 import { setPassword, passwordFromEnv } from '@/api/env'
 import { copyText, DEFAULT_PASSWORD } from '@/utils/str'
 
@@ -38,6 +39,7 @@ async function persist(next: string, prev: string): Promise<void> {
   revealed.value = false
   try {
     await setPassword(props.kind, props.version, next)
+    if (hasBackend()) await syncState() // 写后拉权威快照：回显与 config.yaml 即刻一致（硬红线 4）
   } catch (e) {
     toast(String(e), 'err', 4600)
     return

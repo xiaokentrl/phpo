@@ -8,6 +8,7 @@ import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
+import { syncState } from '@/composables/useStateSync'
 import { useAppState } from '@/stores/appState'
 import { computeVhost } from '@/utils/vhost'
 import { setSiteVhostContent, hasBackend } from '@/api/site'
@@ -59,6 +60,8 @@ function onSave(): void {
     })
     .finally(() => {
       saving.value = false
+      // 写后拉权威快照收口：成功时健康/落盘状态与失败时后端回滚结果都以快照为准（硬红线 4）
+      syncState()
     })
 }
 

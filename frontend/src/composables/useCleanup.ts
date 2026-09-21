@@ -42,6 +42,8 @@ export function useCleanup() {
       else toast(summary, 'ok', 3200)
       await scan()
       await loadTrash()
+      // 审计列表随每次写操作变化（清理落账），不重拉就会停在旧记录（硬红线 4）
+      await loadOperations()
     } catch (e) {
       toast(String(e), 'err', 4600)
     } finally {
@@ -53,6 +55,7 @@ export function useCleanup() {
     try {
       const freed = await cleanCache(mode)
       toast(t('cleanup.cacheDone', { size: humanSize(freed) }), 'ok', 3200)
+      await loadOperations()
     } catch (e) {
       toast(String(e), 'err', 4600)
     }
@@ -68,6 +71,7 @@ export function useCleanup() {
       await restoreTrash(id)
       toast(t('cleanup.restored'), 'ok', 2600)
       await loadTrash()
+      await loadOperations()
     } catch (e) {
       toast(String(e), 'err', 4600)
     }
@@ -78,6 +82,7 @@ export function useCleanup() {
       const n = await emptyExpired()
       toast(t('cleanup.expiredCleared', { n }), 'ok', 2600)
       await loadTrash()
+      await loadOperations()
     } catch (e) {
       toast(String(e), 'err', 4600)
     }

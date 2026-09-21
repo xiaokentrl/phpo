@@ -97,6 +97,8 @@ const messages: Record<string, string> = {
   "nginx.empty.desc": "安装 Nginx，站点才能通过域名访问。",
   "nginx.empty.action": "安装 Nginx",
   "svc.port": "端口",
+  "svc.portPending": "端口已写入 config.yaml；Docker 端口绑定只在建容器时确定，重新安装 {kind} {version} 后生效。",
+  "svc.portFixed": "Nginx 发布 80 及各自站点的端口，由站点列表自动并集发布，此处不可修改。",
   "svc.password": "密码",
   "svc.showPassword": "显示密码",
   "svc.hidePassword": "隐藏密码",

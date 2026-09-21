@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 命令面板：1:1 迁移原型 CMD_ITEMS + openCmdPalette/renderCmdList/dispatch（3233–3254, 3343–3353）
-// 全局快捷键：⌘/Ctrl+K 开关 · ⌘1–9 跳转路由 · ⌘+/-/0 缩放 · ⌘R 同步提示 · Esc 关闭。
+// 全局快捷键：⌘/Ctrl+K 开关 · ⌘1–9 跳转路由 · ⌘+/-/0 缩放 · ⌘R 拉权威快照 · Esc 关闭。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useCmdPalette } from '@/composables/useCmdPalette'
@@ -9,7 +9,8 @@ import { useLayoutStore } from '@/stores/layoutStore'
 import { CMD_ITEMS, type CmdItem } from '@/constants/cmd'
 import { router } from '@/router'
 import { toast } from '@/composables/useToast'
-import { runTask } from '@/composables/useTask'
+import { syncState } from '@/composables/useStateSync'
+import { runDoctor } from '@/api/doctor'
 
 const { t } = useI18n()
 const palette = useCmdPalette()
@@ -25,7 +26,7 @@ const filtered = computed(() => {
   return CMD_ITEMS.filter((it) => t(it.labelKey).toLowerCase().includes(q) || it.labelKey.toLowerCase().includes(q))
 })
 
-// 忠实原型 dispatch（3254）：路由 / 动作 / 布局 / 预检任务 / 任务
+// 忠实原型 dispatch（3254）：路由 / 动作 / 布局
 function dispatch(it: CmdItem): void {
   palette.hide()
   if (it.route) {
@@ -36,22 +37,35 @@ function dispatch(it: CmdItem): void {
     case 'site-add': modals.openSiteAddModal(); return
     case 'backup': modals.runBackup(); return
     case 'theme': modals.openThemePicker(); return
+    case 'doctor': void runDiagnose(); return
     case 'zoom-in': layout.zoomIn(); return
     case 'zoom-out': layout.zoomOut(); return
     case 'zoom-reset': layout.zoomReset(); return
   }
   if (it.layout === 'reset') { layout.reset(); return }
   if (it.layout) { layout.applyPreset(it.layout); return }
-  if (it.task) {
-    const [args, labelKey] = it.task
-    const label = t(labelKey)
-    if (it.pf) modals.runGuardedTask(it.pf, {}, args.split(','), label)
-    else runTask(args.split(','), label)
+}
+
+// runDiagnose：环境诊断走后端 DoctorRun，结果摘要以 toast 即时反馈（无宿主时提示仅演示）
+async function runDiagnose(): Promise<void> {
+  try {
+    const r = await runDoctor()
+    if (!r) { toast(t('doctor.demoHint'), 'info', 3200); return }
+    const clean = r.errors === 0 && r.warnings === 0
+    toast(clean ? t('doctor.allGood') : t('doctor.summary', { ok: r.ok, warnings: r.warnings, errors: r.errors }), clean ? 'ok' : 'err', 3600)
+  } catch (e) {
+    toast(String(e), 'err', 4600)
   }
 }
 
 function scrollToTop(): void {
   document.querySelector('.app-main')?.scrollTo({ top: 0 })
+}
+
+// resync：⌘R 与侧栏「同步状态」同源——拉一次权威快照再提示（硬红线 4：状态只来自后端）
+async function resync(): Promise<void> {
+  await syncState()
+  toast(t('common.refresh'), 'ok', 1400)
 }
 
 function onEnter(): void {
@@ -71,7 +85,7 @@ function onKeydown(e: KeyboardEvent): void {
   if (!mod) return
   const k = e.key.toLowerCase()
   if (k === 'k') { e.preventDefault(); palette.toggle(); if (palette.open.value) void onOpened(); return }
-  if (k === 'r') { e.preventDefault(); toast(t('common.refresh'), 'ok', 1200); return }
+  if (k === 'r') { e.preventDefault(); void resync(); return }
   if (e.key === '=' || e.key === '+') { e.preventDefault(); layout.zoomIn(); return }
   if (e.key === '-' || e.key === '_') { e.preventDefault(); layout.zoomOut(); return }
   if (e.key === '0') { e.preventDefault(); layout.zoomReset(); return }

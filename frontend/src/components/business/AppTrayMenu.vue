@@ -32,6 +32,7 @@ const dotClass = computed(() => {
 })
 
 // 托盘服务行：对齐原型，取 php/mysql/nginx 首个已安装版本，最多 5 行
+// 运行状态取自权威快照的 running 分区（硬红线 4）：停止的服务不得显示为运行中
 const svcRows = computed(() =>
   (
     [
@@ -40,8 +41,11 @@ const svcRows = computed(() =>
       ['🌐', 'Nginx', 'nginx'],
     ] as [string, string, ServiceKind][]
   )
-    .map(([icon, name, kind]) => ({ icon, name, versions: state.installed[kind] }))
-    .filter((r) => r.versions.length > 0)
+    .map(([icon, name, kind]) => {
+      const version = state.installed[kind][0] || ''
+      return { icon, name, version, running: state.isServiceRunning(kind, version) }
+    })
+    .filter((r) => r.version !== '')
     .slice(0, 5),
 )
 
@@ -103,7 +107,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-show="state.tray.enabled" ref="simEl" class="tray-sim" :title="t('settings.tray')" @click="toggleMenu">
+  <div v-show="prefs.tray.enabled" ref="simEl" class="tray-sim" :title="t('settings.tray')" @click="toggleMenu">
     <span class="tray-dot" :class="dotClass" :style="dotStyle"></span>
     <span class="tray-label">{{ trayLabel }}</span>
   </div>
@@ -126,8 +130,8 @@ onBeforeUnmount(() => {
 
     <div v-for="r in svcRows" :key="r.name" class="tray-svc">
       <span>{{ r.icon }}</span>
-      <span class="name">{{ r.name }} {{ r.versions[0] }}</span>
-      <span class="status">● {{ t('tray.running') }}</span>
+      <span class="name">{{ r.name }} {{ r.version }}</span>
+      <span class="status" :class="{ 'st-off': !r.running }">● {{ t(r.running ? 'svc.running' : 'svc.stopped') }}</span>
     </div>
     <div class="tray-menu-sep"></div>
 

@@ -9,11 +9,13 @@ import { useLayoutStore } from '@/stores/layoutStore'
 import { usePhpSwitch } from '@/composables/usePhpSwitch'
 import { usePortSuggest } from '@/composables/usePortSuggest'
 import type { Site } from '@/types'
-import { cmpVer, siteUrl } from '@/utils/format'
+import { cmpVer, siteUrl, suggestPortFor } from '@/utils/format'
 import { hostToContainer } from '@/utils/path'
 import { addSiteHosts, hasBackend } from '@/api/site'
+import { envKeyPort } from '@/api/env'
 import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
+import { syncState } from '@/composables/useStateSync'
 
 const { t } = useI18n()
 const state = useAppState()
@@ -24,6 +26,12 @@ const { applyPort } = usePortSuggest()
 
 const phpVers = computed(() => state.installed.php)
 const healthy = computed(() => state.sites.filter((s) => s.health === 'up').length)
+// nginxPort：真实快照无 NGINX_PORT 键（那是 demo 占位），按已装 nginx 版本的端口键取值，未落库回落建议端口
+const nginxPort = computed(() => {
+  const v = state.installed.nginx[0] || ''
+  if (!v) return '—'
+  return String(state.env[envKeyPort('nginx', v)] || suggestPortFor('nginx', v) || '—')
+})
 
 const menuDomain = ref<string | null>(null)
 const menuPos = ref<{ left: number; top: number }>({ left: 0, top: 0 })
@@ -77,7 +85,11 @@ function onAddHosts(site: Site): void {
   addSiteHosts(site.domain)
     .then((warn) => toast(warn || t('sites.hosts.toast', { domain: site.domain }), warn ? 'err' : 'ok', warn ? 6000 : 2400))
     .catch((e: unknown) => toast(String(e), 'err', 4600))
-    .finally(() => { hostsBusy.value = '' })
+    .finally(() => {
+      hostsBusy.value = ''
+      // 写后拉权威快照收口：Hosts 列真值以后端探针为准，不靠本地推断（硬红线 4）
+      syncState()
+    })
 }
 
 function closeRowMenu(): void {
@@ -143,7 +155,7 @@ onBeforeUnmount(() => {
         <div class="summary-item"><div class="summary-num">{{ state.sites.length }}</div><div class="summary-label">{{ t('sites.count') }}</div></div>
         <div class="summary-item"><div class="summary-num">{{ phpVers.length }}</div><div class="summary-label">{{ t('sites.phpVersions') }}</div></div>
         <div class="summary-item"><div class="summary-num" style="color: var(--ok)">{{ healthy }}</div><div class="summary-label">{{ t('sites.healthy') }}</div></div>
-        <div class="summary-item"><div class="summary-num">{{ state.env.NGINX_PORT }}</div><div class="summary-label">{{ t('sites.nginxPort') }}</div></div>
+        <div class="summary-item"><div class="summary-num">{{ nginxPort }}</div><div class="summary-label">{{ t('sites.nginxPort') }}</div></div>
       </div>
 
       <div class="table-wrap">

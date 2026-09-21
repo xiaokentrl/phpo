@@ -2,7 +2,7 @@
 // 硬红线 4：本仓只由后端 state:changed / service:changed 事件落地（见 composables/useStateSync.ts），无本地乐观更新。
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
-import type { Backup, DockerStatus, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TaskBoard, TrayPrefs } from '@/types'
+import type { Backup, DockerStatus, Env, OfflineTree, ServiceKind, Site, StateSnapshot, TaskBoard } from '@/types'
 import { derivePaths } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 
@@ -63,7 +63,6 @@ export const useAppState = defineStore('appState', () => {
     '8.0': ['gd', 'redis', 'pdo_mysql', 'mysqli', 'zip', 'bcmath', 'opcache'],
   })
   const env = reactive<Env>(defaultEnv())
-  const tray = reactive<TrayPrefs>({ enabled: true, minimizeOnClose: true })
   // 用户改过的配置正文，键 `${kind}:${version}:${fileName}`（原型 state.configs）
   const configs = reactive<Record<string, string>>({})
   // 目录就绪标志（首启硬门禁）：真实宿主默认未就绪，待启动权威快照（api/state bootstrap）按 DB 落地；
@@ -129,5 +128,5 @@ export const useAppState = defineStore('appState', () => {
 
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, tray, configs, dirReady, homeReady, docker, tasks, isServiceRunning, applySnapshot, applyTaskBoard, setServiceRunning, setBackups, setDocker, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, tasks, isServiceRunning, applySnapshot, applyTaskBoard, setServiceRunning, setBackups, setDocker, phpVersions }
 })

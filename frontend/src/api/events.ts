@@ -63,15 +63,10 @@ export interface CacheCorruptedPayload { kind: string; version: string; entry: u
 export interface CacheCleanupPayload { mode: string; freed_bytes: number }
 export interface CacheTempdirClearedPayload { path: string; reason: string }
 
-// Wails v3 在运行时向页面注入 window.runtime（EventsOn/EventsOff/EventsEmit）
-interface WailsRuntime {
-  EventsOn?: (event: string, cb: (data: unknown) => void) => unknown
-  EventsOff?: (...events: string[]) => void
-  EventsEmit?: (event: string, ...data: unknown[]) => void
-}
-function wailsRuntime(): WailsRuntime | undefined {
-  return (globalThis as { window?: { runtime?: WailsRuntime } }).window?.runtime
-}
+// Wails v3 不注入 v2 的 window.runtime 全局：宿主把事件送到 window._wails.dispatchWailsEvent，
+// 由 @wailsio/runtime 的 Events 分发给监听器（大载荷 >8KB 走 payload store 取回，也只有官方 Events 处理）。
+// 故订阅必须走 Events.On；进程内总线仅服务无宿主的纯 Vite demo。
+import { Events } from '@wailsio/runtime'
 
 type Handler = (payload: unknown) => void
 
@@ -96,13 +91,13 @@ export function emitLocal(event: string, payload: unknown): void {
   bus.get(event)?.forEach((h) => h(payload))
 }
 
-// onEvent：订阅一个事件；返回反订阅函数。优先走 Wails 原生事件，退化到进程内总线。
+// onEvent：订阅一个事件，返回反订阅函数。同时挂 Wails 宿主通道与进程内总线——
+// 前者只在真实宿主触发，后者只被 DEV mock（__phpoMock）触发，两者不同时发射，不会重复投递。
 export function onEvent(event: string, handler: Handler): () => void {
-  const rt = wailsRuntime()
-  if (rt?.EventsOn) {
-    rt.EventsOn(event, handler)
-    return () => rt.EventsOff?.(event)
-  }
+  const offRuntime = Events.On(event, (ev) => handler(ev.data))
   onLocal(event, handler)
-  return () => offLocal(event, handler)
+  return () => {
+    offRuntime()
+    offLocal(event, handler)
+  }
 }

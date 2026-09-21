@@ -44,6 +44,11 @@ function normPath(p: string): string {
   return String(p || '').trim().replace(/\/+/g, '/').replace(/\/+$/, '')
 }
 
+// portKey：与后端 store.EnvKeyPort 对齐（大写种类 + 去点版本）；nginx 例外走 NGINX_PORT
+function portKey(kind: string, version: string): string {
+  return `${kind.toUpperCase()}_${String(version).replace(/\./g, '')}_PORT`
+}
+
 // PHP 未就绪的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐（建站不阻断，仅暂不写 vhost）
 function phpPendingWarn(php?: string): string {
   return `${PF.notInstalled}: PHP ${php || '未指定'}（站点仍会创建，安装或切换到可用 PHP 版本后生效）`
@@ -88,7 +93,7 @@ export function usePreflight() {
     const used = new Map<number, string>()
     for (const kind of ['mysql', 'pgsql', 'redis']) {
       for (const v of (app.installed as Record<string, string[]>)[kind] || []) {
-        const key = `${kind.toUpperCase()}_${String(v).replace(/\./g, '')}_PORT`
+        const key = portKey(kind, v)
         const p = parseInt(app.env[key], 10)
         if (!isNaN(p) && !used.has(p)) used.set(p, `${kind} ${v}`)
       }
@@ -208,6 +213,18 @@ export function usePreflight() {
         if (!SVC_META[kind as ServiceKind]) { errors.push(PF.svcMissing); break }
         if (!installed(kind).includes(version)) { errors.push(`${PF.notInstalled}: ${kind} ${version}`); break }
         if (app.isServiceRunning(kind, version)) { errors.push(`${PF.isRunning}: ${kind} ${version}`); break }
+        break
+      }
+      case 'update-config': {
+        // 与后端 rules_service.go#updateConfig 对齐：服务端口占用直接报错，不顺延（§5.8）
+        const { kind, version, field, newValue } = c
+        if (!SVC_META[kind as ServiceKind]) { errors.push(PF.svcMissing); break }
+        if (!installed(kind).includes(version)) { errors.push(`${PF.notInstalled}: ${kind} ${version}`); break }
+        if (field === 'port') {
+          const cur = kind === 'nginx' ? app.env.NGINX_PORT : app.env[portKey(kind, version)]
+          const pp = validatePort(newValue, { exclude: parseInt(String(cur), 10) })
+          if (!pp.ok) errors.push(pp.msg!)
+        }
         break
       }
       case 'site-add': {

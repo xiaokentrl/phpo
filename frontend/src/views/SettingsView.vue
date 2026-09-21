@@ -3,7 +3,6 @@
 // 追加「应用升级」组（T604 / §5.9）：当前版本展示 + 打开升级弹窗（后端为唯一权威）
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
-import { useAppState } from '@/stores/appState'
 import { usePrefsStore } from '@/stores/prefsStore'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { useModals } from '@/composables/useModals'
@@ -12,7 +11,6 @@ import { LAYOUT_LIMITS, LAYOUT_PRESETS, UI_SCALE, type PresetName } from '@/cons
 import type { Locale } from '@/locales'
 
 const { t, locale, setLocale } = useI18n()
-const state = useAppState()
 const prefs = usePrefsStore()
 const layout = useLayoutStore()
 const { openUpdateModal } = useModals()
@@ -124,11 +122,11 @@ function pickLang(l: Locale) {
       </div>
       <div style="display: flex; flex-direction: column; gap: 12px">
         <label class="danger-check" style="background: var(--bg); border-color: var(--border); cursor: pointer">
-          <input v-model="state.tray.minimizeOnClose" type="checkbox" id="tray-minimize" style="accent-color: var(--accent)" />
+          <input v-model="prefs.tray.minimizeOnClose" type="checkbox" id="tray-minimize" style="accent-color: var(--accent)" />
           <span class="check-label" style="color: var(--text-dim)">{{ t('settings.tray.minimize') }}</span>
         </label>
         <label class="danger-check" style="background: var(--bg); border-color: var(--border); cursor: pointer">
-          <input v-model="state.tray.enabled" type="checkbox" id="tray-show" style="accent-color: var(--accent)" />
+          <input v-model="prefs.tray.enabled" type="checkbox" id="tray-show" style="accent-color: var(--accent)" />
           <span class="check-label" style="color: var(--text-dim)">{{ t('settings.tray.show') }}</span>
         </label>
       </div>

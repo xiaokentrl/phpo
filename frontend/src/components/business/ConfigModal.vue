@@ -11,6 +11,7 @@ import { runTask } from '@/composables/useTask'
 import { useAppState } from '@/stores/appState'
 import { SVC_META } from '@/constants/service'
 import { hasBackend } from '@/api/site'
+import { syncState } from '@/composables/useStateSync'
 import { getConfigFiles, saveConfigFiles } from '@/api/config'
 import type { ConfigFile } from '@/constants/configs'
 
@@ -94,9 +95,10 @@ async function apply(): Promise<void> {
     return
   }
 
-  // 真实链路：后端原子写盘（备份→写→失败回滚）；重启建议为提示性
+  // 真实链路：后端原子写盘（备份→写→失败回滚）；写后拉权威快照，重启建议为提示性
   try {
     await saveConfigFiles(props.kind, props.version, list.map((f) => ({ name: f.name, path: f.path, content: drafts[f.name] })))
+    await syncState()
     emit('close')
     toast(t('config.saved', { kind: props.kind, version: props.version, count: names.length }), 'ok', 2600)
     toast(t('config.restartHint', { kind: props.kind, version: props.version }), 'info', 3600)

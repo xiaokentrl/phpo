@@ -11,6 +11,7 @@ import { runTask } from '@/composables/useTask'
 import { useAppState } from '@/stores/appState'
 import { EXT_LIB } from '@/constants/ext'
 import { hasBackend } from '@/api/site'
+import { syncState } from '@/composables/useStateSync'
 import { applyExtensions } from '@/api/extension'
 
 const props = defineProps<{ version: string }>()
@@ -77,9 +78,10 @@ async function apply(): Promise<void> {
     return
   }
 
-  // 真实链路：后端编译→固化→重建→重载；勿本地乐观更新，扩展列表由 state:changed 回流
+  // 真实链路：后端编译→固化→重建→重载；勿本地乐观更新，扩展列表写后拉权威快照归位
   try {
     await applyExtensions(props.version, finalExts)
+    await syncState()
     emit('close')
     toast(t('ext.applied', { version: props.version }), 'ok', 2600)
   } catch (e) {

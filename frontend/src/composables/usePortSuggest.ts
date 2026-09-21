@@ -5,6 +5,7 @@ import { useI18n } from './useI18n'
 import { usePreflight } from './usePreflight'
 import { toast } from './useToast'
 import { runTask } from './useTask'
+import { syncState } from '@/composables/useStateSync'
 import { setSitePort, hasBackend } from '@/api/site'
 import DangerConfirm from '@/components/business/DangerConfirm.vue'
 
@@ -18,12 +19,18 @@ export function usePortSuggest() {
     if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
     const finalPort = (check.adjusted.port as number | undefined) ?? desired
     const changed = finalPort !== desired
-    const submit = (): void => {
+    const submit = async (): Promise<void> => {
       if (!hasBackend()) {
         runTask(['site', 'port', domain, String(finalPort)], `${t('sites.col.port')} ${domain} → ${finalPort}`, { type: 'site-port', domain, port: finalPort })
         return
       }
-      setSitePort(domain, finalPort).catch((e: unknown) => toast(String(e), 'err', 4600))
+      // 硬红线 4：写后（含失败——vhost 可能已改而 reload 失败）拉一次权威快照收口，不本地乐观更新
+      try {
+        await setSitePort(domain, finalPort)
+      } catch (e: unknown) {
+        toast(String(e), 'err', 4600)
+      }
+      await syncState()
     }
     // 端口顺延或其余警告：先经 DangerConfirm 展示（preflight 已生成「80→81 已调整」文案），确认后落库
     const warnings = check.warnings.map((w) => ({ text: w }))

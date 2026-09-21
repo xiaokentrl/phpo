@@ -1,27 +1,33 @@
 <script setup lang="ts">
 // 服务视图：1:1 迁移原型 renderService + versionCard（2636–2692）；php/mysql/pgsql/redis/nginx 共用
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { useModals } from '@/composables/useModals'
+import { usePreflight } from '@/composables/usePreflight'
+import { toast } from '@/composables/useToast'
+import { runTask } from '@/composables/useTask'
+import { syncState } from '@/composables/useStateSync'
+import { hasBackend } from '@/api/site'
+import { envKeyPort, setPort } from '@/api/env'
 import PasswordField from '@/components/common/PasswordField.vue'
 import { DIR_ROWS, DEFAULT_FILE_COUNT, SVC_META } from '@/constants/service'
 import type { ServiceKind } from '@/types'
-import { needsPassword, needsPort, suggestPortFor } from '@/utils/format'
+import { needsPort, needsPassword, suggestPortFor } from '@/utils/format'
 import { verRoot } from '@/utils/path'
 
 const props = defineProps<{ kind: ServiceKind }>()
 const { t } = useI18n()
 const state = useAppState()
 const modals = useModals()
+const { preflight } = usePreflight()
 
 const meta = computed(() => SVC_META[props.kind])
 const versions = computed(() => state.installed[props.kind] || [])
 
-// versionCard：端口键 {KIND}_{ver}_PORT（nginx 走 NGINX_PORT）
+// versionCard：端口键 {KIND}_{ver}_PORT（与后端 config.EnvKeyPort 同源，nginx 亦走此键）
 function portValue(version: string): string {
-  if (props.kind === 'nginx') return state.env.NGINX_PORT || '80'
-  const key = `${props.kind.toUpperCase()}_${version.replace(/\./g, '')}_PORT`
+  const key = envKeyPort(props.kind, version)
   return String(state.env[key] || suggestPortFor(props.kind, version) || '')
 }
 function dirPath(version: string, sub: string): string {
@@ -29,6 +35,51 @@ function dirPath(version: string, sub: string): string {
 }
 function extCount(version: string): number {
   return (state.phpExtensions[version] || []).length
+}
+
+// 端口行内编辑：仅数据服务（mysql/pgsql/redis）的宿主端口会进容器 spec；nginx 由站点端口自动发布，只读
+const portEditing = ref('')
+const portDraft = ref('')
+const portSaving = ref('')
+
+function startEditPort(version: string): void {
+  portDraft.value = portValue(version)
+  portEditing.value = version
+}
+
+function cancelPort(): void {
+  portEditing.value = ''
+}
+
+// commitPort：preflight 裁决 → 落库 → 拉权威快照回显（硬红线 4/5，无本地乐观更新）
+async function commitPort(version: string): Promise<void> {
+  if (portEditing.value !== version) return
+  const prev = portValue(version)
+  const next = portDraft.value.trim()
+  portEditing.value = ''
+  if (!next || next === prev) return
+  const pf = preflight('update-config', { kind: props.kind, version, field: 'port', newValue: next })
+  if (!pf.ok) {
+    toast(pf.errors.join('\n'), 'err', 4600)
+    return
+  }
+  portSaving.value = version
+  try {
+    await setPort(props.kind, version, parseInt(next, 10))
+    if (hasBackend()) {
+      await syncState()
+      // Docker 端口绑定只能在建容器时确定，Start 不重建容器 → 必须重装才生效，如实告知不假装已切换
+      toast(t('svc.portPending', { kind: props.kind, version }), 'info', 5600)
+    } else {
+      runTask([props.kind, 'port', 'set', version, next], `${props.kind} ${version} · port → ${next}`, {
+        type: 'update-config', kind: props.kind, version, field: 'port', oldValue: prev, newValue: next,
+      })
+    }
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  } finally {
+    portSaving.value = ''
+  }
 }
 </script>
 
@@ -65,7 +116,37 @@ function extCount(version: string): number {
         <div>
           <div v-if="needsPort(kind)" class="kv">
             <span class="k">{{ t('svc.port') }}</span>
-            <span class="inline-edit" data-inline="port" :data-kind="kind" :data-version="version" data-field="port" :data-original="portValue(version)" tabindex="0" :title="t('common.edit')">{{ portValue(version) }}</span>
+            <!-- nginx 宿主端口 = 80 + 站点端口并集，由站点驱动、建容器时定死，不在卡片里改（改了没有消费方） -->
+            <span v-if="kind === 'nginx'" class="v" :title="t('svc.portFixed')">{{ portValue(version) }}</span>
+            <span
+              v-else
+              class="inline-edit"
+              :class="{ editing: portEditing === version, saving: portSaving === version }"
+              data-inline="port"
+              :data-kind="kind"
+              :data-version="version"
+              data-field="port"
+              :data-original="portValue(version)"
+              tabindex="0"
+              :title="t('common.edit')"
+              @click="portEditing !== version && startEditPort(version)"
+              @keydown.enter="portEditing !== version && startEditPort(version)"
+            >
+              <input
+                v-if="portEditing === version"
+                v-model="portDraft"
+                class="port-input"
+                type="text"
+                inputmode="numeric"
+                spellcheck="false"
+                autocomplete="off"
+                autofocus
+                @keydown.enter.prevent="commitPort(version)"
+                @keydown.esc.prevent="cancelPort"
+                @blur="commitPort(version)"
+              >
+              <template v-else>{{ portValue(version) }}</template>
+            </span>
           </div>
           <div v-if="needsPassword(kind)" class="kv">
             <span class="k">{{ t('svc.password') }}</span>

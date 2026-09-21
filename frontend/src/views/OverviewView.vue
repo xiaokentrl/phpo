@@ -13,7 +13,7 @@ import type { DoctorReport, DoctorStatus, ServiceKind } from '@/types'
 const { t } = useI18n()
 const state = useAppState()
 const router = useRouter()
-const { openCleanupModal, openTrashModal } = useModals()
+const { openCleanupModal, openTrashModal, openInstallModal } = useModals()
 
 const report = ref<DoctorReport | null>(null)
 const diagnosing = ref(false)
@@ -105,7 +105,7 @@ function jump(kind: ServiceKind) {
       <div class="empty-icon">🚀</div>
       <h2>{{ t('overview.empty.title') }}</h2>
       <p>{{ t('overview.empty.desc') }}</p>
-      <button class="btn btn-primary" data-action="install" data-kind="php">{{ t('php.empty.action') }}</button>
+      <button class="btn btn-primary" data-action="install" data-kind="php" @click="openInstallModal('php')">{{ t('php.empty.action') }}</button>
     </div>
 
     <template v-else>

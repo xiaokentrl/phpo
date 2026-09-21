@@ -97,6 +97,8 @@ const messages: Record<string, string> = {
   "nginx.empty.desc": "Install Nginx so sites can be accessed via domain.",
   "nginx.empty.action": "Install Nginx",
   "svc.port": "Port",
+  "svc.portPending": "Port saved to config.yaml; Docker binds ports only when the container is created, so reinstall {kind} {version} to apply.",
+  "svc.portFixed": "Nginx publishes port 80 plus every site port automatically; it cannot be changed here.",
   "svc.password": "Password",
   "svc.showPassword": "Show password",
   "svc.hidePassword": "Hide password",
