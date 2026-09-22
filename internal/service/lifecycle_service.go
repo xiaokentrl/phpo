@@ -26,6 +26,8 @@ type DockerOps interface {
 	PreCleanContainer(ctx context.Context, name string) error
 	PublishedPorts(ctx context.Context, name string) ([]int, error)
 	ContainerRunning(ctx context.Context, name string) (bool, error)
+	ContainerExists(ctx context.Context, name string) bool
+	ImageExists(ctx context.Context, ref string) (bool, error)
 }
 
 // StateStore SQLite 权威视图读写子集（*store.Store 满足）
@@ -124,7 +126,7 @@ func (l *LifecycleService) Calibrate(ctx context.Context) (*engine.CalibrateResu
 // Install 缓存管道（T303）已确保镜像就绪后，创建并启动容器：Pre-Clean 同名 → 建 → 启 → 校验在运行。
 // 幂等：Pre-Clean 抹平同名差异；已达成态由 Post-Verify 判定。配置渲染于 T307 补全（此处镜像自带默认即可起）。
 func (l *LifecycleService) Install(ctx context.Context, kind model.ServiceKind, version string) error {
-	spec, err := l.specFor(kind, version)
+	spec, err := l.specFor(ctx, kind, version)
 	if err != nil {
 		return err
 	}
@@ -136,7 +138,7 @@ func (l *LifecycleService) Install(ctx context.Context, kind model.ServiceKind, 
 // Pre-Clean 只删同名容器，数据卷与绑定目录保留（§5.13.7）。端口占用在 Pre-Clean 之前拒绝：
 // 否则容器已删、新端口却绑不上，等于白丢一个正在跑的服务。
 func (l *LifecycleService) Reinstall(ctx context.Context, kind model.ServiceKind, version string) error {
-	spec, err := l.specFor(kind, version)
+	spec, err := l.specFor(ctx, kind, version)
 	if err != nil {
 		return err
 	}
@@ -153,13 +155,30 @@ func (l *LifecycleService) Reinstall(ctx context.Context, kind model.ServiceKind
 	return l.installSpec(ctx, kind, version, spec, "reinstall")
 }
 
-// specFor 取该种类的装配策略并产出容器 spec
-func (l *LifecycleService) specFor(kind model.ServiceKind, version string) (engine.ContainerSpec, error) {
+// specFor 取该种类的装配策略并产出容器 spec。
+// php 额外一步：本机若已有扩展链路 commit 出的 phpo/php:{version}，就以它为准——
+// 从基座 php:{version}-fpm 建容器会抹掉用户已启用的扩展，而 php_extensions 表还记着它们（§5.13.1 一致性）。
+// 探针报错必须上抛：静默当作「本机没有」等于把上述抹除过程伪装成一次正常重建（§5.14.12）。
+func (l *LifecycleService) specFor(ctx context.Context, kind model.ServiceKind, version string) (engine.ContainerSpec, error) {
 	svc, ok := l.services[kind]
 	if !ok {
 		return engine.ContainerSpec{}, fmt.Errorf("未注册的服务种类: %s", kind)
 	}
-	return svc.ContainerSpec(version, l.env)
+	spec, err := svc.ContainerSpec(version, l.env)
+	if err != nil {
+		return spec, err
+	}
+	if kind == model.KindPHP {
+		ref := engine.CommittedPHPRef(version)
+		has, err := l.docker.ImageExists(ctx, ref)
+		if err != nil {
+			return spec, err
+		}
+		if has {
+			spec.Image = ref
+		}
+	}
+	return spec, nil
 }
 
 // installSpec 三阶段建/启容器并落库：Pre-Clean 同名 → create+start → Post-Verify → commit
@@ -259,9 +278,15 @@ func sameHostPorts(want map[string]string, held []int) bool {
 	return true
 }
 
-// Start 启动已安装容器（幂等：已运行则 Post-Verify 直接通过）
+// Start 启动已安装容器（幂等：已运行则 Post-Verify 直接通过）。
+// 容器已被外部删除（docker rm / Docker Desktop 重置）时不再抛 "no such container"：
+// 库里仍记已安装，就按当前落库配置走一次重建——否则点「启动」永久失败，而 php 这类不发布宿主端口的
+// 服务卡片上根本没有重建入口，用户无路可走。
 func (l *LifecycleService) Start(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
+	if !l.docker.ContainerExists(ctx, name) {
+		return l.Reinstall(ctx, kind, version)
+	}
 	op := engine.Op{
 		Name:       "start " + name,
 		Execute:    func(ctx context.Context) error { return l.docker.StartContainer(ctx, name) },

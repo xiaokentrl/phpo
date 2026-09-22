@@ -8,7 +8,6 @@ import { toast } from './useToast'
 import { runTask, submitWrite, type TaskMeta } from './useTask'
 import { removeSite, hasBackend } from '@/api/site'
 import { startService as svcStart, stopService as svcStop, removeService as svcRemove, reinstallService as svcReinstall } from '@/api/lifecycle'
-import { envKeyPort } from '@/api/env'
 import { listBackups, createBackup, restoreBackup, deleteBackup, downloadBackup } from '@/api/backup'
 import { SVC_META } from '@/constants/service'
 import InstallModal from '@/components/business/InstallModal.vue'
@@ -141,8 +140,10 @@ export function useModals() {
       cliPreview: `phpo ${kind} reinstall ${version}`,
       confirmLabel: t('svc.rebuild'),
       onConfirm: () => {
-        // 复用 update-config 裁决（端口占用/未安装）；真正的占用预检在后端 Pre-Clean 之前，冲突即拒绝且不碰容器
-        const check = preflight('update-config', { kind, version, field: 'port', newValue: app.env[envKeyPort(kind, version)] || '' })
+        // 复用 update-config 裁决，但**不带 field**：重建不改端口，只该裁「服务在不在/装没装」。
+        // 带上 field:'port' 会把当前端口再校验一遍——端口键未落库时取到空串，必然报「端口格式不正确」，
+        // 把重建按钮变成一个永远点不动的死路。真正的端口占用预检在后端 Pre-Clean 之前，冲突即拒绝且不碰容器。
+        const check = preflight('update-config', { kind, version })
         if (!check.ok) { toast(check.errors.join('\n'), 'err', 4600); return }
         submitWrite([kind, 'reinstall', version], label, { type: 'update-config', kind, version }, () => svcReinstall(kind, version))
       },

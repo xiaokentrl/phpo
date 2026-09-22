@@ -109,6 +109,9 @@ export interface TaskBrief {
   id: string
   label: string
   type: string
+  kind?: string // 服务类任务的目标种类：卡片据此亮「运行中…/排队中」
+  version?: string // 服务类任务的目标版本
+  domain?: string // 站点类任务的目标域名：站点列表行据此亮「运行中…/排队中」
   step: number // 已完成步骤数
   total: number
   startedAt: string
@@ -207,6 +210,9 @@ export interface SvcMeta {
   emptyTitleKey: string
   suggested: string[]
   single?: boolean
+  // defaultPort：端口键未落库时容器实际发布的宿主端口，与 internal/service/registry.go 的 Spec.HostPort 同值；
+  // 0 = 该服务不发布宿主端口（php-fpm 只在 phpo-network 内可达）
+  defaultPort: number
 }
 
 // StateSnapshot 与后端 model.Snapshot（internal/model/snapshot.go）JSON 逐字对齐；

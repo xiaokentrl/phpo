@@ -72,6 +72,7 @@ func (s *ConfigService) Save(ctx context.Context, kind model.ServiceKind, versio
 	t := &task.Task{
 		ID:    s.newID("config-save"),
 		Label: fmt.Sprintf("保存 %s/%s 配置（%d 个文件）", kind, version, len(files)),
+		Meta:  model.TaskMeta{Type: "config-save", Kind: string(kind), Version: version},
 		Steps: []task.Step{steps.NewSaveConfigStep("写入配置文件", files)},
 	}
 	_, err := s.tasks.Run(ctx, t)

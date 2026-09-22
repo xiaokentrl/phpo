@@ -7,10 +7,10 @@ import { toast } from '@/composables/useToast'
 import { t } from '@/composables/useI18n'
 import type { TrayPrefs } from '@/types'
 
-export const THEME_IDS = ['midnight', 'light', 'oled', 'forest', 'ocean', 'sakura'] as const
+export const THEME_IDS = ['light', 'midnight', 'oled', 'forest', 'ocean', 'sakura'] as const
 export type ThemeId = (typeof THEME_IDS)[number]
 
-const DEFAULT_THEME: ThemeId = 'midnight'
+const DEFAULT_THEME: ThemeId = 'light'
 const LS_THEME = 'phpo-theme'
 const LS_TRAY = 'phpo-tray'
 

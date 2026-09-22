@@ -34,7 +34,8 @@ function cancel(): void {
 }
 
 // persist：落库（含空串）。真实走后端绑定；mock 直写 env + 回放 update-config 日志。
-async function persist(next: string, prev: string): Promise<void> {
+// 返回值即「是否真的写进去」：调用方（重置按钮的成功提示）必须据此判定，否则落库失败也报「已重置」。
+async function persist(next: string, prev: string): Promise<boolean> {
   editing.value = false
   revealed.value = false
   try {
@@ -46,7 +47,7 @@ async function persist(next: string, prev: string): Promise<void> {
     }
   } catch (e) {
     toast(String(e), 'err', 4600)
-    return
+    return false
   }
   if (!hasBackend()) {
     const shown = next.length > 12 ? `${next.slice(0, 8)}…` : next || '∅'
@@ -54,6 +55,7 @@ async function persist(next: string, prev: string): Promise<void> {
       type: 'update-config', kind: props.kind, version: props.version, field: 'password', oldValue: prev, newValue: next,
     })
   }
+  return true
 }
 
 function commit(): void {
@@ -64,8 +66,7 @@ function commit(): void {
 
 async function reset(): Promise<void> {
   if (realValue.value === DEFAULT_PASSWORD) { toast(t('svc.passwordIsDefault'), 'info', 1600); return }
-  await persist(DEFAULT_PASSWORD, realValue.value)
-  toast(t('svc.passwordReset'), 'ok', 1800)
+  if (await persist(DEFAULT_PASSWORD, realValue.value)) toast(t('svc.passwordReset'), 'ok', 1800)
 }
 
 async function copy(): Promise<void> {

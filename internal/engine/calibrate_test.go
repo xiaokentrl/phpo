@@ -43,17 +43,29 @@ func TestCalibrate_UnexpectedRunning(t *testing.T) {
 	}
 }
 
-// 存在性漂移（幽灵：SQLite 有、Docker 无）：仅上报 Missing，不产出运行态修正（不误删）
-func TestCalibrate_MissingReportOnly(t *testing.T) {
+// 容器被外部删除（docker rm / Desktop 重置）：期望运行、实际连容器都没有 → 运行态必须拉齐到停止，
+// 否则 SQLite 永远虚报「运行中」，而「启动」因 no such container 永久失败；存在性漂移仍只上报、不自动删记录
+func TestCalibrate_MissingCorrectsRunningButKeepsInstalled(t *testing.T) {
 	res := Calibrate([]ContainerRef{php84()}, []ContainerRef{php84()}, nil)
-	if len(res.Corrections) != 0 {
-		t.Fatalf("缺失不应产运行修正，实得 %+v", res.Corrections)
+	if len(res.Corrections) != 1 || res.Corrections[0].Ref != php84() || res.Corrections[0].Running {
+		t.Fatalf("缺失且期望运行应产出 running=false 修正，实得 %+v", res.Corrections)
 	}
 	if !res.Changed() {
 		t.Fatal("存在性漂移应判为已变化")
 	}
 	if len(res.Drift.Missing) != 1 || res.Drift.Missing[0] != "phpo-php-8.4" {
 		t.Fatalf("应记 Missing，实得 %+v", res.Drift)
+	}
+}
+
+// 缺失 + 本来就期望停止：已一致，不产修正（幂等：不得为「不存在」造出无谓的写回与事件）
+func TestCalibrate_MissingAlreadyStopped(t *testing.T) {
+	res := Calibrate([]ContainerRef{php84()}, nil, nil)
+	if len(res.Corrections) != 0 {
+		t.Fatalf("期望停止且容器缺失不应产修正，实得 %+v", res.Corrections)
+	}
+	if len(res.Drift.Missing) != 1 {
+		t.Fatalf("存在性漂移仍应上报 Missing，实得 %+v", res.Drift)
 	}
 }
 

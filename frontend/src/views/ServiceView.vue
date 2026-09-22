@@ -3,6 +3,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
+import { useTaskStore } from '@/stores/taskStore'
 import { useModals } from '@/composables/useModals'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
@@ -12,29 +13,46 @@ import { hasBackend } from '@/api/site'
 import { envKeyPort, setPort } from '@/api/env'
 import PasswordField from '@/components/common/PasswordField.vue'
 import { DIR_ROWS, DEFAULT_FILE_COUNT, SVC_META } from '@/constants/service'
-import type { ServiceKind } from '@/types'
-import { needsPort, needsPassword, suggestPortFor } from '@/utils/format'
+import type { ServiceKind, TaskBrief } from '@/types'
+import { needsPort, needsPassword } from '@/utils/format'
 import { verRoot } from '@/utils/path'
 
 const props = defineProps<{ kind: ServiceKind }>()
 const { t } = useI18n()
 const state = useAppState()
+const tasks = useTaskStore()
 const modals = useModals()
 const { preflight } = usePreflight()
 
 const meta = computed(() => SVC_META[props.kind])
 const versions = computed(() => state.installed[props.kind] || [])
 
-// versionCard：端口键 {KIND}_{ver}_PORT（与后端 config.EnvKeyPort 同源，nginx 亦走此键）
+// versionCard：端口键 {KIND}_{ver}_PORT（与后端 config.EnvKeyPort 同源，nginx 亦走此键）。
+// 键未落库时回退 SVC_META.defaultPort——它与后端 registry 的 Spec.HostPort 同值，即容器真正发布的端口；
+// 不再用 suggestPortFor 猜（那是原型给安装弹窗预填的算法，mysql 8.4 会算成 3384，卡片却显示 3306）。
 function portValue(version: string): string {
   const key = envKeyPort(props.kind, version)
-  return String(state.env[key] || suggestPortFor(props.kind, version) || '')
+  return String(state.env[key] || meta.value.defaultPort || '')
 }
 function dirPath(version: string, sub: string): string {
   return `${verRoot(state.env, props.kind, version)}/${sub}`
 }
 function extCount(version: string): number {
   return (state.phpExtensions[version] || []).length
+}
+
+// busyPill 该版本卡片上有没有任务在跑/在排队：判据是后端 TaskBrief 的 kind+version（§5.6 队列详情走快照），
+// 不按 label 文案反推——文案要 i18n，一改「进行中」就丢。只加指示、不禁用按钮：
+// 并发写操作按 FIFO 排队是合法路径（总纲 §5.6），拦点击属于非必要限制。
+function busyPill(version: string): string | null {
+  const targets = (b?: TaskBrief | null) => !!b && b.kind === props.kind && b.version === version
+  const run = tasks.runningBrief
+  if (targets(run) && run) {
+    const total = run.total || 0
+    return total > 0 ? `${t('task.running')} ${Math.min(run.step, total)}/${total}` : t('task.running')
+  }
+  if ((tasks.pendingBriefs || []).some(targets)) return t('task.queued')
+  return null
 }
 
 // 端口行内编辑：needsPort 的服务端口都会进容器 spec（nginx 是基准端口，与站点端口并集一起发布）
@@ -111,6 +129,7 @@ async function commitPort(version: string): Promise<void> {
           <span class="version-tag">{{ version }}</span>
           <span v-if="state.isServiceRunning(kind, version)" class="status-pill pill-ok"><span class="pill-dot"></span>{{ t('svc.running') }}</span>
           <span v-else class="status-pill pill-off"><span class="pill-dot"></span>{{ t('svc.stopped') }}</span>
+          <span v-if="busyPill(version)" class="status-pill pill-warn" data-task-busy>{{ busyPill(version) }}</span>
         </div>
 
         <div>

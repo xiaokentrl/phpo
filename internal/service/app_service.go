@@ -122,12 +122,19 @@ func (s *AppService) DockerStatus(ctx context.Context) model.DockerStatus {
 
 // ---- 写接口（一律经 task.Manager 三段式）----
 
+// serviceMeta 服务类任务的业务上下文：Type 供账本与审计归类，Kind/Version 供快照任务面板
+// 把「进行中/排队中」精确标到对应的服务卡片上（前端不靠 label 文案反推）。
+func serviceMeta(op string, kind model.ServiceKind, version string) model.TaskMeta {
+	return model.TaskMeta{Type: op, Kind: string(kind), Version: version}
+}
+
 // Install 缓存优先镜像就绪 → 容器创建并启动（lifecycle 内部幂等三段式）→ 任务后校准
 func (s *AppService) Install(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
 	t := &task.Task{
 		ID:    s.newID(opInstall),
 		Label: "安装 " + name,
+		Meta:  serviceMeta(opInstall, kind, version),
 		Steps: s.serviceSteps(kind, version, s.lifecycle.Install),
 	}
 	if st := s.healStep(kind, opInstall); st != nil {
@@ -145,6 +152,7 @@ func (s *AppService) Reinstall(ctx context.Context, kind model.ServiceKind, vers
 	t := &task.Task{
 		ID:    s.newID(opReinstall),
 		Label: "重建 " + name,
+		Meta:  serviceMeta(opReinstall, kind, version),
 		Steps: s.serviceSteps(kind, version, s.lifecycle.Reinstall),
 	}
 	if st := s.healStep(kind, opReinstall); st != nil {
@@ -175,29 +183,30 @@ func (s *AppService) serviceSteps(kind model.ServiceKind, version string, apply 
 
 // Start 启动已安装容器；启动 nginx 可能让降级站点转为可服务，故带补齐
 func (s *AppService) Start(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one(opStart, "启动 "+dockerutil.ContainerName(string(kind), version),
+	return s.one(serviceMeta(opStart, kind, version), "启动 "+dockerutil.ContainerName(string(kind), version),
 		func(ctx context.Context) error { return s.lifecycle.Start(ctx, kind, version) }, s.healStep(kind, opStart))
 }
 
 // Stop 停止容器（保留数据，§5.13.7）
 func (s *AppService) Stop(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one(opStop, "停止 "+dockerutil.ContainerName(string(kind), version),
+	return s.one(serviceMeta(opStop, kind, version), "停止 "+dockerutil.ContainerName(string(kind), version),
 		func(ctx context.Context) error { return s.lifecycle.Stop(ctx, kind, version) })
 }
 
 // Remove 卸载容器（保留数据卷）；卸载数据服务会让出端口，被端口占用卡住的降级站点靠此补齐
 func (s *AppService) Remove(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one(opRemove, "卸载 "+dockerutil.ContainerName(string(kind), version),
+	return s.one(serviceMeta(opRemove, kind, version), "卸载 "+dockerutil.ContainerName(string(kind), version),
 		func(ctx context.Context) error { return s.lifecycle.Remove(ctx, kind, version) }, s.healStep(kind, opRemove))
 }
 
 // ---- 内部助手 ----
 
 // one 单步任务的便捷构造：把一次 lifecycle 原子操作包成一步，仍经 task.Manager 发事件；extra 追加可选步骤（nil 跳过）
-func (s *AppService) one(op, label string, fn func(ctx context.Context) error, extra ...task.Step) error {
+func (s *AppService) one(meta model.TaskMeta, label string, fn func(ctx context.Context) error, extra ...task.Step) error {
 	t := &task.Task{
-		ID:    s.newID(op),
+		ID:    s.newID(meta.Type),
 		Label: label,
+		Meta:  meta,
 		Steps: []task.Step{
 			&task.FuncStep{StepName: label, Exec: func(ctx context.Context, _ task.StepLog) error { return fn(ctx) }},
 		},

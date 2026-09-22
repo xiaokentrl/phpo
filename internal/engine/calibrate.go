@@ -22,7 +22,9 @@ func (r CalibrateResult) Changed() bool {
 
 // Calibrate 比对期望（installed/running，running ⊆ installed）与 Docker 实际态：
 //   - 对「期望已安装且实际存在、但运行态不符」者产出 Correction（把 running 拉齐到实际）；
-//   - 存在性漂移（Missing 未落地 / Extra 残留孤儿）仅上报 Drift，不自动删建，交用户或清理线决策，避免误删数据。
+//   - 「期望运行但容器已缺失」同样产出 running=false 的 Correction：进程不在 Docker 里跑着，SQLite 记
+//     running=1 就是虚报（UI 会一直显示「运行中」，而「启动」因 no such container 永久失败，用户无自救入口）；
+//     缺失本身仍只上报 Drift.Missing，不自动删建 installed 记录，交用户或清理线决策，避免误删数据。
 func Calibrate(installed, running []ContainerRef, actual []ActualState) CalibrateResult {
 	wantRunning := nameSet(running)
 
@@ -35,10 +37,16 @@ func Calibrate(installed, running []ContainerRef, actual []ActualState) Calibrat
 	for _, ref := range installed {
 		n := ref.Name()
 		a, exists := byName[n]
+		want := wantRunning[n]
 		if !exists {
-			continue // 存在性漂移，由 Drift.Missing 上报，不改运行态
+			// 容器不在 Docker 里 ⇒ 进程必然没在跑，期望运行即虚报：运行态拉齐到停止。
+			// installed 记录原样保留（存在性漂移由 Drift.Missing 上报），数据与重建入口都还在。
+			if want {
+				corrections = append(corrections, Correction{Ref: ref, Running: false})
+			}
+			continue
 		}
-		if wantRunning[n] != a.Running {
+		if want != a.Running {
 			corrections = append(corrections, Correction{Ref: ref, Running: a.Running})
 		}
 	}

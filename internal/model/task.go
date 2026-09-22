@@ -37,8 +37,11 @@ type LogLine struct {
 type TaskBrief struct {
 	ID        string    `json:"id"`
 	Label     string    `json:"label"`
-	Type      string    `json:"type"` // install / start / site-add / ...
-	Step      int       `json:"step"` // 已完成步骤数
+	Type      string    `json:"type"`              // install / start / site-add / ...
+	Kind      string    `json:"kind,omitempty"`    // 服务类任务的目标种类：卡片据此亮「运行中…」
+	Version   string    `json:"version,omitempty"` // 服务类任务的目标版本
+	Domain    string    `json:"domain,omitempty"`  // 站点类任务的目标域名：站点列表行据此亮「运行中…」
+	Step      int       `json:"step"`              // 已完成步骤数
 	Total     int       `json:"total"`
 	StartedAt time.Time `json:"startedAt"`
 }

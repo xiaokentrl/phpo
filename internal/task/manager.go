@@ -247,6 +247,16 @@ func (m *Manager) setProgress(step, total int) {
 	m.notify()
 }
 
+// briefOf 面板摘要。Kind/Version 只有服务类任务才有、Domain 只有站点类任务才有：
+// 服务卡片与站点行据此把「运行中/排队中」精确标到被操作的那一项上，不必靠 label 文案反推。
 func briefOf(t *Task) model.TaskBrief {
-	return model.TaskBrief{ID: t.ID, Label: label(t), Type: t.Meta.Type, Total: len(t.Steps)}
+	return model.TaskBrief{
+		ID:      t.ID,
+		Label:   label(t),
+		Type:    t.Meta.Type,
+		Kind:    t.Meta.Kind,
+		Version: t.Meta.Version,
+		Domain:  t.Meta.Domain,
+		Total:   len(t.Steps),
+	}
 }

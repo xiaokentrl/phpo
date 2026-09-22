@@ -101,15 +101,14 @@ func (c *Client) StopContainer(ctx context.Context, name string) error {
 	return c.cli.ContainerStop(ctx, name, container.StopOptions{})
 }
 
-// RemoveContainer 删除容器（force + remove volume，幂等：不存在视为成功）
+// RemoveContainer 删除容器（force 停删合一，幂等：不存在视为成功）。
+// 不带 removeVolumes：卸载/重装默认保留数据（§0.2 规则 20、§5.13.7），删卷只能走显式二次确认。
+// 本项目持久化全在宿主 bind 目录（§5.14.2 MOUNTS），容器不留卷，删卷只可能误伤镜像声明的匿名卷。
 func (c *Client) RemoveContainer(ctx context.Context, name string) error {
 	if !c.ContainerExists(ctx, name) {
 		return nil
 	}
-	return c.cli.ContainerRemove(ctx, name, container.RemoveOptions{
-		Force:         true,
-		RemoveVolumes: true,
-	})
+	return c.cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
 }
 
 func mergeLabels(base, extra map[string]string) map[string]string {

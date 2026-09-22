@@ -119,10 +119,18 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 	}
 	committedRef := engine.CommittedPHPRef(version)
 	name := dockerutil.ContainerName(string(model.KindPHP), version)
-	// 回滚后应恢复运行的镜像：原启用过扩展 → 原固化镜像；否则基座镜像
+	// 回滚后应恢复运行的镜像：原启用过扩展且固化镜像真在本机 → 固化镜像；否则基座镜像。
+	// 镜像被手工删掉/换机没带过来时退回基座，否则第一步建容器就 "No such image"，
+	// 用户连「重新点一次扩展」这条恢复路都没有（§5.13.1 可恢复性）。
 	prevRef := baseRef
 	if len(prev) > 0 {
-		prevRef = committedRef
+		has, err := s.rt.ImageExists(ctx, committedRef)
+		if err != nil {
+			return err
+		}
+		if has {
+			prevRef = committedRef
+		}
 	}
 
 	// env 文件旧内容（用于回滚；不存在记 nil）
@@ -209,7 +217,7 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 	t := &task.Task{
 		ID:    s.newID("extensions"),
 		Label: fmt.Sprintf("应用 PHP %s 扩展 (%s)", version, joinDiff(added, removed)),
-		Meta:  model.TaskMeta{Type: "extensions"},
+		Meta:  model.TaskMeta{Type: "extensions", Kind: string(model.KindPHP), Version: version},
 		Steps: steps,
 		Apply: func() error {
 			if err := s.store.SetPHPExtensions(version, enabled); err != nil {

@@ -20,13 +20,24 @@ import (
 type fakeDocker struct {
 	containers  map[string]bool
 	volumes     map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
+	localImages map[string]bool                 // 本机 Docker 镜像库（固化扩展镜像的判据）
 	lastSpec    map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
 	published   map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
 	createCalls int                             // 建容器次数（「未变即不重建」的判据）
+	createErr   error                           // 非空则 CreateServiceContainer 失败（模拟端口绑不上等建容器错误）
+	imageErr    error                           // 非空则 ImageExists 失败（模拟镜像库探针本身不可用）
 }
 
 func newFakeDocker() *fakeDocker {
-	return &fakeDocker{containers: map[string]bool{}, volumes: map[string]bool{"phpo-mysql-8.4-data": true}, lastSpec: map[string]engine.ContainerSpec{}, published: map[string][]int{}}
+	return &fakeDocker{containers: map[string]bool{}, volumes: map[string]bool{"phpo-mysql-8.4-data": true}, localImages: map[string]bool{}, lastSpec: map[string]engine.ContainerSpec{}, published: map[string][]int{}}
+}
+
+// ImageExists 探本机镜像库：固化扩展镜像 phpo/php:{version} 是否就绪
+func (f *fakeDocker) ImageExists(_ context.Context, ref string) (bool, error) {
+	if f.imageErr != nil {
+		return false, f.imageErr
+	}
+	return f.localImages[ref], nil
 }
 
 func (f *fakeDocker) ManagedContainers(context.Context) ([]engine.ActualState, error) {
@@ -42,6 +53,9 @@ func (f *fakeDocker) ManagedContainers(context.Context) ([]engine.ActualState, e
 }
 
 func (f *fakeDocker) CreateServiceContainer(_ context.Context, _ config.Env, spec engine.ContainerSpec) (string, error) {
+	if f.createErr != nil {
+		return "", f.createErr
+	}
 	name := dockerutil.ContainerName(spec.Kind, spec.Version)
 	f.containers[name] = false // 新建即停止
 	f.createCalls++
@@ -96,6 +110,12 @@ func (f *fakeDocker) PublishedPorts(_ context.Context, name string) ([]int, erro
 // ContainerRunning 假世界以 containers[name] 记运行态；无容器即 false（不报错）
 func (f *fakeDocker) ContainerRunning(_ context.Context, name string) (bool, error) {
 	return f.containers[name], nil
+}
+
+// ContainerExists 假世界以键是否存在记容器存在
+func (f *fakeDocker) ContainerExists(_ context.Context, name string) bool {
+	_, ok := f.containers[name]
+	return ok
 }
 
 func parseName(name string) (kind, ver string, ok bool) {
@@ -202,6 +222,62 @@ func TestCalibrate_KillDetected_PersistsAndEmits(t *testing.T) {
 	}
 }
 
+// 容器被外部删除（docker rm / Docker Desktop 重置）：库里仍记「运行中」就是虚报，
+// 校准必须将运行态拉齐到停止并回流快照，同时保留已安装记录（数据与重建入口不动）
+func TestCalibrate_ExternallyRemoved_DropsRunningButKeepsInstalled(t *testing.T) {
+	l, _, s, em := newSvc()
+	_ = s.SetInstalled("mysql", "8.4", true)
+	_ = s.SetRunning("mysql", "8.4", true)
+	// Docker 世界里容器不存在（未被 ManagedContainers 列出）
+
+	res, err := l.Calibrate(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Corrections) != 1 || res.Corrections[0].Running {
+		t.Fatalf("容器已消失应产出 running=false 修正，实得 %+v", res.Corrections)
+	}
+	if contains(s.snap.Running["mysql"], "8.4") {
+		t.Fatal("校准后不应再把已消失的容器记为运行")
+	}
+	if !contains(s.snap.Installed["mysql"], "8.4") {
+		t.Fatal("已安装记录不得被校准删除（卸载需用户显式操作）")
+	}
+	if !em.has("state:changed") {
+		t.Fatalf("运行态修正应回流 state:changed，实得 %v", em.events)
+	}
+}
+
+// 重建失败（Pre-Clean 已删旧容器、新容器建不起来）：本体错误已上抛，
+// 「每任务后校准」必须把库里残留的「运行中」抹掉，否则 UI 永远虚报绿点且启动永久失败
+func TestReinstall_FailedCreate_CalibrateClearsGhostRunning(t *testing.T) {
+	l, d, s, _ := newSvc()
+	ctx := context.Background()
+	if err := l.Install(ctx, model.KindPHP, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	d.createErr = errors.New("Bind for 0.0.0.0:9000 failed: port is already allocated")
+
+	if err := l.Reinstall(ctx, model.KindPHP, "8.4"); err == nil {
+		t.Fatal("建容器失败应上抛错误")
+	}
+	if _, ok := d.containers["phpo-php-8.4"]; ok {
+		t.Fatal("回滚后不应残留半相容器")
+	}
+	if !contains(s.snap.Running["php"], "8.4") {
+		t.Fatal("本用例前提：失败路径未写库，库里仍虚报运行中")
+	}
+	if _, err := l.Calibrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if contains(s.snap.Running["php"], "8.4") {
+		t.Fatal("任务后校准应抹掉虚报的运行态")
+	}
+	if !contains(s.snap.Installed["php"], "8.4") {
+		t.Fatal("仍视为已安装，用户可从卡片重建自救")
+	}
+}
+
 func TestCalibrate_Consistent_Silent(t *testing.T) {
 	l, d, s, em := newSvc()
 	_ = s.SetInstalled("php", "8.4", true)
@@ -285,6 +361,46 @@ func TestRemove_PreservesVolumes(t *testing.T) {
 	}
 }
 
+// 容器被外部删掉（docker rm / Desktop 重置）后点「启动」：已安装即按当前配置重建并拉起，
+// 而不是抛一句 no such container 把用户逼进死路（校准已把运行态拉回停止，此处负责把服务真起来）
+func TestStart_RecreatesMissingContainer(t *testing.T) {
+	l, d, s, em := newSvc()
+	ctx := context.Background()
+	if err := l.Install(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	delete(d.containers, "phpo-mysql-8.4") // Docker 侧容器消失
+	_ = s.SetRunning("mysql", "8.4", false)
+	s.setPort("mysql", "8.4", 3307) // 重建要按当前落库端口发布，不是注册表默认
+
+	if err := l.Start(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatalf("容器缺失时启动应自愈重建: %v", err)
+	}
+	if !d.containers["phpo-mysql-8.4"] {
+		t.Fatal("启动后容器应在运行")
+	}
+	if got := publishedPort(d, "phpo-mysql-8.4", "3306/tcp"); got != "3307" {
+		t.Fatalf("重建应按落库端口 3307 发布，实得 %q", got)
+	}
+	if !contains(s.snap.Running["mysql"], "8.4") {
+		t.Fatal("启动后应回流 running=true")
+	}
+	if !em.has("state:changed") {
+		t.Fatalf("应发 state:changed 供前端同步，实得 %v", em.events)
+	}
+}
+
+// 未安装的服务没有可重建的容器：启动仍应拒绝且不建容器（门禁在 preflight，此处是后门防线）
+func TestStart_WithoutInstalledDoesNotCreate(t *testing.T) {
+	l, d, _, _ := newSvc()
+	if err := l.Start(context.Background(), model.KindMySQL, "8.4"); err == nil {
+		t.Fatal("未安装的服务启动应报错")
+	}
+	if len(d.containers) != 0 {
+		t.Fatalf("报错后不应残留容器，实得 %v", d.containers)
+	}
+}
+
 func TestInstall_UnknownKindErrors(t *testing.T) {
 	l, _, _, _ := newSvc()
 	// 五类服务（php/nginx/mysql/pgsql/redis）均已注册；未注册种类应报错
@@ -337,6 +453,42 @@ func TestReinstall_AppliesNewHostPortAndPreservesVolumes(t *testing.T) {
 	}
 	if !em.has("state:changed") {
 		t.Fatalf("重建应发 state:changed，实得 %v", em.events)
+	}
+}
+
+// TestReinstall_PhpUsesCommittedExtImage 启用过扩展的 php 版本，重建必须用固化镜像 phpo/php:{v}。
+// 从基座 php:{v}-fpm 建容器等于把用户编译进镜像的扩展悄悄抹掉，而 php_extensions 表还记着它们
+// （§5.13.1 一致性 / 硬红线 4：展示的权威态与真实跑的东西必须是一回事）。
+func TestReinstall_PhpUsesCommittedExtImage(t *testing.T) {
+	l, d, _, _ := newSvc()
+	ctx := context.Background()
+	if err := l.Install(ctx, model.KindPHP, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.lastSpec["phpo-php-8.4"].Image; got != "php:8.4-fpm" {
+		t.Fatalf("本机无固化镜像时应装基座，实得 %q", got)
+	}
+	d.localImages["phpo/php:8.4"] = true // 扩展链路 docker commit 的产物
+
+	if err := l.Reinstall(ctx, model.KindPHP, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.lastSpec["phpo-php-8.4"].Image; got != "phpo/php:8.4" {
+		t.Fatalf("已固化扩展的 php 重建应用 phpo/php:8.4，实得 %q", got)
+	}
+}
+
+// TestReinstall_ImageProbeFailureIsNotTreatedAsMissing 镜像库探针本身报错不能静默当作「本机没有」：
+// 退回基座即抹掉扩展（§5.14.12 禁止静默）。宁可重建失败，也不装一个配置对不上的容器。
+func TestReinstall_ImageProbeFailureIsNotTreatedAsMissing(t *testing.T) {
+	l, d, _, _ := newSvc()
+	ctx := context.Background()
+	if err := l.Install(ctx, model.KindPHP, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	d.imageErr = errors.New("docker daemon 不可用")
+	if err := l.Reinstall(ctx, model.KindPHP, "8.4"); err == nil {
+		t.Fatal("php 重建时镜像探针报错应上抛，不得退回基座镜像")
 	}
 }
 

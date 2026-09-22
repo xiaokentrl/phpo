@@ -166,6 +166,63 @@ func TestBoardCarriesProgress(t *testing.T) {
 	}
 }
 
+// —— 目标定位：服务类任务把 kind/version 带进面板，服务卡片据此亮「运行中…」/「排队中」 ——
+
+func TestBoardCarriesServiceTarget(t *testing.T) {
+	m := NewManager(&capturingEmitter{})
+	rel := make(chan struct{})
+	defer close(rel)
+	run := func(id string) {
+		if _, err := m.Run(context.Background(), &Task{ID: id, Label: "安装 phpo-mysql-8.4 " + id,
+			Meta:  model.TaskMeta{Type: "install", Kind: "mysql", Version: "8.4"},
+			Steps: []Step{gateStep(id, rel), NewNoopStep("创建容器")}}); err != nil {
+			t.Errorf("%s 应入队成功: %v", id, err) // 在 goroutine 里跑，只能用 Errorf
+		}
+	}
+	go run("a")
+	waitFor(t, "A 运行", func() bool {
+		b := m.Board()
+		return b.Running != nil && b.Running.ID == "a"
+	})
+	go run("b")
+	waitFor(t, "B 排队", func() bool { return len(m.Board().Pending) == 1 })
+
+	if got := m.Board().Running; got.Kind != "mysql" || got.Version != "8.4" || got.Type != "install" {
+		t.Errorf("运行项应带服务目标: %+v", got)
+	}
+	if got := m.Board().Pending[0]; got.Kind != "mysql" || got.Version != "8.4" {
+		t.Errorf("排队项应带服务目标: %+v", got)
+	}
+}
+
+// —— 站点任务把域名带进面板：站点列表行据此亮「运行中…/排队中」，不靠 label 反推 ——
+
+func TestBoardCarriesSiteTarget(t *testing.T) {
+	m := NewManager(&capturingEmitter{})
+	rel := make(chan struct{})
+	defer close(rel)
+	run := func(id, label string, meta model.TaskMeta) {
+		if _, err := m.Run(context.Background(), &Task{ID: id, Label: label, Meta: meta,
+			Steps: []Step{gateStep(id, rel), NewNoopStep("写 vhost")}}); err != nil {
+			t.Errorf("%s 应入队成功: %v", id, err) // goroutine 内只能用 Errorf
+		}
+	}
+	go run("a", "切换 demo.test 的 PHP", model.TaskMeta{Type: "php-switch", Domain: "demo.test"})
+	waitFor(t, "A 运行", func() bool {
+		b := m.Board()
+		return b.Running != nil && b.Running.ID == "a"
+	})
+	go run("b", "删除站点 api.test", model.TaskMeta{Type: "site-remove", Domain: "api.test"})
+	waitFor(t, "B 排队", func() bool { return len(m.Board().Pending) == 1 })
+
+	if got := m.Board().Running; got.Domain != "demo.test" || got.Type != "php-switch" || got.Kind != "" {
+		t.Errorf("运行项应带站点域名且不带服务种类: %+v", got)
+	}
+	if got := m.Board().Pending[0]; got.Domain != "api.test" {
+		t.Errorf("排队项应带站点域名: %+v", got)
+	}
+}
+
 // —— 去重：同一操作已在队列中不得叠加 ——
 
 func TestQueueRejectsDuplicate(t *testing.T) {

@@ -57,6 +57,17 @@ func (f *fakeExtRuntime) RemoveContainer(_ context.Context, name string) error {
 	delete(f.images, name)
 	return nil
 }
+
+// ImageExists 扩展链路不探镜像库：本次 commit 过的 ref 即视为本机就绪
+func (f *fakeExtRuntime) ImageExists(_ context.Context, ref string) (bool, error) {
+	for _, c := range f.commits {
+		if c == ref {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (f *fakeExtRuntime) PreCleanContainer(ctx context.Context, name string) error {
 	return f.RemoveContainer(ctx, name)
 }
@@ -64,6 +75,12 @@ func (f *fakeExtRuntime) PreCleanContainer(ctx context.Context, name string) err
 // PublishedPorts 扩展链路不重建 nginx，宿主端口实探恒空
 func (f *fakeExtRuntime) PublishedPorts(context.Context, string) ([]int, error) {
 	return nil, nil
+}
+
+// ContainerExists 假世界以镜像登记记容器存在
+func (f *fakeExtRuntime) ContainerExists(_ context.Context, name string) bool {
+	_, ok := f.images[name]
+	return ok
 }
 func (f *fakeExtRuntime) ContainerRunning(_ context.Context, name string) (bool, error) {
 	return f.running[name], nil
@@ -213,6 +230,23 @@ func TestExtension_Apply_NoChange(t *testing.T) {
 	}
 	if len(rt.execs) != 0 || len(rt.commits) != 0 {
 		t.Fatalf("集合未变不应触发任何 docker 操作，execs=%v commits=%v", rt.execs, rt.commits)
+	}
+}
+
+// TestExtension_Apply_NoCommittedImage_UsesBase 原启用过扩展、但固化镜像已不在本机（手工 docker rmi /
+// 换机没带过来）：先恢复容器时必须退回基座镜像。拿一个不存在的 phpo/php:{v} 去建容器，
+// 等于让整条扩展链路卡在 "No such image" 死路上——连「重新启用一个扩展」都做不到。
+func TestExtension_Apply_NoCommittedImage_UsesBase(t *testing.T) {
+	svc, rt, _, st, _, _ := newExtSvc(t)
+	_ = st.SetPHPExtensions("8.4", []string{"redis", "gd"})
+	if err := svc.Apply(context.Background(), "8.4", []string{"redis", "gd", "zip"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rt.createCalls) == 0 {
+		t.Fatal("应有一次建容器")
+	}
+	if got := rt.createCalls[0].Image; got != "php:8.4-fpm" {
+		t.Fatalf("固化镜像不在本机时恢复容器应用基座，实得 %q", got)
 	}
 }
 

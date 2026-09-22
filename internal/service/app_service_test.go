@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"phpo/internal/config"
@@ -234,6 +235,65 @@ func TestAppService_DockerStatus(t *testing.T) {
 				t.Fatalf("不可启动时应给出人话提示 Hint，实得空")
 			}
 		})
+	}
+}
+
+// TestAppService_ServiceTasksAdvertiseTarget 服务类任务必须把 kind/version 带进任务面板（§5.6 队列详情走快照）：
+// 服务卡片只认 (kind, version)，靠 label 文案反推等于让 i18n 一改就把「进行中」弄丢。
+func TestAppService_ServiceTasksAdvertiseTarget(t *testing.T) {
+	a, d, s, _, _, _ := newApp(t, nil)
+	var mu sync.Mutex
+	var seen []model.TaskBrief
+	a.tasks.SetQueueWatcher(func() {
+		b := a.tasks.Board().Running
+		if b == nil || b.Kind == "" {
+			return
+		}
+		mu.Lock()
+		seen = append(seen, *b)
+		mu.Unlock()
+	})
+
+	ctx := context.Background()
+	d.containers["phpo-nginx-alpine"] = true
+	_ = s.SetInstalled("nginx", "alpine", true)
+	_ = s.SetRunning("nginx", "alpine", true)
+	if err := a.Install(ctx, model.KindMySQL, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	s.setPort("mysql", "8.4", 3307)
+
+	cases := []struct {
+		op   string
+		kind model.ServiceKind
+		ver  string
+		call func() error
+	}{
+		{opInstall, model.KindPHP, "8.4", func() error { return a.Install(ctx, model.KindPHP, "8.4") }},
+		{opReinstall, model.KindMySQL, "8.4", func() error { return a.Reinstall(ctx, model.KindMySQL, "8.4") }},
+		{opStop, model.KindNginx, "alpine", func() error { return a.Stop(ctx, model.KindNginx, "alpine") }},
+		{opStart, model.KindNginx, "alpine", func() error { return a.Start(ctx, model.KindNginx, "alpine") }},
+		{opRemove, model.KindNginx, "alpine", func() error { return a.Remove(ctx, model.KindNginx, "alpine") }},
+	}
+	for _, c := range cases {
+		if err := c.call(); err != nil {
+			t.Fatalf("%s 任务应成功: %v", c.op, err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, c := range cases {
+		found := false
+		for _, b := range seen {
+			if b.Type == c.op && b.Kind == string(c.kind) && b.Version == c.ver {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s 任务的面板运行项应带目标 %s/%s，实得 %+v", c.op, c.kind, c.ver, seen)
+		}
 	}
 }
 

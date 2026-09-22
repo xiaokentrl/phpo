@@ -4,13 +4,15 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
+import { useTaskStore } from '@/stores/taskStore'
 import { useModals } from '@/composables/useModals'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { usePhpSwitch } from '@/composables/usePhpSwitch'
 import { usePortSuggest } from '@/composables/usePortSuggest'
-import type { Site } from '@/types'
-import { cmpVer, siteUrl, suggestPortFor } from '@/utils/format'
+import type { Site, TaskBrief } from '@/types'
+import { cmpVer, siteUrl } from '@/utils/format'
 import { hostToContainer } from '@/utils/path'
+import { SVC_META } from '@/constants/service'
 import { addSiteHosts, hasBackend } from '@/api/site'
 import { envKeyPort } from '@/api/env'
 import { toast } from '@/composables/useToast'
@@ -19,6 +21,7 @@ import { syncState } from '@/composables/useStateSync'
 
 const { t } = useI18n()
 const state = useAppState()
+const tasks = useTaskStore()
 const modals = useModals()
 const layout = useLayoutStore()
 const { switchPhp } = usePhpSwitch()
@@ -26,11 +29,12 @@ const { applyPort } = usePortSuggest()
 
 const phpVers = computed(() => state.installed.php)
 const healthy = computed(() => state.sites.filter((s) => s.health === 'up').length)
-// nginxPort：真实快照无 NGINX_PORT 键（那是 demo 占位），按已装 nginx 版本的端口键取值，未落库回落建议端口
+// nginxPort：真实快照无 NGINX_PORT 键（那是 demo 占位），按已装 nginx 版本的端口键取值；
+// 未落库时回落 nginx 的注册表默认基准端口（SVC_META.defaultPort 与后端 registry.Spec.HostPort 同值）
 const nginxPort = computed(() => {
   const v = state.installed.nginx[0] || ''
   if (!v) return '—'
-  return String(state.env[envKeyPort('nginx', v)] || suggestPortFor('nginx', v) || '—')
+  return String(state.env[envKeyPort('nginx', v)] || SVC_META.nginx.defaultPort || '—')
 })
 
 const menuDomain = ref<string | null>(null)
@@ -72,6 +76,19 @@ function phpOptions(site: Site): string[] {
 }
 function isUninstalled(v: string): boolean {
   return !!v && !phpVers.value.includes(v)
+}
+
+// busyPill 这一行站点上有没有任务在跑/在排队：判据是后端 TaskBrief 的 domain（§5.6 队列详情走快照），
+// 不从 label 文案反推（文案随 i18n 变化）。只加指示、不禁用按钮——并发写按 FIFO 排队是合法路径。
+// 建站例外：新站点在 Apply 之前不在快照里，没有行可标，其进度由弹窗与日志抽屉承载。
+function busyPill(domain: string): string | null {
+  const hit = (b?: TaskBrief | null) => !!b && b.domain === domain
+  const run = tasks.runningBrief
+  if (hit(run) && run) {
+    const total = run.total || 0
+    return total > 0 ? `${t('task.running')} ${Math.min(run.step, total)}/${total}` : t('task.running')
+  }
+  return (tasks.pendingBriefs || []).some(hit) ? t('task.queued') : null
 }
 
 // 「加 hosts」：写系统 hosts 走后端三段式；Hosts 列由快照真值回流，此处不做乐观更新（硬红线 4）
@@ -216,7 +233,10 @@ onBeforeUnmount(() => {
                 </button>
               </td>
               <td>
-                <span class="status-pill" :class="healthPill(site.health)"><span class="pill-dot"></span>{{ healthLabel(site.health) }}</span>
+                <span style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center">
+                  <span class="status-pill" :class="healthPill(site.health)"><span class="pill-dot"></span>{{ healthLabel(site.health) }}</span>
+                  <span v-if="busyPill(site.domain)" class="status-pill pill-warn" data-task-busy>{{ busyPill(site.domain) }}</span>
+                </span>
               </td>
               <td>
                 <span v-if="site.hosts" class="chip chip-accent">{{ t('sites.hosts.resolved') }}</span>
