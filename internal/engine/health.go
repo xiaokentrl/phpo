@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	sv "github.com/Masterminds/semver/v3"
 )
@@ -19,6 +20,19 @@ var (
 var dockerMinVersion = sv.MustParse("20.10.0")
 
 const dockerDownloadURL = "https://www.docker.com/products/docker-desktop/"
+
+// errBriefMax 底层错误压成单行后保留的最大字符数。SDK 或异常端点可能回吐整段 HTML / 多行堆栈，
+// 原样铺进首启横幅会撑满界面（§3.2 原则 3：错误信息是人话）。
+const errBriefMax = 120
+
+// errBrief 把任意底层错误收成单行、限长的可读片段，超长以省略号收尾。
+func errBrief(err error) string {
+	s := strings.Join(strings.Fields(err.Error()), " ")
+	if r := []rune(s); len(r) > errBriefMax {
+		return string(r[:errBriefMax]) + "…"
+	}
+	return s
+}
 
 // Status Docker 引擎探测结论
 type Status string
@@ -65,7 +79,7 @@ func Check(ctx context.Context, p Probe) Health {
 	case err != nil:
 		return Health{
 			Status:  StatusNotRunning,
-			Message: fmt.Sprintf("无法连接 Docker：%v", err),
+			Message: fmt.Sprintf("无法连接 Docker：%s", errBrief(err)),
 			Hint:    "请确认 Docker Desktop 已启动后重试。",
 		}
 	}

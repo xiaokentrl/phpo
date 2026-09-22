@@ -109,9 +109,9 @@ export interface TaskBrief {
   id: string
   label: string
   type: string
-  kind?: string // 服务类任务的目标种类：卡片据此亮「运行中…/排队中」
+  kind?: string // 服务类任务的目标种类：卡片据此亮「执行中…/等待中」
   version?: string // 服务类任务的目标版本
-  domain?: string // 站点类任务的目标域名：站点列表行据此亮「运行中…/排队中」
+  domain?: string // 站点类任务的目标域名：站点列表行据此亮「执行中…/等待中」
   step: number // 已完成步骤数
   total: number
   startedAt: string

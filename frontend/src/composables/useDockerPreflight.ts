@@ -9,6 +9,15 @@ import type { DockerStatus } from '@/types'
 const POLL_MS = 12_000
 let timer: ReturnType<typeof setInterval> | null = null
 
+// brief：绑定调用的底层失败可能是整段 HTML 或多行堆栈（异常端点、代理回吐）。
+// 横幅只留单行、限长的诊断片段，人话主句交给 locales 的 docker.* 兜底。
+// 按码点截断（与后端 engine.errBrief 的 rune 口径一致）：slice 按 UTF-16 码元切会把代理对劈成半个。
+function brief(e: unknown): string {
+  const s = String((e as Error)?.message ?? e).replace(/\s+/g, ' ').trim()
+  const cps = Array.from(s)
+  return cps.length > 120 ? `${cps.slice(0, 120).join('')}…` : s
+}
+
 // probe 拉取一次并落地；无宿主时置 ok（不拦截，保持 demo 可用）
 export async function refreshDocker(): Promise<void> {
   const app = useAppState()
@@ -21,7 +30,8 @@ export async function refreshDocker(): Promise<void> {
     if (s) app.setDocker(s)
     else app.setDocker({ status: 'unknown', canStart: false, warning: false })
   } catch (e) {
-    app.setDocker({ status: 'not_running', canStart: false, warning: false, message: String((e as Error)?.message ?? e) })
+    // message 留空 → 门禁/横幅回落 docker.not_running 人话主句；原始错误收进 hint 且限长
+    app.setDocker({ status: 'not_running', canStart: false, warning: false, hint: brief(e) })
   }
 }
 

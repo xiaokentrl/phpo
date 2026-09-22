@@ -1,15 +1,16 @@
 <script setup lang="ts">
-// TaskDrawer：任务实时反馈抽屉（T109 + Q6）。
-// 队列详情（运行中 / 排队中可撤回 / 历史记录）、逐行日志、步骤进度、成功/失败与失败原因——
-// 全部来自后端权威快照与 task:* 事件（硬红线 4：仅回放展示，前端不造状态）。
+// TaskDrawer：任务实时反馈抽屉（T109 + Q6 + §5.6.1）。
+// 展开后左右两栏：**左栏日志占 70%**（当前选中任务的逐行日志 / 进度 / 失败原因），
+// **右栏任务队列占 30%**（竖排列表，最新提交永远在最上面，每行给出明确显示态）。
+// 队列详情、日志、进度、终态与失败原因全部来自后端权威快照与 task:* 事件（硬红线 4：仅回放展示，前端不造状态）。
 import { computed, nextTick, ref, watch } from 'vue'
-import { useTaskStore } from '@/stores/taskStore'
+import { DISPLAY_LABEL, useTaskStore } from '@/stores/taskStore'
 import { useAppState } from '@/stores/appState'
 import { useLayoutStore } from '@/stores/layoutStore'
 import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
 import { copyText } from '@/utils/str'
-import type { ServiceKind, TaskStatus } from '@/types'
+import type { ServiceKind } from '@/types'
 
 const store = useTaskStore()
 const app = useAppState()
@@ -22,6 +23,7 @@ const task = computed(() => store.task)
 const lines = computed(() => store.visibleLines)
 const isRunning = computed(() => store.isRunning)
 const expanded = computed(() => store.expanded)
+const display = computed(() => store.display)
 const progress = computed(() => store.progress)
 // errorText：失败原因（终态 failed 时由 err 日志收口；成功/取消不显示）
 const errorText = computed(() => (task.value?.status === 'failed' ? task.value.error || '' : ''))
@@ -34,77 +36,25 @@ const cmdText = computed(() => {
   return args.length ? 'phpo ' + args.join(' ') : ''
 })
 
-const dotClass = computed(() => {
-  const s = task.value?.status
-  let c = 'drawer-dot'
-  if (s === 'running') c += ' running'
-  else if (s === 'success') c += ' success'
-  else if (s === 'failed') c += ' failed'
-  else if (s === 'cancelled') c += ' cancelled'
-  return c
-})
+// dotClass / statusText：一律由显示态派生（§5.6.1），不再看记录内部 status 字段
+const dotClass = computed(() => 'drawer-dot ' + display.value)
 
 const statusText = computed(() => {
   const tk = task.value
   if (!tk) return ''
-  if (tk.status === 'running') return t('task.running')
-  if (tk.status === 'success') {
+  const ds = display.value
+  if (ds === 'done') {
     // 耗时以后端 task:done 的权威值为准；事件未到齐时退化为本地起止差
     const ms = tk.durationMs ?? (tk.endedAt ?? Date.now()) - tk.startedAt
     return t('task.complete', { dur: (ms / 1000).toFixed(1) })
   }
-  if (tk.status === 'cancelled') return t('task.cancelled')
-  if (tk.status === 'failed') return t('task.failed')
-  return ''
+  return t(DISPLAY_LABEL[ds])
 })
 
-// —— 队列详情（运行中 + 排队中 + 本次会话记录）——
-interface QueueItem {
-  id: string
-  label: string
-  kind: 'running' | 'queued' | 'record'
-  step: number
-  total: number
-  status: TaskStatus
-  withdrawable: boolean
-}
-
-// QUEUE_CHIPS 队列条最多铺这几个 chip：队列再长也保证抽屉不被记录挤掉日志区
-const QUEUE_CHIPS = 14
-const queueItems = computed<QueueItem[]>(() => {
-  const items: QueueItem[] = []
-  const run = store.runningBrief
-  if (run) {
-    // 运行中项的步骤以事件回流的记录为准（task:progress 即时到达），快照 brief 仅作首帧
-    const rec = store.records.find((r) => r.id === run.id)
-    items.push({
-      id: run.id,
-      label: run.label,
-      kind: 'running',
-      step: rec?.step ?? run.step,
-      total: rec?.total ?? run.total,
-      status: 'running',
-      withdrawable: false,
-    })
-  }
-  for (const p of store.pendingBriefs) {
-    if (items.length >= QUEUE_CHIPS) return items
-    items.push({ id: p.id, label: p.label, kind: 'queued', step: 0, total: p.total, status: 'running', withdrawable: true })
-  }
-  const inQueue = new Set(items.map((i) => i.id))
-  for (const r of store.records) {
-    if (items.length >= QUEUE_CHIPS) break
-    if (inQueue.has(r.id) || r.status === 'running') continue // 运行中项已由队列首项表达
-    items.push({ id: r.id, label: r.label, kind: 'record', step: r.step, total: r.total, status: r.status, withdrawable: false })
-  }
-  return items
-})
-
-function queueTitle(item: QueueItem): string {
-  if (item.kind === 'queued') return t('task.queued')
-  if (item.total) return item.label + ' · ' + item.step + '/' + item.total
-  return item.label
-}
+// —— 队列详情（右栏 30%）——
+// 行内容（最新在顶的排序、显示态、可撤回判定）全部在 taskStore.queue 里派生（§5.6.1），
+// 组件只做渲染：不重排、不补状态、不因「看起来该结束了」推断终态。
+const queue = computed(() => store.queue)
 
 // drawer-services 面板（原型 renderDrawerServices，2773–2788）：读取 appState 展示各服务版本运行态
 const SVC_ORDER: ServiceKind[] = ['php', 'mysql', 'pgsql', 'redis', 'nginx']
@@ -218,30 +168,41 @@ async function onWithdraw(id: string): Promise<void> {
         </button>
       </div>
     </header>
-    <div v-if="queueItems.length" class="drawer-queue">
-      <span class="dq-title">{{ t('task.queue') }}</span>
-      <span
-        v-for="q in queueItems"
-        :key="q.id"
-        class="dq-chip"
-        :class="{ active: q.id === store.activeId, queued: q.kind === 'queued', plain: q.kind === 'queued' }"
-        :title="queueTitle(q)"
-        @click="onSelect(q.id)"
-        >
-        <span class="dq-dot" :class="q.kind === 'queued' ? '' : q.status"></span>
-        <span class="dq-text">{{ q.label }}</span>
-        <span v-if="q.total" class="dq-step">{{ q.step }}/{{ q.total }}</span>
-        <span v-if="q.kind === 'queued'" class="dq-step">{{ t('task.queued') }}</span>
-        <button v-if="q.withdrawable" class="dq-withdraw" type="button" :title="t('task.withdraw')" @click.stop="onWithdraw(q.id)">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-        </button>
-      </span>
+    <!-- §5.6.1：展开体两栏——左 70% 日志、右 30% 任务队列（竖排、最新在顶） -->
+    <div class="drawer-body">
+      <div class="drawer-main">
+        <div v-if="progress" class="drawer-progress"><div class="drawer-progress-bar" :style="{ width: progress.percent + '%' }"></div></div>
+        <div v-if="errorText" class="drawer-error">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>
+          <span class="drawer-error-text" :title="errorText">{{ t('task.reason') }}: {{ errorText }}</span>
+        </div>
+        <pre ref="logRef" class="drawer-log"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ l.s || ' ' }}</div><div v-if="!lines.length" class="log-line dim">{{ task ? t('task.noLog') : t('task.none') }}</div></pre>
+      </div>
+      <aside class="drawer-queue">
+        <div class="dq-head">
+          <span class="dq-title">{{ t('task.queue') }}</span>
+          <span class="dq-count">{{ queue.length }}</span>
+        </div>
+        <div class="dq-list">
+          <div
+            v-for="q in queue"
+            :key="q.id"
+            class="dq-row"
+            :class="{ active: q.active, waiting: q.withdrawable }"
+            :title="q.label + ' · ' + q.statusText"
+            @click="onSelect(q.id)"
+          >
+            <span class="dq-dot" :class="q.display"></span>
+            <span class="dq-text">{{ q.label }}</span>
+            <span v-if="q.total && !q.withdrawable" class="dq-step">{{ q.step }}/{{ q.total }}</span>
+            <span class="dq-status">{{ q.statusText }}</span>
+            <button v-if="q.withdrawable" class="dq-withdraw" type="button" :title="t('task.withdraw')" @click.stop="onWithdraw(q.id)">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div v-if="!queue.length" class="dq-empty">{{ t('task.none') }}</div>
+        </div>
+      </aside>
     </div>
-    <div v-if="progress" class="drawer-progress"><div class="drawer-progress-bar" :style="{ width: progress.percent + '%' }"></div></div>
-    <div v-if="errorText" class="drawer-error">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>
-      <span class="drawer-error-text" :title="errorText">{{ t('task.reason') }}: {{ errorText }}</span>
-    </div>
-    <pre ref="logRef" class="drawer-log"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ l.s || ' ' }}</div></pre>
   </section>
 </template>

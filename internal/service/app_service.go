@@ -123,7 +123,7 @@ func (s *AppService) DockerStatus(ctx context.Context) model.DockerStatus {
 // ---- 写接口（一律经 task.Manager 三段式）----
 
 // serviceMeta 服务类任务的业务上下文：Type 供账本与审计归类，Kind/Version 供快照任务面板
-// 把「进行中/排队中」精确标到对应的服务卡片上（前端不靠 label 文案反推）。
+// 把「执行中/等待中」精确标到对应的服务卡片上（前端不靠 label 文案反推）。
 func serviceMeta(op string, kind model.ServiceKind, version string) model.TaskMeta {
 	return model.TaskMeta{Type: op, Kind: string(kind), Version: version}
 }

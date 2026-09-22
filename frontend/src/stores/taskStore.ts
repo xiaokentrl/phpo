@@ -17,6 +17,19 @@ import { t as i18nT } from '@/composables/useI18n'
 import type { Env, Operation, ServiceKind, TaskBoard, TaskBrief } from '@/types'
 
 export type TaskStatus = 'running' | 'success' | 'failed' | 'cancelled'
+// TaskDisplayStatus：抽屉队列行的 UI 显示态（§5.6.1）。它是「权威快照分区 + task:done 终态」的派生结果，
+// 不是第 5 个后端任务状态（§0.3 冻结为 4 个）。unknown 是预留兜底位：映射未覆盖的新增态一律落此，
+// 不得留空白、不得当作已完成；新增显示态只改 displayOf 与这张表，不动 model.TaskStatus。
+export type TaskDisplayStatus = 'waiting' | 'running' | 'done' | 'failed' | 'cancelled' | 'unknown'
+
+export const DISPLAY_LABEL: Record<TaskDisplayStatus, string> = {
+  waiting: 'task.queued',
+  running: 'task.running',
+  done: 'task.done',
+  failed: 'task.failed',
+  cancelled: 'task.cancelled',
+  unknown: 'task.dsUnknown',
+}
 export type LineType = 'cmd' | 'meta' | 'ok' | 'dim' | 'err'
 export interface TaskLine {
   t: LineType
@@ -285,7 +298,55 @@ export const useTaskStore = defineStore('task', () => {
   let demoSeq = 0
 
   const task = computed<TaskRecord | null>(() => records.value.find((r) => r.id === activeId.value) ?? null)
-  const isRunning = computed(() => task.value?.status === 'running')
+  // displayOf：§5.6.1 显示态的唯一映射出口。队列归属认后端权威 ID（Running / Pending 分区），
+  // 绝不认记录内部的 status 字段——排队项的记录只是占位，其 status 从未被裁决过。
+  function displayOf(r: TaskRecord | null | undefined): TaskDisplayStatus {
+    if (!r) return 'unknown'
+    if (hasBackend()) {
+      if (r.id === (app.tasks.running?.id ?? '')) return 'running'
+      if ((app.tasks.pending ?? []).some((p) => p.id === r.id)) return 'waiting'
+    }
+    switch (r.status) {
+      case 'success':
+        return 'done'
+      case 'failed':
+        return 'failed'
+      case 'cancelled':
+        return 'cancelled'
+      case 'running':
+        // 有日志＝确实跑起来了（快照可能比 task:log 晚一帧）；无日志且不在队列里＝已被撤回，交 queue 滤掉
+        return r.lines.length ? 'running' : 'unknown'
+      default:
+        return 'unknown' // 预留兜底：后端新增终态未经映射时不空白、不误报已完成
+    }
+  }
+  // dequeued：已撤回排队项的判据——后端对未获执行权的任务不发事件、不落账（internal/task/task.go），
+  // 故「真实记录 + 仍标执行中 + 零日志 + 不在权威队列」四项同时成立只可能是被撤回，行随下一次快照消失。
+  function dequeued(r: TaskRecord): boolean {
+    if (!r.live || r.status !== 'running' || r.lines.length > 0) return false
+    return displayOf(r) === 'unknown'
+  }
+  const display = computed(() => displayOf(task.value))
+  const isRunning = computed(() => display.value === 'running')
+  // queue：抽屉右栏（30%）的队列行，**最新提交永远在最上面**——记录池本身即 newest-first
+  // （新记录 unshift、撤回出队的占位行滤掉），运行中的任务不因开始执行而下移，行位只随提交先后决定。
+  const queue = computed(() =>
+    records.value
+      .filter((r) => !dequeued(r))
+      .map((r) => {
+        const ds = displayOf(r)
+        return {
+          id: r.id,
+          label: r.label,
+          step: r.step,
+          total: r.total,
+          display: ds,
+          statusText: i18nT(DISPLAY_LABEL[ds]),
+          withdrawable: ds === 'waiting',
+          active: r.id === activeId.value,
+        }
+      })
+  )
   // queueRunning：队列级忙（托盘退出等判定源）。真实宿主只认权威快照，绝不信本地记录
   const queueRunning = computed(() =>
     hasBackend() ? !!app.tasks.running : records.value.some((r) => r.status === 'running')
@@ -360,21 +421,27 @@ export const useTaskStore = defineStore('task', () => {
 
   // ---- 实时通道入口（由 composables/useStateSync.ts 按 §5.6 事件调用；硬红线 4：只落地，不推断）----
 
-  // syncBoard：权威快照的队列详情落地。running 出现即建/更新记录并自动跟随展开抽屉；
-  // 排队项只进队列条（尚无日志），终态一律由 task:done 判定——绝不靠「从队列消失」推断成败。
+  // syncBoard：权威快照的队列详情落地。运行中项出现即建/更新记录并自动跟随展开抽屉；
+  // **排队项同样建行**（§5.6.1：一经入队就出现在列表里，不等它取得执行权），只是没有日志。
+  // 终态一律由 task:done 判定——绝不靠「从队列消失」推断成败。
   function syncBoard(b?: TaskBoard | null): void {
     const cur = b?.running
-    if (!cur?.id) return
-    const r = ensureLive(cur.id, cur.label, cur.type, cur.total)
-    r.step = cur.step || r.step
-    if (cur.total) r.total = cur.total
-    const started = Date.parse(cur.startedAt ?? '')
-    if (Number.isFinite(started) && started > 0) r.startedAt = started
-    if (followedId !== cur.id) {
-      followedId = cur.id
-      activeId.value = cur.id
-      expanded.value = true
+    if (cur?.id) {
+      const r = ensureLive(cur.id, cur.label, cur.type, cur.total)
+      r.step = cur.step || r.step
+      if (cur.total) r.total = cur.total
+      const started = Date.parse(cur.startedAt ?? '')
+      if (Number.isFinite(started) && started > 0) r.startedAt = started
+      if (followedId !== cur.id) {
+        followedId = cur.id
+        activeId.value = cur.id
+        expanded.value = true
+      }
     }
+    for (const p of b?.pending ?? []) ensureLive(p.id, p.label, p.type, p.total)
+    // 撤回不留幽灵选中：选中项已不在权威队列且从未有日志（= 被撤回的排队项）时，随同一快照回到运行中任务
+    const sel = task.value
+    if (sel && dequeued(sel)) activeId.value = cur?.id ?? ''
   }
 
   // appendLog：task:log 一行落地。err 行记为「最近错误」；失败原因只在终态为 failed 时成立
@@ -427,9 +494,10 @@ export const useTaskStore = defineStore('task', () => {
   }
 
   // cancel：真实通道只请求后端取消，终态等 task:done（硬红线 4）；demo 通道照原型本地停止回放。
+  // 判定用显示态而非记录内部态：等待中的行没有执行权，只能走撤回（withdraw），不得发 Cancel。
   function cancel(): void {
     const t = task.value
-    if (!t || t.status !== 'running') return
+    if (!t || displayOf(t) !== 'running') return
     if (t.live) {
       void cancelRunning()
       toast(i18nT('task.cancelHint'), 'info', 2600)
@@ -526,10 +594,12 @@ export const useTaskStore = defineStore('task', () => {
     }
     const t: TaskRecord = { ...newRecord(`demo-${++demoSeq}`, lbl, meta.type, false), args, meta, lines: buildScript(args, meta) }
     records.value.unshift(t)
-    activeId.value = t.id
+    // 回放必须改数组里的响应式代理：raw 对象上的 cursor 写入不触发更新，日志会冻在首行
+    const rec = records.value[0]
+    activeId.value = rec.id
     trim()
     expanded.value = true
-    play(t)
+    play(rec)
     return true
   }
 
@@ -539,6 +609,9 @@ export const useTaskStore = defineStore('task', () => {
     activeId,
     expanded,
     isRunning,
+    display,
+    queue,
+    displayOf,
     queueRunning,
     runningBrief,
     pendingBriefs,

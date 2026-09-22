@@ -166,7 +166,7 @@ func TestBoardCarriesProgress(t *testing.T) {
 	}
 }
 
-// —— 目标定位：服务类任务把 kind/version 带进面板，服务卡片据此亮「运行中…」/「排队中」 ——
+// —— 目标定位：服务类任务把 kind/version 带进面板，服务卡片据此亮「执行中…」/「等待中」 ——
 
 func TestBoardCarriesServiceTarget(t *testing.T) {
 	m := NewManager(&capturingEmitter{})
@@ -195,7 +195,7 @@ func TestBoardCarriesServiceTarget(t *testing.T) {
 	}
 }
 
-// —— 站点任务把域名带进面板：站点列表行据此亮「运行中…/排队中」，不靠 label 反推 ——
+// —— 站点任务把域名带进面板：站点列表行据此亮「执行中…/等待中」，不靠 label 反推 ——
 
 func TestBoardCarriesSiteTarget(t *testing.T) {
 	m := NewManager(&capturingEmitter{})
