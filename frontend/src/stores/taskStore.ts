@@ -1,6 +1,7 @@
 // taskStore：任务状态仓，双通道。
 // ① 实时通道（Q5，真实宿主）：记录、日志、进度、终态与失败原因全部来自后端 task:* 事件 + 权威快照 tasks 队列，
-//    前端不造任务、不改状态、不推断终态（硬红线 4）；写请求的排队/并发由后端 FIFO 队列裁决，前端不再本地忙锁。
+//    前端不造任务、不改状态、不推断终态（硬红线 4）；写请求的排队/并发由后端 FIFO 队列裁决，前端不再本地忙锁——
+//    只有一次按钮级的「已提交、待收口」反馈（isBusy），它不拦请求、不造记录、不判终态。
 // ② demo 通道（无宿主，纯 Vite 浏览器）：保留原型 buildScript/playTask 的逐行回放，仅用于界面演示与验收。
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
@@ -298,6 +299,9 @@ export const useTaskStore = defineStore('task', () => {
   // sysLines：系统日志通道（需求 3／6）——无任务归属的事件（cache:* / docker:* / update:*）流水，
   // 左栏在无选中任务时显示它
   const sysLines = ref<TaskLine[]>([])
+  // inflight：已提交后端、尚未收口的写操作计数（需求：耗时操作期间被点的按钮保持禁用，结束即复能）。
+  // 它只是按钮反馈——不建任务记录、不改任务状态、不推断终态（硬红线 4）；释放点在 exec 收口且权威快照回流之后。
+  const inflight = ref<Record<string, number>>({})
   // 参数登记（不外显，§1.4）：不进后端队列载荷；label 为队列去重键（与任务 1:1），据此关联弹窗提交的 args
   const cmdByLabel = new Map<string, string[]>()
   let followedId = '' // 已自动跟随过的运行中任务 ID
@@ -376,6 +380,32 @@ export const useTaskStore = defineStore('task', () => {
 
   function find(id: string): TaskRecord | undefined {
     return records.value.find((r) => r.id === id)
+  }
+
+  // busyKeyOf：一次写操作的**目标标识**——同 kind+version 的启动/停止/卸载/重建各自独立，
+  // 因此禁用面恰好是「被点的那个按钮」，不牵连同卡片的其他按钮，也不做全局串行（后端 FIFO 排队照旧）。
+  function busyKeyOf(meta: TaskMeta = { type: '' }): string {
+    return [meta.type, meta.kind, meta.version, meta.domain, meta.file].filter(Boolean).join(':')
+  }
+
+  // isBusy：该目标是否仍在等待结果。demo 通道无 inflight（本地回放自带 running 记录），按记录判。
+  function isBusy(target: TaskMeta | string): boolean {
+    const key = typeof target === 'string' ? target : busyKeyOf(target)
+    if (!key) return false
+    if (inflight.value[key]) return true
+    return records.value.some((r) => !r.live && r.status === 'running' && busyKeyOf(r.meta) === key)
+  }
+
+  function beginSubmit(key: string): void {
+    if (!key) return
+    inflight.value[key] = (inflight.value[key] || 0) + 1
+  }
+
+  function endSubmit(key: string): void {
+    if (!key) return
+    const n = (inflight.value[key] || 0) - 1
+    if (n > 0) inflight.value[key] = n
+    else delete inflight.value[key]
   }
 
   function trim(): void {
@@ -630,6 +660,10 @@ export const useTaskStore = defineStore('task', () => {
     pendingBriefs,
     visibleLines,
     progress,
+    busyKeyOf,
+    isBusy,
+    beginSubmit,
+    endSubmit,
     syncBoard,
     appendLog,
     setProgress,

@@ -179,6 +179,10 @@ async function onWithdraw(id: string): Promise<void> {
     <!-- §5.6.1：展开体两栏——左默认 70% 日志、右默认 30% 任务队列（竖排、最新在顶）；中缝可左右拖拽（需求 4） -->
     <div ref="bodyRef" class="drawer-body">
       <div class="drawer-main">
+        <!-- 需求（v2.9.13）：把当前操作的直观名字摆在日志之上——用户点开抽屉第一眼即知「这是哪一件事」。
+             文本唯一来源仍是权威快照的 TaskBrief.Label（硬红线 4）；无选中任务（系统日志通道）时不渲染。
+             头部三区不动（§5.6.1 左区恒为「服务」二字），故标题落在日志栏内。 -->
+        <div v-if="task" class="drawer-task-title" :title="task.label" style="flex-shrink: 0; padding: 8px 16px; font-size: 12.5px; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ task.label }}</div>
         <div v-if="progress" class="drawer-progress"><div class="drawer-progress-bar" :style="{ width: progress.percent + '%' }"></div></div>
         <div v-if="errorText" class="drawer-error">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>

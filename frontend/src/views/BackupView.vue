@@ -4,6 +4,7 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
+import { useTaskStore } from '@/stores/taskStore'
 import { useModals } from '@/composables/useModals'
 import { usePreflight } from '@/composables/usePreflight'
 import { hasBackend } from '@/api/site'
@@ -13,6 +14,7 @@ import EditablePathBar from '@/components/common/EditablePathBar.vue'
 
 const { t } = useI18n()
 const state = useAppState()
+const tasks = useTaskStore()
 const modals = useModals()
 const { preflight } = usePreflight()
 
@@ -51,7 +53,8 @@ async function saveRoot(root: string): Promise<void> {
         <p class="view-sub">{{ t('backup.subtitle') }}</p>
       </div>
       <div class="header-actions">
-        <button class="btn btn-primary" data-action="run-task" data-args="backup" :data-label="t('backup.nowTask')" data-pf-action="backup" @click="modals.runBackup()">{{ t('backup.now') }}</button>
+        <!-- 耗时操作（打包全量归档）等待期禁用被点的按钮，任务收口后自动复能（v2.9.13） -->
+        <button class="btn btn-primary" data-action="run-task" data-args="backup" :data-label="t('backup.nowTask')" data-pf-action="backup" :disabled="savingRoot || tasks.isBusy({ type: 'backup' })" @click="modals.runBackup()">{{ t('backup.now') }}</button>
       </div>
     </header>
 
@@ -89,7 +92,7 @@ async function saveRoot(root: string): Promise<void> {
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5M12 15V3" /></svg>
                   {{ t('backup.download') }}
                 </button>
-                <button class="btn btn-sm" data-action="restore" :data-file="b.file" @click="modals.openRestoreModal(b.file)">{{ t('backup.restore') }}</button>
+                <button class="btn btn-sm" data-action="restore" :data-file="b.file" :disabled="tasks.isBusy({ type: 'restore', file: b.file })" @click="modals.openRestoreModal(b.file)">{{ t('backup.restore') }}</button>
                 <button class="btn btn-sm btn-danger" data-action="delete-backup" :data-file="b.file" @click="modals.openDeleteBackupModal(b.file)">{{ t('backup.delete') }}</button>
               </div>
             </td>

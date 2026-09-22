@@ -220,7 +220,7 @@ onBeforeUnmount(() => {
                 >{{ site.port }}</span>
               </td>
               <td>
-                <select class="php-select" :data-domain="site.domain" @change="onPhpChange(site, $event)">
+                <select class="php-select" :data-domain="site.domain" :disabled="tasks.isBusy({ type: 'site-php', domain: site.domain })" @change="onPhpChange(site, $event)">
                   <!-- 未选 PHP 的降级站点：以「未选择」占位，不把空值伪装成某个版本 -->
                   <option v-if="!site.php" value="" selected>{{ t('sites.php.none') }}</option>
                   <option v-for="v in phpOptions(site)" :key="v" :value="v" :selected="v === site.php">{{ v }}{{ isUninstalled(v) ? t('sites.php.uninstalled') : '' }}</option>
@@ -247,7 +247,7 @@ onBeforeUnmount(() => {
                   <button class="icon-btn" :title="t('sites.actions.more')" data-action="row-menu" :data-domain="site.domain" @click="openRowMenu($event.currentTarget as HTMLElement, site.domain)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" /></svg>
                   </button>
-                  <button class="icon-btn" :title="t('sites.actions.delete')" data-action="site-remove" :data-domain="site.domain" @click="modals.openSiteRemoveModal(site.domain)">
+                  <button class="icon-btn" :title="t('sites.actions.delete')" data-action="site-remove" :data-domain="site.domain" :disabled="tasks.isBusy({ type: 'site-remove', domain: site.domain })" @click="modals.openSiteRemoveModal(site.domain)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>
                   </button>
                 </div>

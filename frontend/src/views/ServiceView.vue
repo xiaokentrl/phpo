@@ -45,8 +45,10 @@ function extCount(version: string): number {
 }
 
 // busyPill 该版本卡片上有没有任务在跑/在排队：判据是后端 TaskBrief 的 kind+version（§5.6 队列详情走快照），
-// 不按 label 文案反推——文案要 i18n，一改「进行中」就丢。只加指示、不禁用按钮：
-// 并发写操作按 FIFO 排队是合法路径（总纲 §5.6），拦点击属于非必要限制。
+// 不按 label 文案反推——文案要 i18n，一改「进行中」就丢。
+// 卡片上**其他**按钮照常可点：并发写操作按 FIFO 排队是合法路径（总纲 §5.6），拦它们是非必要限制。
+// 唯一禁用的是「同一个正在等结果的那一颗」（tasks.isBusy 按 type+kind+version 判定，v2.9.13）——
+// 重复点同一件事只会排出一单同样的任务，那是重复提交而不是并发需求。
 function busyPill(version: string): string | null {
   const targets = (b?: TaskBrief | null) => !!b && b.kind === props.kind && b.version === version
   const run = tasks.runningBrief
@@ -296,12 +298,12 @@ async function browseDir(version: string): Promise<void> {
             {{ t('svc.manageConfig') }}
             <span style="opacity: 0.55; font-family: var(--mono); font-size: 11px; margin-left: 2px">{{ DEFAULT_FILE_COUNT[kind] }}</span>
           </button>
-          <button v-if="state.isServiceRunning(kind, version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version" @click="modals.stopService(kind, version)">{{ t('svc.stop') }}</button>
-          <button v-else class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version" @click="modals.startService(kind, version)">{{ t('svc.start') }}</button>
+          <button v-if="state.isServiceRunning(kind, version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'service-stop', kind, version })" @click="modals.stopService(kind, version)">{{ t('svc.stop') }}</button>
+          <button v-else class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'service-start', kind, version })" @click="modals.startService(kind, version)">{{ t('svc.start') }}</button>
           <!-- 端口与密码只在建容器时落定：凡有宿主端口发布/密码的服务都给一条把配置送进容器的路（重建，数据卷保留）。
                nginx 的基准端口同属这一类，改完同样要重建才重新绑宿主端口 -->
-          <button v-if="needsPort(kind)" class="btn btn-sm" data-action="rebuild-service" :data-kind="kind" :data-version="version" :title="t('svc.rebuild.hint')" @click="modals.openRebuildModal(kind, version)">{{ t('svc.rebuild') }}</button>
-          <button class="btn btn-sm btn-danger" data-action="uninstall" :data-kind="kind" :data-version="version" @click="modals.openUninstallModal(kind, version)">{{ t('svc.uninstall') }}</button>
+          <button v-if="needsPort(kind)" class="btn btn-sm" data-action="rebuild-service" :data-kind="kind" :data-version="version" :title="t('svc.rebuild.hint')" :disabled="tasks.isBusy({ type: 'update-config', kind, version })" @click="modals.openRebuildModal(kind, version)">{{ t('svc.rebuild') }}</button>
+          <button class="btn btn-sm btn-danger" data-action="uninstall" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'uninstall', kind, version })" @click="modals.openUninstallModal(kind, version)">{{ t('svc.uninstall') }}</button>
         </div>
       </article>
     </div>

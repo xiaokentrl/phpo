@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.12
+> **文档版本**：v2.9.13
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -95,6 +95,7 @@
 27. **禁止备份归档被单个读不动的条目判死**（v2.9.9 新增，见 §5.17）：宿主数据目录由容器内 uid 拥有，逐文件读权限不可保证——读不动的条目**跳过 + 逐目录聚合告警**，整包照常产出；数据靠**逻辑导出**（`mysqldump` / `pg_dumpall` / `redis-cli --rdb`）补齐，不得静默缺项。
 28. **禁止服务容器往宿主 bind 挂载目录写日志文件**（v2.9.9 新增，见 §5.18）：该目录由宿主用户创建（0755），容器内进程是另一个 uid，建文件即 `Permission denied` → 进程 FATAL → `unless-stopped` 无限重启，服务永远启不来。日志一律走 stderr 由 Docker 收集；启动必须等**稳定 running**，失败报错必须带容器日志尾部。
 29. **禁止「事件到了界面却因单个字段缺席而不动」**（v2.9.12 新增，见 §5.6.3）：`state:changed` 的落地是一条链（`applySnapshot` → `applyTaskBoard` → `taskStore.syncBoard`），链上任一处抛错即**整链中断**——事件收到了、界面却一动不动，用户只能靠刷新页面才看到正确状态。为此：后端快照出口的**可空集合必须序列化为 `[]` / `{}`**（零站点、无排队项即为 `null`，落点是 `internal/store/snapshot.go` 的 `normalizeCollections`），前端**逐字段兜空**（`?? []` / `?? {}`，仍只认快照值，不是乐观更新）。抽屉右栏每一行的标签必须是快照 `TaskBrief.Label` 的人话文本（如「启动 phpo-php-8.0」），**不得**以任务 ID（`start-2` / `stop-1`）示人、**不得**要求用户刷新。
+30. **禁止「操作跑了但界面说不出在跑什么、按钮还亮着」**（v2.9.13 新增，见 §5.6.4）：任何需要等待的写操作，① 该操作的**直观名字**必须在**用户点开抽屉的第一眼**出现在左栏日志之上（`.drawer-task-title` 标题条，文本唯一来源仍是快照 `TaskBrief.Label`）；② 等待期间**被点的那一颗按钮保持禁用**，直到本次操作收口**且权威快照回流之后**才复能。禁用**只限那一颗**——同卡片/同页面的其他按钮照常可点（FIFO 排队是合法路径，见 §5.6），不得做成全局串行、不得拦整个视图、不得禁掉与本次操作无关的控件。
 
 ### 0.3 数字权威表（Agent 引用禁止出错）
 
@@ -117,6 +118,8 @@
 | 抽屉系统日志上限 | **200 行**（滚动裁尾） | `frontend/src/stores/taskStore.ts` 的 `SYS_MAX` |
 | 任务队列载体 | **`Snapshot.Tasks`（`TaskBoard`）** | 随 `state:changed` 推送，不新增事件名 |
 | 队列行标签来源 | **`TaskBrief.Label`（人话文本，如「启动 phpo-php-8.0」）** | 在任务开始那一帧实时落地；**不得**显示任务 ID、**不得**靠刷新（§5.6.1 · §5.6.3） |
+| 抽屉当前操作标题 | **`.drawer-task-title`（左栏日志之上，文本 = `TaskBrief.Label`）** | `frontend/src/components/business/TaskDrawer.vue`；无选中任务（系统日志通道）时不渲染；头部三区不受影响（§5.6.4） |
+| 等待期按钮禁用判据 | **`taskStore.isBusy(meta)`，key = `type:kind:version:domain:file` 拼接** | `stores/taskStore.ts`（`busyKeyOf` / `isBusy` / `beginSubmit` / `endSubmit`）+ `composables/useTask.ts#submitWrite`（提交即 begin → `await syncState()` → end）；**只禁被点的那一颗**（§5.6.4） |
 | 快照可空集合的线上形态 | **`[]` ／ `{}`**（不得为 `null`） | `internal/store/snapshot.go` 的 `normalizeCollections`（唯一快照出口）+ 前端 `appState.applySnapshot` 逐字段兜空；用例 `TestBuildSnapshot_NoNullCollections`（§5.6.3） |
 | 任务账本日志保留 | **尾部 500 行** | `internal/task/ledger.go`（`maxLedgerLines`）；写回 `operations` 表（迁移 0008 加 `task_id/label/logs`） |
 | SQLite 迁移数 | **8** | `internal/store/migrate/0001–0008.sql` |
@@ -236,7 +239,7 @@
 | 版本策略 | 不限制；允许任意字符串；仅做路径安全校验 |
 | PHP 切换策略 | vhost 上游精确指向 `php-{version}-fpm:9000` |
 | 状态同步 | 后端唯一权威；前端订阅事件；无本地乐观更新；**17 个事件名每一个都有前端落地处**（见 §5.6.2） |
-| 任务抽屉 | 日志左**默认 70%** ／ 任务队列右**默认 30%**（中缝可左右拖拽、双击复位，夹取 40–80%）；头部三区中**只有左区固定为「服务」二字**（状态点保留），中／右区照旧；**全界面不展示 `phpo …` 伪命令行**（含模态内「将执行」预览与 demo 日志首行，§1.4）；新任务永远在最上面；每行显式显示态（等待中／执行中／已完成 + 兜底位）；无任务归属的 `cache:*`／`docker:*`／`update:*` 事件走**系统日志通道**逐行显示，见 §5.6.1 |
+| 任务抽屉 | 日志左**默认 70%** ／ 任务队列右**默认 30%**（中缝可左右拖拽、双击复位，夹取 40–80%）；头部三区中**只有左区固定为「服务」二字**（状态点保留），中／右区照旧；**全界面不展示 `phpo …` 伪命令行**（含模态内「将执行」预览与 demo 日志首行，§1.4）；新任务永远在最上面；每行显式显示态（等待中／执行中／已完成 + 兜底位）；无任务归属的 `cache:*`／`docker:*`／`update:*` 事件走**系统日志通道**逐行显示，见 §5.6.1；当前操作的**直观名字**显示在左栏日志之上（`.drawer-task-title`），耗时操作等待期**被点的那一颗按钮禁用**、快照回流后复能，见 §5.6.4 |
 | 可自定义根 | **缓存根 / 备份根 / 每服务版本数据目录**三处可自定义；每一类路径**永远只有一个**（自定义与默认互斥，置空即回落默认）；唯一限制是路径安全，见 §5.15 |
 | PHP 扩展目录 | **每版本一份全量目录（73 项 · 8 分组）**，安装弹窗与「管理扩展」弹窗共用；常用 **11** 项默认勾选，勾选/取消即目标扩展集；编译输出逐行进抽屉日志，失败点名扩展并中止（见 §5.16） |
 | 备份归档 | 读不动的条目**跳过 + 逐目录聚合告警**，不判死整包；mysql／pgsql／redis 暂停**之前**先**逻辑导出**入归档 `dump/`；恢复侧明示「dump 不自动重放」（见 §5.17） |
@@ -1026,7 +1029,7 @@ phpo/
 
 | 区域 | 默认占比 | 内容 |
 |------|------|------|
-| 左栏 `.drawer-main`（内含 `.drawer-log`） | **70%** | 当前选中任务的逐行日志（`task:log`）、步骤进度、失败原因；**无选中任务时显示系统日志通道**（见下） |
+| 左栏 `.drawer-main`（内含 `.drawer-log`） | **70%** | 顶部**当前操作标题条** `.drawer-task-title`（文本 = 快照 `TaskBrief.Label`，无选中任务时不渲染，见 §5.6.4）；其下是当前选中任务的逐行日志（`task:log`）、步骤进度、失败原因；**无选中任务时显示系统日志通道**（见下） |
 | 中缝 `.drawer-splitter` | 7px（负 margin 借位，不改变占比） | 左右拖拽调宽：`pointerdown` 起拖、按 `drawer-body` 宽度换算百分比 |
 | 右栏 `.drawer-queue` | 余下 **30%** | 任务队列列表（竖排、可滚动）：状态点 · 标签 · `step/total` · **显示态文字** · 撤回按钮 |
 
@@ -1089,7 +1092,7 @@ phpo/
 
 | 对象 | 实时同步要求 |
 |------|-------------|
-| 写操作（请求/响应） | 所有 `api/*` 写调用必须 `await` 后端并在其后触发 `syncState()`；UI 的回显只随 `state:changed` 快照落地，**不做本地乐观更新**（硬红线 4） |
+| 写操作（请求/响应） | 所有 `api/*` 写调用必须 `await` 后端并在其后触发 `syncState()`；UI 的回显只随 `state:changed` 快照落地，**不做本地乐观更新**（硬红线 4）。等待期另有两项同步反馈（§5.6.4）：被点的那颗按钮 `:disabled` 直到快照回流，抽屉左栏日志之上实时显示该操作的人话名字 |
 | 非快照数据 | 缓存条目、审计列表这类不进快照的数据，写后由对应 store 主动重拉（`useCache.pull` / `cacheStore`），不得停留在旧值 |
 | 队列 | 入队 / 移交 / 撤回三处由 `SetQueueWatcher` 重发快照，前端不为排队项造占位态 |
 | 目录选择/根路径变更 | `root-set` 落 `config.yaml` → 装配层 `Rebind` → `GetState` → `state:changed`；界面路径条回显来自快照 `env`，**不回填本地输入框**（§5.15） |
@@ -1121,6 +1124,63 @@ phpo/
 - ❌ 在前端「包一层 try/catch 让它别抛」来代替修契约：吞掉异常等于把「事件发了界面却不动」永久化。
 - ❌ 用「刷新页面后就正常了」当作验收通过——本产品的实时同步要求是**不刷新也对**（§1.8）。
 - ❌ 在抽屉队列行里显示任务 ID 当标签（`TaskBrief.Label` 是唯一标签来源，§5.6.1）。
+
+#### 5.6.4 等待期反馈：操作名进抽屉标题条 + 被点按钮禁用（v2.9.13 新增）
+
+**一句话**：**每一次需要等待的操作，界面都要同时回答两件事——「正在做哪件事」和「这一颗还在等，别重复点」。**
+
+§5.6.1 把队列行标签、§5.6.3 把标签落地时机都收口了，但抽屉**左栏**（用户点开第一眼看到的那一栏）此前只有一片日志：日志开头是 `[1/6] Pause databases` 这类步骤，看不出这是「创建备份」还是「恢复备份」；同时被点的按钮（如「立即备份」）在整个等待期仍然亮着、可以重复点击，每次都往 FIFO 队列里塞进一单同样的任务。现冻结两条：
+
+**条款 A：当前操作标题条 `.drawer-task-title`**
+
+| 项 | 口径 |
+|----|------|
+| 位置 | `TaskDrawer.vue` 的 `.drawer-main` 内、`.drawer-progress` 与日志**之上**。**抽屉头部三区一字不动**——`.drawer-left` 仍恒为「服务」二字（§5.6.1），所以操作名只能落在日志栏内 |
+| 文本 | **唯一来源 `store.task.label`**，即权威快照的 `TaskBrief.Label`（§5.6.1 · §5.6.3）；前端不自造文案、不做乐观更新（硬红线 4） |
+| 缺席时 | 无选中任务（显示系统日志通道）时**不渲染**（`v-if="task"`），不得用「服务」「日志」之类占位词假装有一件事在跑 |
+| i18n | **不新增文案键**——标签文本整体来自后端，前端只渲染 |
+| 样式 | **inline style**（`flex-shrink: 0` + 单行省略号），**不改 `base.css`**：该表与冻结原型 SSOT 逐字一致是既有约定（§1.4 同口径）。因此本标题条**是对冻结原型的一处生产偏离**，由本条款记载；`前端唯一界面来源.txt` 与 `index.html` 不改 |
+
+**条款 B：等待期禁用被点的那一颗按钮**
+
+| 项 | 口径 |
+|----|------|
+| 唯一入口 | `composables/useTask.ts` 的 `submitWrite`：提交即 `beginSubmit(key)`，`exec()` settle 后 **`await syncState()` 再** `endSubmit(key)`。**先复能会让按钮多亮一帧旧状态**——那比多禁用一瞬间更扰人 |
+| key 的构成 | `taskStore.busyKeyOf(meta)` = `type:kind:version:domain:file` 中非空段以 `:` 拼接。同 kind+version 的启动/停止/卸载/重建各自独立，因此禁用面**恰好等于被点的那一颗** |
+| 判据 | 视图侧一律 `:disabled="tasks.isBusy({ type, kind, version, domain, file })"`，`meta` 的 `type` 必须与 `useModals.ts` 里 `submitWrite` 传的**完全一致**，否则禁错或禁不上 |
+| demo 通道 | 无宿主时不写 `inflight`（本地回放自带 `running` 记录）；`isBusy` 回落到 `records.some(r => !r.live && r.status==='running' && busyKeyOf(r.meta)===key)`。**不为此新增字段、不新增任务状态** |
+| 与硬红线 4 的边界 | `inflight` 是**按钮反馈**，不是状态：不建任务记录、不改任务态、不推断终态、不进账本。释放点仍是权威快照回流之后 |
+| 不得扩大范围 | **禁止**做成全局忙锁、按视图禁用、或禁掉与本次操作无关的控件。并发写操作按 FIFO 排队是合法路径（§5.6），拦它们是 §0.2 规则 15/16 的非必要限制；重复点同一件事才是需要挡掉的**重复提交** |
+
+**已落地的禁用点**（新增耗时写入口时按同一口径补，不得遗漏）：
+
+| 入口 | meta | 落点 |
+|------|------|------|
+| 立即备份 | `{type:'backup'}` | `BackupView.vue` 头部按钮 |
+| 恢复备份 | `{type:'restore', file}` | `BackupView.vue` 行内按钮（按文件名分列，互不牵连） |
+| 启动／停用 | `{type:'service-start'/'service-stop', kind, version}` | `ServiceView.vue` 服务卡片 |
+| 重建（改配置生效） | `{type:'update-config', kind, version}` | `ServiceView.vue` |
+| 卸载 | `{type:'uninstall', kind, version}` | `ServiceView.vue` |
+| 删除站点 | `{type:'site-remove', domain}` | `SitesView.vue` |
+| 切换 PHP | `{type:'site-php', domain}` | `SitesView.vue` 的 `php-select`；链路是 `usePhpSwitch.ts` 直接 `beginSubmit`/`await syncState()`/`endSubmit`（不经 `submitWrite`） |
+
+**明确不适用的边界**（不得当作漏项，也不得为它们补禁用）：
+
+1. **`InstallModal` / `SiteAddModal`**：两者在 `submitWrite` **之前**就 `emit('close')`，等待期界面上不存在那颗按钮。
+2. **已有本地 busy 实现的入口**：`root-set`（`EditablePathBar` / `BackupView` 的 `savingRoot`）、端口与密码行内保存（`ServiceView` 的 `portSaving` / `dirSaving`）、`CacheCleanupModal`、`CacheImportModal`、`HomeSetupWizard`、`SiteConfigModal`、`UpdateModal`、加 hosts（`SitesView` 的 `hostsBusy`）。它们各自已有「提交中禁用」，**不重做、不改成 `isBusy`**。
+3. **快操作**（下载备份、删除备份、同步状态、切主题）：不经 `submitWrite` 的等待链路，不加禁用。
+4. **模态内的危险确认按钮**：由模态自身与 preflight 裁决，不在本条范围。
+
+**明确禁止**：
+
+- ❌ 左栏日志无操作名、只铺步骤行——用户分不清在跑哪件事（本条的原始缺陷）。
+- ❌ 把 `.drawer-task-title` 或操作名塞进抽屉头部（§5.6.1 头部三区冻结，`.drawer-left` 恒为「服务」）。
+- ❌ 前端自造操作名或用 `args` 拼一个（标签唯一来源是快照 `TaskBrief.Label`）。
+- ❌ 耗时写操作等待期被点按钮仍可点击、可重复提交。
+- ❌ 用全局 `running` 标志禁用整个页面/整个视图（等于取消 FIFO 排队能力，违反最小限制）。
+- ❌ 在 `await syncState()` 之前就 `endSubmit`（留一帧旧状态）。
+- ❌ 为 `inflight` 新增事件名、任务状态、后端字段或账本记录（17 事件名与 4 状态冻结）。
+- ❌ 改 `base.css` 或原型 SSOT 来加标题条样式（inline style，生产偏离由本条记载）。
 
 ### 5.7 doctor 环境诊断
 
@@ -1799,6 +1859,7 @@ logging_collector = off
 | cancelTask | `internal/task/manager.go#Cancel / CancelQueued` | `api/task.ts` |
 | 任务队列 + 实时进度 | `internal/task/manager.go`（串行 FIFO）+ `model.TaskBoard`（随 `Snapshot.Tasks` 推送） | `taskStore.ts + TaskDrawer.vue` |
 | 任务队列 UI 显示态（等待中／执行中／已完成 + 兜底位） | `model.TaskBoard` 所在分区 + `task:done` 终态派生（**不新增第 5 态**，§5.6.1） | `taskStore.ts#displayOf` + `TaskDrawer.vue` 右栏（30%） |
+| 当前操作名 + 等待期禁用（v2.9.13，§5.6.4） | —（纯前端反馈；标签仍只取快照 `TaskBrief.Label`，不落库、不新增事件名） | `TaskDrawer.vue#.drawer-task-title` + `taskStore.ts#{busyKeyOf, isBusy, beginSubmit, endSubmit}` + `useTask.ts#submitWrite` + 各视图 `:disabled` |
 | 任务账本（历史 + 失败原因） | `internal/task/ledger.go` + `internal/store/operation.go`（迁移 0008） | `TaskDrawer.vue`（历史分区）+ 设置页审计入口 |
 | genPassword | `internal/config/password.go` | — |
 | suggestPortFor | `pkg/port/suggest.go` | `utils/format.ts` |
@@ -2044,6 +2105,7 @@ logging_collector = off
 | **R96** | **冷拷贝缺库内数据，恢复后用户以为数据完整** | **暂停服务前先逻辑导出入 `dump/`；恢复侧明示「dump 未重放」（§5.17.2 / §5.17.3）**（v2.9.9） |
 | **R97** | **容器内往宿主 bind 挂载目录写日志 → FATAL 崩溃循环，且旧装机的坏配置永不更新** | **pgsql 日志改走 stderr（模板 + `check-templates.go` golden 注明唯一生产偏离）；「启用」路径 `healPgLogging` 原地截断修复；`waitRunning` 复验 + 失败消息带退出码与容器日志尾部；`test/integration/g4_pgsql_heal_live_test.go` 真机两头取证（旧配置裸启动必失败 → 经 `Start` 自愈后就绪）（§5.18）**（v2.9.9） |
 | **R98** | **`state:changed` 落地链被单个缺席字段打断：事件到了、界面却不动，只能靠刷新页面回正** | **快照出口 `normalizeCollections` 把可空集合发成 `[]`/`{}`（`TestBuildSnapshot_NoNullCollections` 反射遍历锁死）；前端 `applySnapshot`/`applyTaskBoard`/`syncBoard` 逐字段兜空；`internal/app/queue_events_test.go` 锁死「任务开始那一帧就带人话标签」；§0.2 规则 29 + §5.6.3**（v2.9.12） |
+| **R99** | **耗时操作等待期界面「说不出在跑什么、按钮还亮着」：左栏日志只有步骤行、被点按钮可重复点击塞出同样任务** | **抽屉左栏 `.drawer-task-title` 标题条（文本只取快照 `TaskBrief.Label`）；`taskStore.isBusy` + `submitWrite` 的 `beginSubmit → await syncState() → endSubmit` 只禁被点那一颗（key=`type:kind:version:domain:file`）；§0.2 规则 30 + §5.6.4**（v2.9.13） |
 
 ---
 
@@ -2185,6 +2247,9 @@ logging_collector = off
 - [ ] **快照形状契约（§5.6.3）**：`BuildSnapshot` 的每个切片/映射字段（含嵌套的 `tasks.pending`）是否都序列化为 `[]` / `{}` 而**非** `null`？新增快照字段时是否在 `model.NewSnapshot()` 或 `normalizeCollections` 里给空集合？`TestBuildSnapshot_NoNullCollections` 是否绿？
 - [ ] **落地链不被单字段打断（§5.6.3）**：前端 `applySnapshot` / `applyTaskBoard` / `syncBoard` 是否逐字段兜空（`?? []` / `?? {}`）？是否**没有**用 try/catch 吞掉抛错来「掩盖」不落地？
 - [ ] **队列行标签（§5.6.1）**：任务开始那一帧，抽屉右栏显示的是 `TaskBrief.Label` 的人话文本（「启动 phpo-php-8.0」）还是任务 ID（`start-2`）？终态后是否**不刷新**即回到「已完成」？
+- [ ] **操作名标题条（§5.6.4 条款 A）**：左栏日志之上是否显示当前操作的人话名字（文本只取 `TaskBrief.Label`）？无选中任务（系统日志通道）时是否**不渲染**而非占位词？是否**没有**动到抽屉头部三区（`.drawer-left` 仍恒为「服务」）？是否未为此新增 i18n 键、未改 `base.css` 与原型 SSOT？
+- [ ] **等待期禁用（§5.6.4 条款 B）**：耗时写操作期间被点的那一颗按钮是否 `:disabled`、并在 `await syncState()` **之后**才复能？`meta.type` 是否与 `useModals.ts` 传值一字不差？禁用面是否**只限那一颗**（同卡片其他版本/其他按钮、其他站点行、其他备份文件行照常可点）？
+- [ ] **未扩大范围（§5.6.4）**：是否**没有**做全局忙锁、没有整视图禁用、没有把已有本地 busy 的入口（root-set / 端口 / 密码 / 缓存清理 / 缓存导入 / 向导 / 加 hosts / 站点配置 / 升级弹窗）重做一遍？提交前自关弹窗的入口（安装 / 建站）是否**没有**被硬塞禁用逻辑？是否仍**没有**新增事件名、任务状态或后端字段来承载禁用？
 
 ### 12.9 PHP 扩展目录 · 备份容错 · 数据服务运行态检查（v2.9.9 新增，§5.16–§5.18）
 
@@ -2230,8 +2295,46 @@ logging_collector = off
 
 ---
 
-**phpo 项目总纲 v2.9.12**
+**phpo 项目总纲 v2.9.13**
 
+> **v2.9.13 变更（新增 §5.6.4「等待期反馈：操作名进抽屉标题条 + 被点按钮禁用」，把「一切耗时操作实时说出在做什么」写成冻结条款）**：
+> 用户提出的最高优先级需求：**「所有的一切全部（操作/点击/变化/请求/反馈/响应/日志/消息…）优先把直观名字放进日志抽屉，
+> 以便用户第一时间知晓；其他功能同理；点击立即备份时等待期间按钮应禁用，结束再恢复可用」**。此前 §5.6.1 只管住右栏队列行的
+> 标签、§5.6.3 只管住该标签的落地时机，**左栏**（用户点开抽屉第一眼那一栏）仍然只有一片步骤行——`[1/6] Pause databases`
+> 看不出这是「创建备份」还是「恢复备份」；同时「立即备份」在整段等待期照常可点，每点一次就往 FIFO 队列塞进一单同样的任务。
+> 现冻结两条：**条款 A**——`.drawer-main` 内、进度条与日志**之上**新增 `.drawer-task-title` 标题条，文本唯一来源是权威快照的
+> `TaskBrief.Label`（v2.9.12 已保证任务开始那一帧即落地），无选中任务（系统日志通道）时不渲染；**抽屉头部三区一字不动**，
+> `.drawer-left` 仍恒为「服务」二字，故操作名只能落在日志栏内。样式走 **inline style**（`flex-shrink:0` + 单行省略号），
+> 不改 `base.css`、不改冻结原型 SSOT——**本标题条因此是对原型的一处生产偏离**，由本条款记载（§1.4 / v2.9.9 pgsql 同先例）；
+> 亦**不新增 i18n 键**（文案整体来自后端）。**条款 B**——`useTask.submitWrite` 是唯一收口点：提交即 `beginSubmit(key)`，
+> `exec()` settle 后 **先 `await syncState()` 再** `endSubmit(key)`（先复能会让按钮多亮一帧旧状态，比多禁用一瞬间更扰人）；
+> key 由 `taskStore.busyKeyOf(meta)` = `type:kind:version:domain:file` 非空段拼接，因此**禁用面恰好等于被点的那一颗**——
+> 实测取证（浏览器走查）：恢复 `backup-20260913-093015.tar.gz` 期间该行「恢复」`disabled=true`，而另两个文件行与「立即备份」
+> 仍 `false`；停用 PHP 8.4 期间 8.4 那颗 `disabled=true`，而 8.3 那颗、同卡的「卸载」「管理扩展」全照常可点。
+> 落地禁用点共 **8 类 meta / 8 颗控件**（`backup` · `restore` · `service-start` · `service-stop` · `update-config` ·
+> `uninstall` · `site-remove` · `site-php`；`site-php` 走 `usePhpSwitch.ts` 的 begin/await-sync/end，不经 `submitWrite`）；
+> demo 通道不写 `inflight`，`isBusy` 回落到既有 `records` 的 `!r.live && r.status==='running' && busyKeyOf(r.meta)===key`，
+> **不新增字段、不新增任务状态、不新增事件名**。同时写明**四类不适用边界**（不得当漏项）：① `InstallModal`/`SiteAddModal`
+> 在 `submitWrite` **之前**即 `emit('close')`，等待期界面上没有那颗按钮；② 已有本地 busy 实现的入口（root-set /
+> `BackupView.savingRoot` / 端口 `portSaving` / `dirSaving` / `CacheCleanupModal` / `CacheImportModal` / `HomeSetupWizard` /
+> `SiteConfigModal` / `UpdateModal` / `SitesView.hostsBusy`）不重做、不改写成 `isBusy`；③ 不经等待链路的快操作（下载/删除备份、
+> 同步状态、切主题）不加禁用；④ 模态内危险确认按钮由模态自身与 preflight 裁决。另校正一处**口径冲突**：
+> `ServiceView.vue` 的 `busyPill` 注释原文「只加指示、不禁用按钮——拦点击属于非必要限制」与新需求直接对立，现按
+> §0.2 规则 15/16 的真实边界改写为「**其他**按钮照常可点（FIFO 排队合法）；唯一禁用的是同一颗正在等结果的
+> （重复点同一件事是重复提交，不是并发需求）」。**明确未改**：8 条硬红线原文、三段式写操作、17 个事件名（未新增）、
+> 后端任务状态 4 个、显示态映射与 `displayOf` 单一出口、preflight **19** action 与 NEEDS_HOME **17**、`pkg/errs` **28** 码、
+> i18n 键集（仍 **603**，两侧相等）、抽屉 70%／30% 默认占比与 40–80 拖拽区间、系统日志通道 200 行上限、头部三区口径与
+> §1.4「全界面不展示伪命令行」、§5.15 三根互斥唯一、§5.16/§5.17/§5.18 全部口径、密码／版本／域名／端口策略、
+> 冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`。同步落点：§0.2 规则 **30**（故意不重编号）、
+> §0.3 两行（抽屉当前操作标题／等待期按钮禁用判据）、§1.1「任务抽屉」行、§5.6.1 左栏行、§5.6.2「写操作」行、
+> §6 映射表一行、§9 风险 **R99**、§12.8 三项自查，以及派生文档 `docs/{界面规格,状态同步,事件流协议,用户手册,CHANGELOG}.md`、
+> `任务工单.md`、`实施顺序.md`。**验真**：`vue-tsc --noEmit` EXIT=0、`pnpm build` 绿，产物级正向取到
+> `drawer-task-title` **1** 处与 `isBusy` 在 `BackupView`（2）/ `ServiceView`（4）/ `SitesView`（2）各分片；浏览器走查
+> （同哈希 `dist` + 本地静态服务，demo 通道真实点击）量到「创建备份」执行中 `disabled=true` → 终态后 `false`、
+> 标题条文本随选中任务切换、无选中任务时 `.drawer-task-title` 计数 **0**、控制台无 Vue 报错（仅 Wails 浏览器环境预期警告）。
+> **真实宿主的 `inflight` 路径未经浏览器覆盖**（无后端即不写 inflight，只有 demo 回落分支可测），**真宿主 GUI 未走查**；
+> `frontend/dist` 已按规约还原。
+>
 > **v2.9.12 变更（新增 §5.6.3「快照形状契约：一条落地链不得被单个字段打断」，把「队列行要实时显示人话标签」写成冻结条款）**：
 > 现象是用户报的一条缺陷：点 PHP 的「启用/停用」后，抽屉右栏那两行显示 `start-2` / `stop-1`，**不实时**，必须手动刷新页面
 > 才看到「启动 phpo-php-8.0 已完成 / 停止 phpo-php-8.0 已完成」——用户要求「这个需求必须写进总纲」。取证先把「后端没推」
@@ -2462,6 +2565,7 @@ logging_collector = off
 - 备份归档（v2.9.9）：**读不动的条目跳过 + 按目录聚合告警，不判死整包 · mysql／pgsql／redis 在暂停服务前逻辑导出（`mysqldump`／`pg_dumpall`／`redis-cli --rdb`）入归档 `dump/` · 恢复侧明示 dump 未自动重放（见 §5.17）**
 - 数据服务运行态（v2.9.9）：**容器内进程不往宿主 bind 挂载目录写日志文件（pgsql 日志走 stderr 由 Docker 收集）· 旧装机的坏配置在「启用」时就地截断自愈 · 启动等稳定 running，失败带退出码与容器日志尾部（见 §5.18）**
 - 任务抽屉：**日志左默认 70% ／ 队列右默认 30%（中缝可左右拖拽 40–80%、双击复位；头部三区只有左区固定为「服务」二字（状态点保留），中／右区照旧） · 新任务永远在最上面（提交时间倒序） · 每行显式显示态（等待中／执行中／已完成，另留 unknown 兜底位；系派生，后端任务状态仍为 4 个）**
+- 等待期反馈（v2.9.13）：**当前操作的直观名字显示在抽屉左栏日志之上（`.drawer-task-title`，文本只取快照 `TaskBrief.Label`；头部三区不动，无选中任务时不渲染）· 耗时写操作等待期被点的那一颗按钮 `:disabled`，在 `await syncState()` 之后才复能 · 禁用只限那一颗（key=`type:kind:version:domain:file`），其他按钮照常可点、FIFO 排队能力不变（见 §5.6.4）**
 - 等效命令：**全界面不展示 `phpo …` 伪命令行（抽屉头部、三处模态的「将执行」预览、向导与 demo 日志首行；仅保留 `taskStore` 的参数登记，见 §1.4）**
 - 升级：**支持版本检查和自动升级（SHA256 + Ed25519 双校验）**
 - Docker 清洁：**所有操作幂等、原子、隔离、一致、可清理、可恢复**
