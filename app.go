@@ -71,6 +71,16 @@ func (a *App) SetTrayPrefs(showTray, minimizeOnClose bool) error {
 	return nil
 }
 
+// Quit 退出整个进程：托盘菜单（原生菜单与窗口内仿真菜单共用 ui:command）的退出动作落到这里的单一出口。
+// 与 Restart 的唯一区别是不置 restartPending——退出后不再重新拉起自身。
+func (a *App) Quit() error {
+	if a.wails == nil {
+		return errNotReady
+	}
+	a.wails.Quit()
+	return nil
+}
+
 // ServiceStartup 实现 Wails v3 服务生命周期（启动钩子含残留临时目录清理，自 T211 注册）
 func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	return a.assembly.Startup(ctx)

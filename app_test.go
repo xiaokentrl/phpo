@@ -50,6 +50,17 @@ func TestSetTrayPrefsWithoutTray(t *testing.T) {
 	}
 }
 
+// TestQuitWithoutWails 宿主未注入时退出请求必须被拒绝：前端据此知道「没退成」，不得当作已退出
+func TestQuitWithoutWails(t *testing.T) {
+	a := &App{}
+	if err := a.Quit(); !errors.Is(err, errNotReady) {
+		t.Fatalf("期望 errNotReady，实际：%v", err)
+	}
+	if a.restartPending {
+		t.Fatal("退出不得置 restartPending：置了会在 ServiceShutdown 后重新拉起自身")
+	}
+}
+
 // TestHomeDefaults_RootsExpanded 向导预填与目录选择起始路径必须已展开 `~`：
 // 否则原生目录选择器把 `~/www` 当相对路径，报「无法找到 <当前工作目录>/~/www」。
 func TestHomeDefaults_RootsExpanded(t *testing.T) {

@@ -19,3 +19,10 @@ export async function setTrayPrefs(showTray: boolean, minimizeOnClose: boolean):
   if (!hasBackend()) return
   await app.SetTrayPrefs(showTray, minimizeOnClose)
 }
+
+// quitApp 请原生外壳退出进程：托盘菜单「退出 phpo」的唯一出口（忙锁判定在前端，见 AppTrayMenu.vue）。
+// 无宿主（纯 Vite demo）时跳过——浏览器里没有可退出的进程。
+export async function quitApp(): Promise<void> {
+  if (!hasBackend()) return
+  await app.Quit()
+}
