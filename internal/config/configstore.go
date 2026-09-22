@@ -29,18 +29,22 @@ func EnvKeyPort(kind, version string) string {
 	return strings.ToUpper(kind) + "_" + envVer(version) + "_PORT"
 }
 
-// SvcSetting 某服务版本的可配置项：明文密码 + 宿主发布端口（Port=0 表示未设，回落注册表默认）
+// SvcSetting 某服务版本的可配置项：明文密码 + 宿主发布端口 + 数据目录（Port=0/DataDir="" 表示未设，回落默认）
 type SvcSetting struct {
 	Password string `yaml:"password"`
 	Port     int    `yaml:"port,omitempty"`
+	DataDir  string `yaml:"data_dir,omitempty"`
 }
 
-// FileConfig config.yaml 的完整磁盘形态（唯一配置真相）：仅存两个根目录与每服务版本设置；
-// 派生路径（PHP_ROOT/…/OFFLINE_ROOT）不落盘、由 DerivePaths 现算，杜绝不同步。
+// FileConfig config.yaml 的完整磁盘形态（唯一配置真相）：两个工作根 + 自定义缓存/备份根 + 每服务版本设置；
+// 其余派生路径（PHP_ROOT/…）不落盘、由 DerivePaths 现算，杜绝不同步。
+// 自定义根与默认根互斥且唯一：非空即完全取代 ./offline、./backups。
 type FileConfig struct {
-	PHPOHome string                           `yaml:"phpo_home,omitempty"`
-	WWWRoot  string                           `yaml:"www_root,omitempty"`
-	Services map[string]map[string]SvcSetting `yaml:"services,omitempty"` // kind -> version -> 设置
+	PHPOHome    string                           `yaml:"phpo_home,omitempty"`
+	WWWRoot     string                           `yaml:"www_root,omitempty"`
+	OfflineRoot string                           `yaml:"offline_root,omitempty"`
+	BackupRoot  string                           `yaml:"backup_root,omitempty"`
+	Services    map[string]map[string]SvcSetting `yaml:"services,omitempty"` // kind -> version -> 设置
 }
 
 // ConfigStore 配置唯一读写门面：内存缓存 FileConfig + 原子落盘（0600）；写操作在任务串行下调用，加锁仅作兜底。
@@ -139,7 +143,31 @@ func isDir(p string) bool {
 func (c *ConfigStore) Env() Env {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return DerivePaths(c.fc.PHPOHome, c.fc.WWWRoot)
+	return c.envLocked()
+}
+
+// envLocked 派生 + 套用自定义根（调用方持锁）
+func (c *ConfigStore) envLocked() Env {
+	return DerivePaths(c.fc.PHPOHome, c.fc.WWWRoot).
+		ApplyRootOverrides(c.fc.OfflineRoot, c.fc.BackupRoot).
+		ApplyDataDirs(c.dataDirsLocked())
+}
+
+// dataDirsLocked 收集所有设了 data_dir 的服务版本（key "kind/version"）
+func (c *ConfigStore) dataDirsLocked() map[string]string {
+	var out map[string]string
+	for kind, vers := range c.fc.Services {
+		for ver, s := range vers {
+			if s.DataDir == "" {
+				continue
+			}
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[kind+"/"+ver] = s.DataDir
+		}
+	}
+	return out
 }
 
 // ExpandedEnv 把根目录的 `~` 展开为绝对路径后重新派生（供真实文件 IO / 容器挂载）
@@ -215,6 +243,62 @@ func (c *ConfigStore) SetServicePort(kind, version string, port int) error {
 	return c.save()
 }
 
+// ---- 自定义根（需求 1/2/7/8）：与默认互斥，非空即取代、置空即回落 ----
+
+// OfflineRoot 当前缓存根（展开后的绝对路径）；未自定义即默认 ./offline
+func (c *ConfigStore) OfflineRoot() string { return c.ExpandedEnv().OfflineRoot }
+
+// BackupRoot 当前备份根（展开后的绝对路径）；未自定义即默认 ./backups
+func (c *ConfigStore) BackupRoot() string { return c.ExpandedEnv().BackupRoot }
+
+// DataDir 某服务版本当前数据目录（展开后绝对路径；未自定义即 {KIND_ROOT}/{version}/data）
+func (c *ConfigStore) DataDir(kind, version string) string {
+	return c.ExpandedEnv().DataDirFor(kind, version)
+}
+
+// RootOverrides 对象图重绑指纹的组成部分：三个可自定义面的原始值（缓存根 + 备份根 + 各版本数据目录）
+func (c *ConfigStore) RootOverrides() (offline, backup string, dataDirs map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fc.OfflineRoot, c.fc.BackupRoot, c.dataDirsLocked()
+}
+
+// SetOfflineRoot 落库自定义缓存根（空串=清除，回落默认）；仅做路径安全校验（硬红线 3）
+func (c *ConfigStore) SetOfflineRoot(root string) error {
+	r, err := checkRootPath(root)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fc.OfflineRoot = r
+	return c.save()
+}
+
+// SetBackupRoot 落库自定义备份根（空串=清除，回落默认）
+func (c *ConfigStore) SetBackupRoot(root string) error {
+	r, err := checkRootPath(root)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fc.BackupRoot = r
+	return c.save()
+}
+
+// SetDataDir 落库某服务版本的数据目录（空串=清除，回落默认派生）
+func (c *ConfigStore) SetDataDir(kind, version, dir string) error {
+	d, err := checkRootPath(dir)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.putSetting(kind, version, func(s *SvcSetting) { s.DataDir = d })
+	return c.save()
+}
+
 // FlatEnv 合成前端 snapshot.env 契约：全部派生路径键 + 已设置的密码/端口扁平键。
 // 保持与旧 SQLite env 表完全一致的键名，前端 app.env.* 零改动。
 // 出口一律展开 `~`：前端把这些值直接用于原生目录选择器与站点根拼接，未展开会被解析成
@@ -223,7 +307,7 @@ func (c *ConfigStore) FlatEnv() map[string]string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := map[string]string{}
-	e := ExpandEnvHomes(DerivePaths(c.fc.PHPOHome, c.fc.WWWRoot))
+	e := ExpandEnvHomes(c.envLocked())
 	for _, k := range []string{"PHPO_HOME", "WWW_ROOT", "PHP_ROOT", "NGINX_ROOT", "NGINX_SITES_ROOT",
 		"MYSQL_ROOT", "PGSQL_ROOT", "REDIS_ROOT", "BACKUP_ROOT", "OFFLINE_ROOT"} {
 		out[k] = e.Get(k)
@@ -233,6 +317,9 @@ func (c *ConfigStore) FlatEnv() map[string]string {
 			out[EnvKeyPassword(kind, ver)] = s.Password
 			if s.Port > 0 {
 				out[EnvKeyPort(kind, ver)] = strconv.Itoa(s.Port)
+			}
+			if s.DataDir != "" {
+				out[EnvKeyDataDir(kind, ver)] = e.DataDirFor(kind, ver)
 			}
 		}
 	}

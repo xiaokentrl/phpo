@@ -6,7 +6,8 @@ import type { Backup, DockerStatus, Env, OfflineTree, ServiceKind, Site, StateSn
 import { derivePaths, DEFAULT_HOME, DEFAULT_WWW } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 
-// 后端只发 {KIND}_{VER}_PORT / {KIND}_{VER}_PASSWORD（internal/config/configstore.go 的 EnvKey*），
+// 后端发的键：{KIND}_{VER}_PORT / {KIND}_{VER}_PASSWORD / {KIND}_{VER}_DATA_DIR + OFFLINE_ROOT / BACKUP_ROOT
+// （internal/config/configstore.go 的 EnvKey* 与 FlatEnv）。
 // 从不发 NGINX_PORT / NGINX_VERSION / *_ROOT_PASSWORD 这类原型遗留键——真宿主下种它们，
 // 等于往快照 env 里永久留下无人覆盖的假值（applySnapshot 只清后端真发过的键）。
 function defaultEnv(): Env {

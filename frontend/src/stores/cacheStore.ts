@@ -1,26 +1,17 @@
 // cacheStore（T606 / §5.14.11）：离线缓存状态仓。数据只来自后端读接口 + 6 个 cache:* 事件（硬红线 4）。
 // marks：按 kind/version 记录最近一次命中/未命中，供 CacheHitBadge 实时标记安装任务；
-// events：6 类缓存事件的滚动流水（要点「全订阅展示」）；前端不乐观更新，写后重拉 list/stats。
+// 缓存事件的逐行实时反馈走任务抽屉（taskStore），本仓不再持有流水（需求 3）；前端不乐观更新，写后重拉 list/stats。
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { CacheEntry, CacheEventMark, CacheStats } from '@/types'
 
 const emptyStats: CacheStats = { totalBytes: 0, entryCount: 0, imageCount: 0, extCount: 0, corrupted: 0 }
 
-export interface CacheEventLog {
-  name: string
-  kind: string
-  version: string
-  detail: string
-  at: number
-}
-
 export const useCacheStore = defineStore('cache', () => {
   const entries = ref<CacheEntry[]>([])
   const stats = ref<CacheStats>({ ...emptyStats })
   const loading = ref(false)
   const marks = ref<Record<string, CacheEventMark>>({})
-  const events = ref<CacheEventLog[]>([])
 
   function setEntries(list: CacheEntry[]): void {
     entries.value = list
@@ -47,22 +38,16 @@ export const useCacheStore = defineStore('cache', () => {
     return marks.value[keyOf(kind, version)]
   }
 
-  // pushEvent 追加一条缓存事件流水（上限 100，防无界增长）
-  function pushEvent(ev: CacheEventLog): void {
-    events.value = [ev, ...events.value].slice(0, 100)
-  }
-
   const corruptedCount = computed(() => stats.value.corrupted)
 
   function reset(): void {
     entries.value = []
     stats.value = { ...emptyStats }
     marks.value = {}
-    events.value = []
   }
 
   return {
-    entries, stats, loading, marks, events, corruptedCount,
-    setEntries, setStats, setEntry, dropEntry, recordMark, markOf, pushEvent, reset,
+    entries, stats, loading, marks, corruptedCount,
+    setEntries, setStats, setEntry, dropEntry, recordMark, markOf, reset,
   }
 })

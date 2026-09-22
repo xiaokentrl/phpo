@@ -284,6 +284,8 @@ function buildScript(args: string[], meta: TaskMeta): TaskLine[] {
 
 // RECORDS_MAX 记录池上限：终态记录留池供回看，超出裁最旧（正在跑 / 正在看的绝不裁）
 const RECORDS_MAX = 50
+// SYS_MAX 系统日志通道上限：不属于任何任务的事件逐行流水，滚动裁尾防无界增长
+const SYS_MAX = 200
 
 export const useTaskStore = defineStore('task', () => {
   const app = useAppState()
@@ -292,6 +294,9 @@ export const useTaskStore = defineStore('task', () => {
   const records = ref<TaskRecord[]>([])
   const activeId = ref('')
   const expanded = ref(false)
+  // sysLines：系统日志通道（需求 3／6）——无任务归属的事件（cache:* / docker:* / update:*）流水，
+  // 左栏在无选中任务时显示它
+  const sysLines = ref<TaskLine[]>([])
   // 等效命令是前端展示信息、不进后端队列载荷：label 为队列去重键（与任务 1:1），据此关联弹窗提交的 args
   const cmdByLabel = new Map<string, string[]>()
   let followedId = '' // 已自动跟随过的运行中任务 ID
@@ -353,9 +358,11 @@ export const useTaskStore = defineStore('task', () => {
   )
   const runningBrief = computed<TaskBrief | null>(() => app.tasks.running ?? null)
   const pendingBriefs = computed<TaskBrief[]>(() => app.tasks.pending ?? [])
+  // visibleLines：左栏正文。选中任务时是该任务的日志；无选中任务时退化为系统日志通道，
+  // 使不属于任何任务的事件也实时逐行可见（需求 3／6）。
   const visibleLines = computed<TaskLine[]>(() => {
     const t = task.value
-    if (!t) return []
+    if (!t) return sysLines.value
     return t.live ? t.lines : t.lines.slice(0, t.cursor)
   })
   // progress：实时步骤进度（total=0 表示未知，如账本回放的历史任务，此时不显示进度）
@@ -478,12 +485,17 @@ export const useTaskStore = defineStore('task', () => {
     trim()
   }
 
-  // cacheNote：把 cache:* 事件如实记为当前运行任务的一行日志（串行队列 ⇒ 归属唯一）。
-  // 无运行中任务（如 doctor 离线校验）时丢弃：这类事件不属于任何任务，不得凭空造记录。
-  function cacheNote(level: LineType, text: string): void {
+  // eventLine：把一条协议事件如实记成一行日志（§5.14 离线优先、§5.13 清洁、§5.9 升级的实时证据）。
+  // 有运行中任务时归属该任务（串行队列 ⇒ 归属唯一）；没有任务时（doctor 离线校验、手动清理缓存、
+  // 启动校准等）进系统日志通道——需求 6 要求这类事件也实时可见，但仍不得凭空造任务记录（硬红线 4）。
+  function eventLine(level: LineType, text: string): void {
     const id = app.tasks.running?.id
-    if (!id) return
-    appendLog(id, level, text)
+    if (id) {
+      appendLog(id, level, text)
+      return
+    }
+    sysLines.value.push({ t: level, s: text })
+    if (sysLines.value.length > SYS_MAX) sysLines.value.splice(0, sysLines.value.length - SYS_MAX)
   }
 
   // select：查看某条记录（队列条 / 历史点击）。不改动任何状态。
@@ -621,7 +633,7 @@ export const useTaskStore = defineStore('task', () => {
     appendLog,
     setProgress,
     finish,
-    cacheNote,
+    eventLine,
     select,
     start,
     cancel,

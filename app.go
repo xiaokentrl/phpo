@@ -19,6 +19,7 @@ import (
 	"phpo/internal/service"
 	"phpo/internal/template"
 	"phpo/internal/ui"
+	"phpo/pkg/errs"
 )
 
 // errNotReady 前端在启动钩子完成前抢跑调用时的守卫
@@ -431,6 +432,59 @@ func (a *App) SetServicePort(kind model.ServiceKind, version string, port int) e
 	return a.container.EnvService.SetPort(kind, version, port)
 }
 
+// ---- 可自定义根绑定（需求 1/2/7/8）：缓存根 / 备份根 / 每服务版本数据目录 ----
+// 与密码/端口同为「preflight → 写 config.yaml → state:changed」，多一步 Rebind：
+// 装配期分发给各门面的 config.Env 是值拷贝，不换图则缓存读写仍指旧根（选了路径却不生效）。
+
+// SetOfflineRoot 自定义离线缓存根（空串=清除自定义，回落默认 ./offline）
+func (a *App) SetOfflineRoot(ctx context.Context, root string) error {
+	return a.setCustomRoot(ctx, "offline_root", "", "", root)
+}
+
+// SetBackupRoot 自定义备份根（空串=清除自定义，回落默认 ./backups）
+func (a *App) SetBackupRoot(ctx context.Context, root string) error {
+	return a.setCustomRoot(ctx, "backup_root", "", "", root)
+}
+
+// SetServiceDataDir 自定义某服务版本的数据目录（空串=清除，回落 {KIND_ROOT}/{version}/data）
+func (a *App) SetServiceDataDir(ctx context.Context, kind model.ServiceKind, version, dir string) error {
+	return a.setCustomRoot(ctx, "data_dir", string(kind), version, dir)
+}
+
+func (a *App) setCustomRoot(ctx context.Context, field, kind, version, value string) error {
+	if err := a.guard(preflight.ActRootSet, preflight.Ctx{Field: field, Kind: kind, Version: version, NewValue: value}); err != nil {
+		return err
+	}
+	if a.Running() {
+		// Rebind 的前提是队列空闲：中途换图会把在跑任务的门面抽掉（§5.13.1 原子性）
+		return errors.New(errs.TaskBusy)
+	}
+	cfg, err := config.LoadConfigStore()
+	if err != nil {
+		return err
+	}
+	switch field {
+	case "offline_root":
+		err = cfg.SetOfflineRoot(value)
+	case "backup_root":
+		err = cfg.SetBackupRoot(value)
+	default:
+		err = cfg.SetDataDir(kind, version, value)
+	}
+	if err != nil {
+		return err
+	}
+	if err := a.container.Rebind(ctx); err != nil {
+		return err
+	}
+	snap, err := a.GetState()
+	if err != nil {
+		return err
+	}
+	a.container.Emitter.Emit("state:changed", map[string]any{"snapshot": snap})
+	return nil
+}
+
 // ---- M5 服务配置绑定：读回显 / 三段式原子保存（硬红线 3/5）----
 
 // ConfigGetFiles 返回该服务版本配置：宿主已存在则回显内容，否则回落模板默认
@@ -700,6 +754,17 @@ func (a *App) OfflineRemoveEntry(ctx context.Context, kind, version string) erro
 		return err
 	}
 	return a.container.OfflineService.RemoveCacheEntry(ctx, kind, version)
+}
+
+// OfflineImportFile 把手工选定的任意文件导入为一条离线缓存（image / apk / pecl 三种落点）
+func (a *App) OfflineImportFile(ctx context.Context, kind, version, extType, srcPath string) error {
+	if a.container.OfflineService == nil {
+		return errNotReady
+	}
+	if err := a.guard(preflight.ActCacheImport, preflight.Ctx{Kind: kind, Version: version, Field: extType, NewValue: srcPath}); err != nil {
+		return err
+	}
+	return a.container.OfflineService.ImportEntry(ctx, kind, version, extType, srcPath)
 }
 
 // OfflineLookupImage 查镜像离线缓存命中情况（命中前已校验 SHA256）

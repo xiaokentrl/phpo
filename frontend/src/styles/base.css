@@ -1,5 +1,5 @@
 /* 结构令牌 + 组件样式：直译自原型 <style> 第 12、19–381 行；主题色令牌见 styles/themes/*.css */
-:root{--r:12px;--r-sm:8px;--r-xs:6px;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;--sidebar-width:200px;--drawer-height:160px;--content-max:1200px;--content-pad-x:40px;--motion-fast:.13s;--motion-base:.2s;--motion-slow:.25s;--ui-scale:1}
+:root{--r:12px;--r-sm:8px;--r-xs:6px;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;--sidebar-width:200px;--drawer-height:160px;--drawer-split:70%;--content-max:1200px;--content-pad-x:40px;--motion-fast:.13s;--motion-base:.2s;--motion-slow:.25s;--ui-scale:1}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:var(--sans);font-size:14px;line-height:1.55;color:var(--text);background:var(--bg);-webkit-font-smoothing:antialiased;overflow:hidden;transition:background var(--motion-slow),color var(--motion-slow)}
@@ -135,7 +135,10 @@ td.col-actions::before,th.col-actions::before{content:'';position:absolute;left:
 .drawer.expanded{height:var(--drawer-height)}
 .drawer-body{display:none;flex:1;min-height:0}
 .drawer.expanded .drawer-body{display:flex}
-.drawer-main{display:flex;flex-direction:column;flex:0 0 70%;min-width:0;border-right:1px solid var(--border-2)}
+.drawer-main{display:flex;flex-direction:column;flex:0 0 var(--drawer-split);min-width:0}
+/* 两栏水平分隔条：7px 命中区靠负边距压在 1px 细线上，线体居中、不额外占宽 */
+.drawer-splitter{flex:0 0 7px;margin:0 -3px;position:relative;z-index:5;cursor:col-resize;border-left:1px solid var(--border-2);background:transparent;transition:background var(--motion-fast)}
+.drawer.expanded .drawer-splitter:hover,.drawer.expanded .drawer-splitter:active{background:var(--accent);opacity:.5}
 .drawer-log{flex:1;min-height:0;overflow-y:auto;padding:12px 16px;font-family:var(--mono);font-size:12px;line-height:1.7;color:var(--text-dim);white-space:pre-wrap;word-break:break-word;margin:0;background:var(--bg);opacity:0;pointer-events:none;transition:opacity var(--motion-fast)}
 .drawer.expanded .drawer-log{opacity:1;pointer-events:auto}
 .drawer-resizer{position:absolute;top:-3px;left:0;right:0;height:6px;cursor:row-resize;z-index:20;background:transparent;transition:background var(--motion-fast)}
@@ -174,8 +177,8 @@ td.col-actions::before,th.col-actions::before{content:'';position:absolute;left:
 .log-line.meta{color:var(--accent)}
 .log-line.cmd{color:var(--text);font-weight:550}
 .log-line.dim{color:var(--text-mute)}
-/* 任务队列（§5.6.1）：右栏占抽屉 30%，竖排列表、最新提交永远在最上面；每行 = 状态点 · 标签 · 步骤 · 显示态 · 撤回 */
-.drawer-queue{display:flex;flex-direction:column;flex:0 0 30%;min-width:0;background:var(--surface)}
+/* 任务队列（§5.6.1）：右栏占抽屉余量（默认 30%），竖排列表、最新提交永远在最上面；每行 = 状态点 · 标签 · 步骤 · 显示态 · 撤回。左右占比可拖拽（需求 4） */
+.drawer-queue{display:flex;flex-direction:column;flex:1 1 0;min-width:180px;background:var(--surface)}
 .dq-head{display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border-2);background:var(--surface-2);flex-shrink:0}
 .dq-title{font-family:var(--mono);font-size:10.5px;color:var(--text-mute);letter-spacing:.4px;flex-shrink:0}
 .dq-count{font-family:var(--mono);font-size:10px;color:var(--text-mute);background:var(--surface-3);border-radius:9px;padding:0 5px;line-height:14px}

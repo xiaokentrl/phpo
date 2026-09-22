@@ -16,6 +16,12 @@ type Env struct {
 	RedisRoot      string `json:"REDIS_ROOT"`
 	BackupRoot     string `json:"BACKUP_ROOT"`
 	OfflineRoot    string `json:"OFFLINE_ROOT"`
+
+	// 自定义根（§5.14.2 / §4.2）：非空即**完全取代**对应的默认派生根——同一类路径任一时刻只有一个，
+	// 不与默认并存、不做二级回退。快照只吐上面的最终生效键，故这三个原始值不进 JSON。
+	CustomOffline string            `json:"-"`
+	CustomBackup  string            `json:"-"`
+	DataDirs      map[string]string `json:"-"` // "kind/version" → 该版本自定义数据目录（§需求7）
 }
 
 func trimTrailingSlashes(s string) string { return strings.TrimRight(s, "/") }
@@ -75,6 +81,54 @@ func (e Env) Get(key string) string {
 // RootFor 返回某服务的版本根目录（原型 verRoot：{KIND_ROOT}/{version}）
 func (e Env) RootFor(kind, version string) string {
 	return e.Get(strings.ToUpper(kind)+"_ROOT") + "/" + version
+}
+
+// EnvKeyDataDir 数据目录 env 键：{KIND}_{VER}_DATA_DIR（与密码/端口同规则，供快照回显）
+func EnvKeyDataDir(kind, version string) string {
+	return strings.ToUpper(kind) + "_" + envVer(version) + "_DATA_DIR"
+}
+
+// ApplyRootOverrides 把 config.yaml 的自定义缓存根/备份根落成唯一生效根；空值即回到 PHPO_HOME 下的默认派生根。
+// 语义是「取代」而非「叠加」：自定义一旦设定，默认 ./offline、./backups 即不再被读写；
+// 反复 apply（含清空）结果只由最后一次决定，不会残留上一次的自定义值。
+func (e Env) ApplyRootOverrides(offline, backup string) Env {
+	e.CustomOffline, e.OfflineRoot = applyRoot(offline, e.PHPOHome+"/offline")
+	e.CustomBackup, e.BackupRoot = applyRoot(backup, e.PHPOHome+"/backups")
+	return e
+}
+
+func applyRoot(override, def string) (string, string) {
+	if o := trimTrailingSlashes(NormPath(override)); o != "" {
+		return o, o
+	}
+	return "", trimTrailingSlashes(NormPath(def))
+}
+
+// ApplyDataDirs 登记每服务版本的自定义数据目录（key 形如 "mysql/8.4"；空值条目忽略）
+func (e Env) ApplyDataDirs(dirs map[string]string) Env {
+	out := make(map[string]string, len(dirs))
+	for k, v := range dirs {
+		if d := trimTrailingSlashes(NormPath(v)); d != "" {
+			out[k] = d
+		}
+	}
+	if len(out) > 0 {
+		e.DataDirs = out
+	}
+	return e
+}
+
+// DataDirFor 某服务版本的数据目录：自定义即唯一，未自定义回落 {KIND_ROOT}/{version}/data
+func (e Env) DataDirFor(kind, version string) string {
+	if d := e.DataDirs[kind+"/"+version]; d != "" {
+		return d
+	}
+	return e.RootFor(kind, version) + "/data"
+}
+
+// HasCustomDataDir 该版本的数据目录是否已被自定义（需求 7：路径互斥唯一，默认的 {KIND_ROOT}/{version}/data 即不再创建）
+func (e Env) HasCustomDataDir(kind, version string) bool {
+	return e.DataDirs[kind+"/"+version] != ""
 }
 
 // VersionSubdirs 服务版本目录布局（VERSION_SUBDIRS 直译）
@@ -175,6 +229,8 @@ func (e Env) ResolveMounts(kind, version string) []Mount {
 		var host string
 		if m.Global {
 			host = e.Get(m.Key)
+		} else if m.Sub == "data" {
+			host = e.DataDirFor(kind, version) // 数据目录可自定义（需求 7）；conf/logs/initdb 仍随 {KIND_ROOT}/{version}
 		} else if m.Sub != "" {
 			host = root + "/" + version + "/" + m.Sub
 			if m.From != "" {

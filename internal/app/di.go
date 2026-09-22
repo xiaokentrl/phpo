@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,7 +63,7 @@ type Container struct {
 
 	// 对象图重绑：装配期下发给各门面的 config.Env 是值拷贝，装机把两根落库后要按新根整棵重建（见 Rebind）
 	graphMu      sync.Mutex                  // 串行化对象图重建与回收
-	graphKey     string                      // 当前对象图已绑的两根指纹；两根未变即 no-op
+	graphKey     string                      // 当前对象图已绑的根指纹（两根 + 自定义缓存/备份根 + 数据目录）；未变即 no-op
 	graphCleanup func(context.Context) error // 当前对象图的连接回收（docker client + 运行态存储）
 }
 
@@ -133,10 +135,11 @@ func (c *Container) Build() *Assembly {
 	}
 }
 
-// Rebind 装机向导把两根写入 config.yaml 后重绑运行期对象图。
+// Rebind 配置里的可自定义根写入 config.yaml 后重绑运行期对象图。
 // 装配期下发给各门面的 config.Env 是值拷贝：离线缓存根、临时目录、vhost 目录、容器挂载宿主路径全部派生自此。
-// 首启之后落库的两根若不重绑，所有写操作仍落在装配时的默认根上（工作目录污染事故的成因）。
-// 先建新图、成功后才回收旧图：新图构造失败时旧图原样可用，不留半死状态；两根未变即 no-op（幂等）。
+// 首启之后落库的两根若不重绑，所有写操作仍落在装配时的默认根上（工作目录污染事故的成因）；
+// 自定义缓存根/备份根/数据目录同理——选了路径却不换图，等于没改（需求 2/7/8）。
+// 先建新图、成功后才回收旧图：新图构造失败时旧图原样可用，不留半死状态；根指纹未变即 no-op（幂等）。
 // 调用前提：任务队列已空闲——app.go 门面在 HomeEnsure 的三段式任务返回后调用，否则旧 task.Manager 会被中途替换。
 func (c *Container) Rebind(ctx context.Context) error {
 	c.graphMu.Lock()
@@ -304,10 +307,17 @@ func residueEnv() config.Env {
 	return cfg.ExpandedEnv()
 }
 
-// rootsKey 对象图已绑工作根指纹（展开后的绝对两根）：两根未变即无需重建，是 Rebind 的幂等判据
+// rootsKey 对象图已绑根指纹（展开后的绝对路径）：两根 + 自定义缓存根/备份根 + 每服务版本数据目录。
+// 任一项未变即无需重建，是 Rebind 的幂等判据；漏项会让「改了自定义根却不生效」（需求 2/7/8）。
 func rootsKey(cfg *config.ConfigStore) string {
 	e := cfg.ExpandedEnv()
-	return e.PHPOHome + "\x00" + e.WWWRoot
+	parts := []string{e.PHPOHome, e.WWWRoot, e.OfflineRoot, e.BackupRoot}
+	dirs := make([]string, 0, len(e.DataDirs))
+	for k, v := range e.DataDirs {
+		dirs = append(dirs, k+"\x00"+v)
+	}
+	sort.Strings(dirs)
+	return strings.Join(append(parts, dirs...), "\x00")
 }
 
 // nginxSnapshotter 取权威快照以现取 nginx 单例版本（*store.Store 满足）

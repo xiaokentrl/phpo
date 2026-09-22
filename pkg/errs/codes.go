@@ -1,4 +1,4 @@
-// PF 校验错误码表：preflight 返回的用户级错误文案（原型 PF 常量直译，共 27 条）
+// PF 校验错误码表：preflight 返回的用户级错误文案（原型 PF 常量直译 + 生产新增，共 28 条）
 package errs
 
 // 错误码 → 中文文案；占位符 {from} {to} {version} 等由 preflight 填充
@@ -31,10 +31,11 @@ const (
 	ConfigEmpty    = "配置内容不能为空"
 	NginxNeeded    = "请先安装 Nginx"
 	PhpNeeded      = "请先安装一个 PHP 版本"
+	FileMissing    = "待导入的文件不存在"
 )
 
 // CodeCount 供对账测试：PF 表条目数
-const CodeCount = 27
+const CodeCount = 28
 
 // AllCodes 返回全部错误码文案（测试对账用）
 func AllCodes() []string {
@@ -44,6 +45,6 @@ func AllCodes() []string {
 		DomainInvalid, DomainExists, RootEmpty, RootEscaped, RootOutsideWww,
 		RootDuplicated, PathTraversal, NotInstalled, IsRunning, NotRunning,
 		HasDependents, LastPhp, BackupMissing, OfflineMissing, SvcMissing,
-		SiteMissing, ExtInvalid, ConfigEmpty, NginxNeeded, PhpNeeded,
+		SiteMissing, ExtInvalid, ConfigEmpty, NginxNeeded, PhpNeeded, FileMissing,
 	}
 }

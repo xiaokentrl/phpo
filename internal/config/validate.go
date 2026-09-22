@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -15,6 +16,8 @@ var (
 	reTraversal  = regexp.MustCompile(`(^|/)\.\.(/|$)`)
 	reDomain     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 	reExt        = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+	// reTraversalWin 自定义根可落在 Windows（`D:\phpo\..\x`），斜杠正则盖不住反斜杠分段
+	reTraversalWin = regexp.MustCompile(`(\\|^)\.\.(\\|$)`)
 )
 
 // NormPath 原型 normPath：trim → 折叠 // → 去尾部 /
@@ -75,3 +78,20 @@ func ValidateSiteRoot(root, wwwRoot string) RootCheck {
 func ValidateExt(name string) bool {
 	return reExt.MatchString(strings.TrimSpace(name))
 }
+
+// checkRootPath 可自定义根（缓存根 / 备份根 / 数据目录）的唯一校验：路径安全（硬红线 3）。
+// 遵循最小限制原则——不要求绝对路径、不限字符集、不要求目录已存在；只规范化并拒绝 `..` 穿越段。
+// 返回规范化后的值（空串表示「未自定义 / 清除自定义」）。
+func checkRootPath(p string) (string, error) {
+	s := NormPath(p)
+	if s == "" {
+		return "", nil
+	}
+	if HasTraversal(s) || reTraversalWin.MatchString(s) || strings.ContainsRune(s, 0) {
+		return "", fmt.Errorf("%s", errs.PathTraversal)
+	}
+	return s, nil
+}
+
+// ValidateRootPath checkRootPath 的导出口：preflight 与配置写盘共用同一判据，不另立标准（§0.2 #14）
+func ValidateRootPath(p string) (string, error) { return checkRootPath(p) }

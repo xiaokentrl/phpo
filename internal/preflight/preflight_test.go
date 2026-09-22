@@ -35,8 +35,8 @@ func firstErr(res *model.PreflightResult) string {
 // —— 对账：action 数与 NEEDS_HOME 数 ——
 
 func TestActionAndNeedsHomeCounts(t *testing.T) {
-	if len(AllActions) != ActionCount || ActionCount != 17 {
-		t.Fatalf("action 数应为 17，得 %d/%d", len(AllActions), ActionCount)
+	if len(AllActions) != ActionCount || ActionCount != 19 {
+		t.Fatalf("action 数应为 19，得 %d/%d", len(AllActions), ActionCount)
 	}
 	n := 0
 	for _, a := range AllActions {
@@ -45,7 +45,7 @@ func TestActionAndNeedsHomeCounts(t *testing.T) {
 		}
 	}
 	if n != NeedsHomeCount {
-		t.Fatalf("NEEDS_HOME 应为 15，得 %d", n)
+		t.Fatalf("NEEDS_HOME 应为 17，得 %d", n)
 	}
 	// php-switch 与 backup-delete 不在 NEEDS_HOME（原型）
 	if needsHome[ActPhpSwitch] {

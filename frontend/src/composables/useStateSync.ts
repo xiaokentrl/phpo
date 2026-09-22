@@ -2,7 +2,10 @@
 // 取代原型 render() 全量重绘：状态变化只来自后端推送的事件，组件通过响应式 store 自动更新。
 // syncState 是同一条落地路径的「主动拉取」公共入口：启动、手动同步、装机向导完成后均复用。
 // 任务实时反馈（Q5）：task:log / task:progress / task:done 与快照 tasks 全部落到 taskStore，
-// 队列详情、实时进度、成功/失败与失败原因因此与后端严格同步；cache:* 也如实记入当前任务日志。
+// 队列详情、实时进度、成功/失败与失败原因因此与后端严格同步。
+// 需求 6（全局实时同步收口）：17 个协议事件里除 update:progress（已由升级弹窗进度条承载）外的
+// cache:* / docker:* / update:available / update:done 也逐行进抽屉日志——有运行任务归该任务，
+// 无运行任务进系统日志通道；docker:state-drift 额外重取一次权威快照让界面跟着校准结果回流。
 import { reactive, readonly, type DeepReadonly } from 'vue'
 import { useAppState } from '@/stores/appState'
 import { useTaskStore, type LineType, type TaskStatus } from '@/stores/taskStore'
@@ -12,6 +15,8 @@ import {
   type TaskLogPayload, type TaskProgressPayload, type TaskDonePayload,
   type CacheHitPayload, type CacheMissPayload, type CachePromotePayload,
   type CacheCorruptedPayload, type CacheCleanupPayload, type CacheTempdirClearedPayload,
+  type UpdateAvailablePayload, type UpdateDonePayload,
+  type DockerCleanupPayload, type DockerOrphanFoundPayload, type DockerStateDriftPayload,
 } from '@/api/events'
 import { humanSize } from '@/composables/useCleanup'
 import { t } from '@/composables/useI18n'
@@ -39,39 +44,70 @@ function record(event: EventName, payload: unknown): void {
   }
 }
 
-// cacheNote：把 6 个 cache:* 事件转成当前任务的一行可读日志（§5.14 离线优先的实时证据）。
-// 归属唯一的依据是后端串行队列——同一时刻至多一个运行中任务；无运行任务时由 store 丢弃。
-function cacheNote(event: EventName, payload: unknown): void {
+// eventNote：把 §5.6 协议事件如实记成一行抽屉日志——缓存 6 个（§5.14 离线优先的实时证据）、
+// docker: 3 个（§5.13 清洁与漂移）、update:available / update:done 2 个（§5.9 升级）。
+// update:progress 刻意不进日志：它是连续量，已由升级弹窗的进度条实时承载，逐行落日志只会淹没任务流水。
+// 归属唯一的依据是后端串行队列——同一时刻至多一个运行中任务；无运行任务时由 store 落系统日志通道。
+function eventNote(event: EventName, payload: unknown): void {
   const task = useTaskStore()
   switch (event) {
     case EVENT.CacheHit: {
       const e = payload as CacheHitPayload
-      task.cacheNote('ok', t('task.cacheHit', { kind: e.kind, version: e.version, source: e.source, size: humanSize(e.size ?? 0) }))
+      task.eventLine('ok', t('task.cacheHit', { kind: e.kind, version: e.version, source: e.source, size: humanSize(e.size ?? 0) }))
       return
     }
     case EVENT.CacheMiss: {
       const e = payload as CacheMissPayload
-      task.cacheNote('dim', t('task.cacheMiss', { kind: e.kind, version: e.version, action: e.action }))
+      task.eventLine('dim', t('task.cacheMiss', { kind: e.kind, version: e.version, action: e.action }))
       return
     }
     case EVENT.CachePromote: {
       const e = payload as CachePromotePayload
-      task.cacheNote('ok', t('task.cachePromote', { kind: e.kind, version: e.version, n: (e.entries ?? []).length }))
+      task.eventLine('ok', t('task.cachePromote', { kind: e.kind, version: e.version, n: (e.entries ?? []).length }))
       return
     }
     case EVENT.CacheCorrupted: {
       const e = payload as CacheCorruptedPayload
-      task.cacheNote('err', t('task.cacheCorrupted', { kind: e.kind, version: e.version }))
+      task.eventLine('err', t('task.cacheCorrupted', { kind: e.kind, version: e.version }))
       return
     }
     case EVENT.CacheCleanup: {
       const e = payload as CacheCleanupPayload
-      task.cacheNote('ok', t('task.cacheCleanup', { mode: e.mode, size: humanSize(e.freed_bytes ?? 0) }))
+      task.eventLine('ok', t('task.cacheCleanup', { mode: e.mode, size: humanSize(e.freed_bytes ?? 0) }))
       return
     }
     case EVENT.CacheTempdirCleared: {
       const e = payload as CacheTempdirClearedPayload
-      task.cacheNote('dim', t('task.cacheTempdir', { path: e.path, reason: e.reason }))
+      task.eventLine('dim', t('task.cacheTempdir', { path: e.path, reason: e.reason }))
+      return
+    }
+    case EVENT.DockerCleanup: {
+      const e = payload as DockerCleanupPayload
+      task.eventLine('dim', t('task.dockerCleanup', { stage: e.stage, resource: e.resource, action: e.action }))
+      return
+    }
+    case EVENT.DockerOrphanFound: {
+      const e = payload as DockerOrphanFoundPayload
+      task.eventLine('meta', t('task.dockerOrphan', { n: (e.resources ?? []).length }))
+      return
+    }
+    case EVENT.DockerStateDrift: {
+      const e = payload as DockerStateDriftPayload
+      const detail = e.expected || e.actual ? `${String(e.expected ?? '?')} → ${String(e.actual ?? '?')}` : String(e.error ?? '')
+      task.eventLine('meta', t('task.dockerDrift', { detail }))
+      // 漂移即「Docker 实际状态 ≢ 库里状态」：随即重取权威快照，让界面跟着校准结果走（硬红线 4）
+      void syncState()
+      return
+    }
+    case EVENT.UpdateAvailable: {
+      const e = payload as UpdateAvailablePayload
+      task.eventLine('meta', t('task.updateAvailable', { version: e.version, size: humanSize(e.size ?? 0) }))
+      return
+    }
+    case EVENT.UpdateDone: {
+      const e = payload as UpdateDonePayload
+      const detail = e.version || e.error || ''
+      task.eventLine(e.status === 'failed' ? 'err' : e.status === 'cancelled' ? 'dim' : 'ok', t('task.updateDone', { status: e.status, detail }))
       return
     }
   }
@@ -108,7 +144,7 @@ function landEvent(event: EventName, payload: unknown): void {
     task.finish(p.id, p.status as TaskStatus, p.duration)
     return
   }
-  cacheNote(event, payload)
+  eventNote(event, payload)
 }
 
 // startStateSync：注册全部 17 个事件订阅；幂等，重复调用不叠加监听。

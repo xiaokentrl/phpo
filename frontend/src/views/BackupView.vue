@@ -1,19 +1,46 @@
 <script setup lang="ts">
 // Backup 视图：1:1 迁移原型 renderBackup（2694–2696）
 // T602：列表/创建/下载/恢复/删除接后端三段式（硬红线 4/5）；无宿主回落本地 mock 演示。
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { useModals } from '@/composables/useModals'
+import { usePreflight } from '@/composables/usePreflight'
 import { hasBackend } from '@/api/site'
-import PathInfoBar from '@/components/common/PathInfoBar.vue'
+import { toast } from '@/composables/useToast'
+import { backupRoot, defaultBackupRoot, setBackupRoot } from '@/api/env'
+import EditablePathBar from '@/components/common/EditablePathBar.vue'
 
 const { t } = useI18n()
 const state = useAppState()
 const modals = useModals()
+const { preflight } = usePreflight()
 
 // 有宿主时以 BackupList 权威列表覆盖 mock（列表不在 Snapshot 内，进入视图即拉取）
 onMounted(() => { if (hasBackend()) void modals.refreshBackups() })
+
+const savingRoot = ref(false)
+
+// saveRoot 自定义备份归档根（需求 8）：非空即互斥取代默认根 ./backups，空串=恢复默认；
+// 换根后重拉权威列表——归档的读写此后只落在选定根（§5.13 / 备份脱敏规范同口径）。
+async function saveRoot(root: string): Promise<void> {
+  if (savingRoot.value) return
+  const pf = preflight('root-set', { field: 'backup_root', newValue: root })
+  if (!pf.ok) {
+    toast(pf.errors.join('\n'), 'err', 4600)
+    return
+  }
+  savingRoot.value = true
+  try {
+    await setBackupRoot(root)
+    toast(t('root.saved'), 'ok', 2600)
+    if (hasBackend()) await modals.refreshBackups()
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  } finally {
+    savingRoot.value = false
+  }
+}
 </script>
 
 <template>
@@ -28,7 +55,15 @@ onMounted(() => { if (hasBackend()) void modals.refreshBackups() })
       </div>
     </header>
 
-    <PathInfoBar :label="t('backup.pathLabel')" :path="state.env.BACKUP_ROOT + '/'" />
+    <EditablePathBar
+      :label="t('backup.pathLabel')"
+      :path="backupRoot()"
+      :default-path="defaultBackupRoot()"
+      :browse-title="t('backup.rootBrowse')"
+      :saving="savingRoot"
+      @save="saveRoot"
+      @reset="saveRoot('')"
+    />
     <div class="alert alert-warn" style="margin-bottom: 16px">{{ t('backup.warning') }}</div>
 
     <div class="table-wrap">

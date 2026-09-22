@@ -1,4 +1,5 @@
 // MOUNTS 挂载表：1:1 迁移原型 544–575；resolveMounts 解析宿主路径（577–590）
+// data 挂载走 {KIND}_{VER}_DATA_DIR（需求 7：自定义数据目录），与后端 Env.ResolveMounts 同判据
 import type { Env, ServiceKind } from '@/types'
 
 export interface MountDef {
@@ -47,12 +48,18 @@ export const MOUNTS: Record<ServiceKind, MountDef[]> = {
   ],
 }
 
+// dataDirKey 数据目录 env 键：与后端 config.EnvKeyDataDir 同规则（大写种类 + 去点版本）
+function dataDirKey(kind: string, version: string): string {
+  return `${kind.toUpperCase()}_${version.replace(/\./g, '')}_DATA_DIR`
+}
+
 export function resolveMounts(env: Env, kind: ServiceKind, version: string): Mount[] {
   const list = MOUNTS[kind] || []
   const root = env[`${kind.toUpperCase()}_ROOT`] || ''
   return list.map((m) => {
     let host = ''
     if (m.global) host = env[m.key as string] || ''
+    else if (m.sub === 'data') host = env[dataDirKey(kind, version)] || `${root}/${version}/data`
     else if (m.sub) {
       host = `${root}/${version}/${m.sub}`
       if (m.from) host += `/${m.from}`

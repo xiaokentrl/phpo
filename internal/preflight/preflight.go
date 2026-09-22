@@ -1,5 +1,5 @@
 // preflight 框架（硬红线 #5 三段式首段：唯一权威裁决层）
-// 直译原型 preflight()（前端唯一界面来源.txt:1707–1940）：17 action + NEEDS_HOME(15)
+// 直译原型 preflight()（前端唯一界面来源.txt:1707–1940）的 17 action，并补 root-set / cache-import（需求 1/2/7/8）共 19 action
 // 返回 {ok,errors,warnings,adjusted}；能警告的绝不阻止（§3.3 最小限制）
 package preflight
 
@@ -11,7 +11,7 @@ import (
 	"phpo/pkg/errs"
 )
 
-// 17 个 action 名（§0.3 权威值：service 6 + site 6 + ops/cache 5）
+// 原型 17 个 action 名（§0.3 权威值：service 6 + site 6 + ops/cache 5）+ 生产新增 2 个（root-set / cache-import）
 const (
 	ActInstall      = "install"
 	ActUninstall    = "uninstall"
@@ -30,35 +30,42 @@ const (
 	ActRestore      = "restore"
 	ActBackupDelete = "backup-delete"
 	ActOfflinePrune = "offline-prune"
+	ActRootSet      = "root-set"
+	ActCacheImport  = "cache-import"
 )
 
 // ActionCount 供对账测试：preflight action 总数
-const ActionCount = 17
+const ActionCount = 19
 
-// AllActions 17 个 action 名（顺序对应分组：service→site→ops/cache）
+// AllActions 19 个 action 名（顺序对应分组：service→site→ops/cache→root）
 var AllActions = []string{
 	ActInstall, ActUninstall, ActServiceStop, ActServiceStart, ActUpdateConfig, ActServiceCfg,
 	ActSiteAdd, ActSiteRemove, ActSitePort, ActSiteVhost, ActPhpSwitch, ActRewrite,
 	ActExtensions, ActBackup, ActRestore, ActBackupDelete, ActOfflinePrune,
+	ActRootSet, ActCacheImport,
 }
 
-// NeedsHome：需要 PHPO_HOME 就绪的 15 个 action（§0.3 权威值，php-switch/backup 不在内）
+// NeedsHome：需要 PHPO_HOME 就绪的 17 个 action（php-switch/backup-delete 不在内）
 var needsHome = map[string]bool{
 	ActInstall: true, ActUninstall: true, ActServiceStop: true, ActServiceStart: true,
 	ActUpdateConfig: true,
 	ActSiteAdd:      true, ActSiteRemove: true, ActSitePort: true, ActSiteVhost: true,
 	ActRewrite: true, ActExtensions: true, ActServiceCfg: true,
 	ActRestore: true, ActOfflinePrune: true,
+	// root-set 写 config.yaml：两根未就绪即拒绝，否则会在用户数据目录凭空建出配置文件（违反首启零落盘）
+	ActRootSet: true,
+	// cache-import 写缓存根目录：与 offline-prune 同组，两根未就绪即拒绝
+	ActCacheImport: true,
 	// 注：backup 原型 NEEDS_HOME 含之，见下
 }
 
 func init() {
-	// 原型 NEEDS_HOME 明确含 'backup'，共 15 项
+	// 原型 NEEDS_HOME 明确含 'backup'，共 17 项
 	needsHome[ActBackup] = true
 }
 
 // NeedsHomeCount 供对账测试
-const NeedsHomeCount = 15
+const NeedsHomeCount = 17
 
 // World 只读快照 + 运行时上下文（后端唯一权威）
 type World struct {
@@ -120,7 +127,7 @@ func (r *run) setAdjustedPort(v int) {
 	r.adjusted["port"] = v
 }
 
-// Run 执行 preflight 裁决：先全局守卫（homeNotReady），再分派 17 action。
+// Run 执行 preflight 裁决：先全局守卫（homeNotReady），再分派 19 action。
 //
 // 这里**不拦并发写操作**：task.Manager 是串行 FIFO，前一个任务在跑时再发起的写操作会排队，
 // 排队不是错误（§0.2-16 能警告的不要阻止）。重复提交同一操作由 Manager 以 ErrQueued 当场拒绝——
@@ -170,6 +177,10 @@ func Run(action string, c Ctx, w *World) *model.PreflightResult {
 		r.backupDelete()
 	case ActOfflinePrune:
 		r.offlinePrune()
+	case ActRootSet:
+		r.rootSet()
+	case ActCacheImport:
+		r.cacheImport()
 	}
 
 	return &model.PreflightResult{

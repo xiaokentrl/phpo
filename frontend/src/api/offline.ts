@@ -1,4 +1,4 @@
-// 离线缓存视图 API（T606 / §5.14.10）：OfflineView 面向的读侧（列表/统计/校验）与写侧（清理/单条删除）。
+// 离线缓存视图 API（T606 / §5.14.10）：OfflineView 面向的读侧（列表/统计/校验）与写侧（清理/单条删除/手工导入）。
 // 硬红线 4：读侧以后端为准；写侧走后端三段式任务 + 审计。底层查找/提升原语见 api/cache.ts。
 // 无宿主（纯 Vite demo）时读侧返回 null、写侧直接返回，让视图保留占位不误报。
 import * as app from '../../bindings/phpo/app.js'
@@ -52,4 +52,12 @@ export async function cleanupCache(mode: string): Promise<number> {
 export async function removeEntry(kind: string, version: string): Promise<void> {
   if (!hasBackend()) return
   await app.OfflineRemoveEntry(kind, version)
+}
+
+// importEntry 把手工选定的任意文件导入为一条缓存（需求 1：读写任意缓存文件）。
+// extType=image 落成 {kind}/{version}/image.tar；apk|pecl 落成 php/{version}/{extType}/。
+// 走后端三段式：源文件只复制不搬走，登记 manifest 后发射 cache:promote。
+export async function importEntry(kind: string, version: string, extType: string, srcPath: string): Promise<void> {
+  if (!hasBackend()) return
+  await app.OfflineImportFile(kind, version, extType, srcPath)
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"phpo/internal/config"
@@ -98,5 +99,68 @@ func TestRebindAfterHomeEnsure(t *testing.T) {
 	}
 	if c.OfflineService != old {
 		t.Fatal("两根未变时 Rebind 必须 no-op，不得重建对象图")
+	}
+}
+
+// TestRebindOnCustomRootChange 需求 2：自定义缓存根/备份根/数据目录与两根同等对待——
+// 改任何一个可自定义根都要重绑对象图，否则缓存门面仍按旧根读写（「选定了路径却不生效」）。
+func TestRebindOnCustomRootChange(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	home := filepath.Join(t.TempDir(), "work")
+	www := filepath.Join(t.TempDir(), "www")
+	custom := filepath.Join(t.TempDir(), "cache")
+
+	c := NewContainer()
+	c.Build()
+	ctx := context.Background()
+	if err := runHook(t, c.Lifecycle, "object-graph"); err != nil {
+		t.Fatalf("首启 object-graph 应成功: %v", err)
+	}
+	t.Cleanup(func() { c.Lifecycle.OnShutdown(ctx) })
+
+	if err := c.WizardService.HomeEnsure(ctx, home, www); err != nil {
+		t.Fatalf("HomeEnsure err: %v", err)
+	}
+	if err := c.Rebind(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadConfigStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(custom, "redis", "7"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetOfflineRoot(custom); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Rebind(ctx); err != nil {
+		t.Fatalf("改缓存根后重绑应成功: %v", err)
+	}
+	if c.Env.OfflineRoot != custom {
+		t.Fatalf("重绑后 OFFLINE_ROOT 应为自定义根 %q，得 %q", custom, c.Env.OfflineRoot)
+	}
+	stats, err := c.OfflineService.GetCacheStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.EntryCount != 1 {
+		t.Fatalf("缓存门面应按自定义根扫到 1 条，得 %+v", stats)
+	}
+
+	// 数据目录覆盖同样进指纹（需求 7）
+	if err := cfg.SetDataDir("mysql", "8.4", filepath.Join(t.TempDir(), "mysqldata")); err != nil {
+		t.Fatal(err)
+	}
+	before := c.OfflineService
+	if err := c.Rebind(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c.OfflineService == before {
+		t.Fatal("改数据目录后必须重绑对象图")
+	}
+	if got := c.Env.DataDirFor("mysql", "8.4"); !strings.HasSuffix(got, "mysqldata") {
+		t.Fatalf("重绑后数据目录应为自定义值，得 %q", got)
 	}
 }

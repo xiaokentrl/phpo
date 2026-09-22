@@ -52,10 +52,12 @@ export interface TaskProgressPayload { id: string; step: number; total: number }
 export interface TaskDonePayload { id: string; status: string; duration: number }
 export interface UpdateAvailablePayload { version: string; changelog: string; size: number }
 export interface UpdateProgressPayload { stage: string; percent: number; speed: number }
-export interface UpdateDonePayload { status: string; version: string }
+export interface UpdateDonePayload { status: string; version?: string; error?: string }
 export interface DockerCleanupPayload { stage: string; resource: string; action: string }
 export interface DockerOrphanFoundPayload { resources: unknown[] }
-export interface DockerStateDriftPayload { expected: unknown; actual: unknown }
+// error 是启动校准失败这一路的实际载荷（internal/app/di.go）：拿不到比对值只有一个 error 字符串，
+// 协议表里的 expected / actual 此时缺席，故两者皆为可选。
+export interface DockerStateDriftPayload { expected?: unknown; actual?: unknown; error?: string }
 export interface CacheHitPayload { kind: string; version: string; source: string; size: number }
 export interface CacheMissPayload { kind: string; version: string; action: string }
 export interface CachePromotePayload { kind: string; version: string; entries: unknown[] }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // TaskDrawer：任务实时反馈抽屉（T109 + Q6 + §5.6.1）。
-// 展开后左右两栏：**左栏日志占 70%**（当前选中任务的逐行日志 / 进度 / 失败原因），
-// **右栏任务队列占 30%**（竖排列表，最新提交永远在最上面，每行给出明确显示态）。
+// 展开后左右两栏：**左栏日志默认占 70%**（当前选中任务的逐行日志 / 进度 / 失败原因），
+// **右栏任务队列默认占 30%**（竖排列表，最新提交永远在最上面，每行给出明确显示态）。
+// 两栏之间中缝可左右拖拽改占比（需求 4），双击复位 70%／30%；偏好仅存 localStorage（§3.1 原则 5）。
 // 队列详情、日志、进度、终态与失败原因全部来自后端权威快照与 task:* 事件（硬红线 4：仅回放展示，前端不造状态）。
 import { computed, nextTick, ref, watch } from 'vue'
 import { DISPLAY_LABEL, useTaskStore } from '@/stores/taskStore'
@@ -18,6 +19,7 @@ const layout = useLayoutStore()
 const { t } = useI18n()
 
 const logRef = ref<HTMLElement | null>(null)
+const bodyRef = ref<HTMLElement | null>(null)
 
 const task = computed(() => store.task)
 const lines = computed(() => store.visibleLines)
@@ -28,7 +30,8 @@ const progress = computed(() => store.progress)
 // errorText：失败原因（终态 failed 时由 err 日志收口；成功/取消不显示）
 const errorText = computed(() => (task.value?.status === 'failed' ? task.value.error || '' : ''))
 
-const labelText = computed(() => task.value?.label || t('task.none'))
+// 需求 5：抽屉头部左侧标签固定为「服务」，不再随选中任务变化——任务名在右栏队列每行给出，
+// 头部只作区块标题，避免日志/队列切换时标题跳动。
 // cmdText：等效命令仅在「本次会话由前端提交、且后端任务标签与提交标签一致」时可得；
 // 后端自发起的任务（如校准、重发布 nginx）没有等效命令，留空而不是渲染一个孤零零的 "phpo"。
 const cmdText = computed(() => {
@@ -96,6 +99,26 @@ function onResizerDown(e: PointerEvent): void {
   window.addEventListener('pointerup', onUp)
 }
 
+// onSplitterDown：需求 4——日志／队列两栏除默认 70%／30% 外可左右拖拽。
+// 按 .drawer-body 实际矩形算百分比：占比与像素缩放无关，故不需要 zoom 补偿。
+function onSplitterDown(e: PointerEvent): void {
+  if (!store.expanded) return
+  e.preventDefault()
+  const el = bodyRef.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  if (rect.width <= 0) return
+  const onMove = (ev: PointerEvent) => {
+    layout.setSplit(Math.round(((ev.clientX - rect.left) / rect.width) * 100))
+  }
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+  }
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
+
 // copyLog：复制当前可见日志正文；无任务时提示暂无日志
 async function copyLog(): Promise<void> {
   if (!task.value) {
@@ -131,7 +154,7 @@ async function onWithdraw(id: string): Promise<void> {
     <header class="drawer-head">
       <div class="drawer-left">
         <span :class="dotClass"></span>
-        <span class="drawer-label">{{ labelText }}</span>
+        <span class="drawer-label">{{ t('nav.services') }}</span>
         <span
           v-if="cmdText"
           class="drawer-cmd"
@@ -168,16 +191,17 @@ async function onWithdraw(id: string): Promise<void> {
         </button>
       </div>
     </header>
-    <!-- §5.6.1：展开体两栏——左 70% 日志、右 30% 任务队列（竖排、最新在顶） -->
-    <div class="drawer-body">
+    <!-- §5.6.1：展开体两栏——左默认 70% 日志、右默认 30% 任务队列（竖排、最新在顶）；中缝可左右拖拽（需求 4） -->
+    <div ref="bodyRef" class="drawer-body">
       <div class="drawer-main">
         <div v-if="progress" class="drawer-progress"><div class="drawer-progress-bar" :style="{ width: progress.percent + '%' }"></div></div>
         <div v-if="errorText" class="drawer-error">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>
           <span class="drawer-error-text" :title="errorText">{{ t('task.reason') }}: {{ errorText }}</span>
         </div>
-        <pre ref="logRef" class="drawer-log"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ l.s || ' ' }}</div><div v-if="!lines.length" class="log-line dim">{{ task ? t('task.noLog') : t('task.none') }}</div></pre>
+        <pre ref="logRef" class="drawer-log"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ l.s || ' ' }}</div><div v-if="!lines.length" class="log-line dim">{{ task ? t('task.noLog') : t('task.sysEmpty') }}</div></pre>
       </div>
+      <div class="drawer-splitter" :title="t('drawer.splitTitle')" @pointerdown="onSplitterDown" @dblclick="layout.setSplit(70)"></div>
       <aside class="drawer-queue">
         <div class="dq-head">
           <span class="dq-title">{{ t('task.queue') }}</span>

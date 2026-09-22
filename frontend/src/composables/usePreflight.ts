@@ -1,5 +1,5 @@
 // usePreflight：preflight() 的前端镜像（§0.2 #14：UI 即时反馈；最终裁决在 internal/preflight/）
-// 逐字迁移原型 PF 文案 + validateVersion/Port/Domain/SiteRoot/Ext + preflight(action,ctx) 17 action。
+// 逐字迁移原型 PF 文案 + validateVersion/Port/Domain/SiteRoot/Ext + preflight(action, ctx) 19 action。
 import { useAppState } from '@/stores/appState'
 import { useCacheStore } from '@/stores/cacheStore'
 import { hasBackend } from '@/api/site'
@@ -33,6 +33,9 @@ const PF = {
   configEmpty: '配置内容不能为空',
   nginxNeeded: '请先安装 Nginx',
   phpNeeded: '请先安装一个 PHP 版本',
+  fileMissing: '待导入的文件不存在',
+  extTypeInvalid: '缓存文件类型只能是 image / apk / pecl',
+  dataDirPending: '正在运行，数据目录要重建容器后才生效',
 }
 
 export interface PreflightResult {
@@ -75,11 +78,12 @@ function hasTraversal(p: string): boolean {
   return /(^|\/)\.\.(\/|$)/.test(String(p || ''))
 }
 
-// NEEDS_HOME：15 个动作（§0.3）
+// NEEDS_HOME：17 个动作（后端 preflight.needsHome 镜像；root-set 写 config.yaml、cache-import 写缓存根，两根未就绪即拒绝）
 const NEEDS_HOME = new Set([
   'install', 'uninstall', 'service-stop', 'service-start', 'update-config',
   'site-add', 'site-remove', 'site-port', 'site-vhost', 'rewrite',
   'extensions', 'service-config', 'backup', 'restore', 'offline-prune',
+  'root-set', 'cache-import',
 ])
 
 interface ValResult { ok: boolean; msg?: string; value?: string | number; outsideWww?: boolean }
@@ -340,6 +344,32 @@ export function usePreflight() {
           ? cache.entries.some((e) => e.kind === c.svc && e.version === c.ver)
           : app.offline.trees.some((x) => x.svc === c.svc && x.ver === c.ver)
         if (!hit) errors.push(`${PF.offlineMissing}: ${c.svc}/${c.ver}`)
+        break
+      }
+      // root-set：自定义缓存根 / 备份根 / 每服务版本数据目录（需求 1/2/7/8）。与后端 rules_root.go 同判据：
+      // 唯一限制是路径安全，空串合法（= 清除自定义、回落默认根）；数据目录才校 kind/version。
+      case 'root-set': {
+        const { field, kind, version, newValue } = c
+        if (field === 'data_dir') {
+          if (!SVC_META[kind as ServiceKind]) { errors.push(PF.svcMissing); break }
+          const vv = validateVersion(version)
+          if (!vv.ok) { errors.push(vv.msg!); break }
+          if (app.isServiceRunning(kind, version)) warnings.push(`${kind} ${version} ${PF.dataDirPending}`)
+        }
+        const p = normPath(String(newValue ?? ''))
+        if (p && (hasTraversal(p) || p.includes('\0'))) errors.push(PF.pathTraversal)
+        break
+      }
+      // cache-import：手工导入任意文件为缓存条目（需求 1）。源文件是否存在由后端导入步骤给人话报错，
+      // UI 这层只拦「没选文件」这一必然失败的输入，不去猜文件系统状态。
+      case 'cache-import': {
+        const { kind, version, field, newValue } = c
+        if (!SVC_META[kind as ServiceKind]) { errors.push(PF.svcMissing); break }
+        const vv = validateVersion(version)
+        if (!vv.ok) { errors.push(vv.msg!); break }
+        if (field !== 'image' && field !== 'apk' && field !== 'pecl') errors.push(`${PF.extTypeInvalid}，得 ${field}`)
+        else if ((field === 'apk' || field === 'pecl') && kind !== 'php') errors.push(`${field} 扩展只能导入到 php 缓存`)
+        if (!String(newValue ?? '').trim()) errors.push(PF.fileMissing)
         break
       }
     }

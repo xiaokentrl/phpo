@@ -10,7 +10,8 @@ import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
 import { syncState } from '@/composables/useStateSync'
 import { hasBackend } from '@/api/site'
-import { envKeyPort, setPort } from '@/api/env'
+import { Dialogs } from '@wailsio/runtime'
+import { dataDirOf, defaultDataDir, envKeyPort, setPort, setServiceDataDir } from '@/api/env'
 import PasswordField from '@/components/common/PasswordField.vue'
 import { DIR_ROWS, DEFAULT_FILE_COUNT, SVC_META } from '@/constants/service'
 import type { ServiceKind, TaskBrief } from '@/types'
@@ -35,6 +36,8 @@ function portValue(version: string): string {
   return String(state.env[key] || meta.value.defaultPort || '')
 }
 function dirPath(version: string, sub: string): string {
+  // 数据目录可整体自定义（需求 7）：自定义即唯一生效路径，未自定义才随服务根派生
+  if (sub === 'data') return dataDirOf(props.kind, version)
   return `${verRoot(state.env, props.kind, version)}/${sub}`
 }
 function extCount(version: string): number {
@@ -98,6 +101,66 @@ async function commitPort(version: string): Promise<void> {
   } finally {
     portSaving.value = ''
   }
+}
+
+// 数据目录行内编辑（需求 7）：编辑 + 浏览两条入口都指向同一个落库动作（config.yaml → Rebind → 快照回流）。
+// 自定义与默认互斥且只有一个生效：填回默认路径等于清除自定义，「恢复默认」走同一条写链路。
+const dirEditing = ref('')
+const dirDraft = ref('')
+const dirSaving = ref('')
+
+function isCustomDataDir(version: string): boolean {
+  return dataDirOf(props.kind, version) !== defaultDataDir(props.kind, version)
+}
+
+function startEditDir(version: string): void {
+  dirDraft.value = dataDirOf(props.kind, version)
+  dirEditing.value = version
+}
+
+function cancelDir(): void {
+  dirEditing.value = ''
+}
+
+// commitDir preflight → 落库 → 权威快照回显；数据目录进容器 binds，故必须重建容器才挂到新目录
+async function commitDir(version: string, nextArg?: string): Promise<void> {
+  if (dirSaving.value) return
+  const raw = (nextArg ?? dirDraft.value).trim().replace(/\/+$/, '')
+  dirEditing.value = ''
+  const custom = isCustomDataDir(version) ? dataDirOf(props.kind, version) : ''
+  // 填回默认路径 = 清除自定义（互斥唯一，不留两条数据目录）
+  const next = !raw || raw === defaultDataDir(props.kind, version) ? '' : raw
+  if (next === custom) return
+  const pf = preflight('root-set', { field: 'data_dir', kind: props.kind, version, newValue: next })
+  if (!pf.ok) {
+    toast(pf.errors.join('\n'), 'err', 4600)
+    return
+  }
+  if (pf.warnings.length) toast(pf.warnings.join('\n'), 'info', 4600)
+  dirSaving.value = version
+  try {
+    await setServiceDataDir(props.kind, version, next)
+    if (hasBackend()) await syncState()
+    toast(next
+      ? t('svc.dataDirSet', { kind: props.kind, version, path: next })
+      : t('svc.dataDirReset', { kind: props.kind, version }), 'info', 5600)
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  } finally {
+    dirSaving.value = ''
+  }
+}
+
+// browseDir 原生目录选择器：选中即提交，不经过行内输入框（避免点按钮触发的 blur 先落一次旧值）
+async function browseDir(version: string): Promise<void> {
+  const picked = await Dialogs.OpenFile({
+    Title: t('svc.dataDirBrowse'),
+    CanChooseDirectories: true,
+    CanChooseFiles: false,
+    Directory: dataDirOf(props.kind, version) || undefined,
+  })
+  const abs = String(picked || '').replace(/\/+$/, '')
+  if (abs) await commitDir(version, abs)
 }
 </script>
 
@@ -172,7 +235,40 @@ async function commitPort(version: string): Promise<void> {
 
           <div v-for="[sub, labelKey] in DIR_ROWS[kind]" :key="sub" class="kv">
             <span class="k">{{ t(labelKey) }}</span>
-            <span class="v" :title="dirPath(version, sub)">{{ dirPath(version, sub) }}</span>
+            <template v-if="sub === 'data'">
+              <span
+                class="v inline-edit"
+                :class="{ editing: dirEditing === version, saving: dirSaving === version }"
+                data-inline="data-dir"
+                :data-kind="kind"
+                :data-version="version"
+                tabindex="0"
+                :title="t('svc.dataDirEdit')"
+                @click="dirEditing !== version && startEditDir(version)"
+                @keydown.enter="dirEditing !== version && startEditDir(version)"
+              >
+                <input
+                  v-if="dirEditing === version"
+                  v-model="dirDraft"
+                  class="port-input"
+                  type="text"
+                  spellcheck="false"
+                  autocomplete="off"
+                  autofocus
+                  :placeholder="defaultDataDir(kind, version)"
+                  @keydown.enter.prevent="commitDir(version)"
+                  @keydown.esc.prevent="cancelDir"
+                  @blur="commitDir(version)"
+                >
+                <template v-else>{{ dirPath(version, sub) }}</template>
+              </span>
+              <button v-if="hasBackend()" class="btn btn-sm" type="button" data-action="browse-data-dir" :data-kind="kind" :data-version="version" :title="t('svc.dataDirBrowse')" @click="browseDir(version)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                {{ t('dir.browse') }}
+              </button>
+              <span v-if="isCustomDataDir(version)" class="chip chip-accent">{{ t('root.custom') }}</span>
+            </template>
+            <span v-else class="v" :title="dirPath(version, sub)">{{ dirPath(version, sub) }}</span>
           </div>
 
           <div v-if="kind === 'php' || kind === 'nginx'" class="kv">

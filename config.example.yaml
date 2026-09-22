@@ -4,17 +4,23 @@
 #   Windows %APPDATA%\phpo\config.yaml
 # 此处仅作格式参考与开发者本地覆盖；phpo 不读取仓库内本文件。
 
-# 目录根：数据根与站点根；`~` 在展示层解析。派生子目录（php/nginx/…/offline）由程序现算，不写进本文件。
-phpo_home: ~/phpo   # PHPO_HOME：服务配置/日志/离线缓存的数据根，默认 ~/phpo
+# 目录根：数据根与站点根；`~` 在展示层解析。派生子目录（php/nginx/…）由程序现算，不写进本文件。
+phpo_home: ~/phpo   # PHPO_HOME：服务配置/日志的数据根，默认 ~/phpo
 www_root: ~/www     # WWW_ROOT：站点根目录，默认 ~/www
+
+# 可自定义根（总纲 §5.15）：置空或不写即回落默认；同一类路径永远只有一个生效值（自定义与默认互斥）
+offline_root: ""    # 离线缓存根，默认 {phpo_home}/offline
+backup_root: ""     # 备份归档根，默认 {phpo_home}/backups
 
 # 每服务版本的可配置项（按需出现；未列出的版本回落注册表默认端口与默认密码）
 # 密码策略：明文、默认 123456、可为空、长度不校验（总纲 §1.5）。
+# data_dir 同样互斥：写了即用该目录，未写回落默认 {phpo_home}/{kind}/{version}/data。
 services:
   mysql:
     "8.4":
       password: "123456"
       port: 3306
+      data_dir: /srv/mysql-data   # 可选：自定义该版本的数据存放路径
   pgsql:
     "17":
       password: ""        # 空密码合法

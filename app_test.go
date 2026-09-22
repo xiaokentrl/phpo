@@ -282,7 +282,7 @@ func TestGateDirReadyBlocksNeedsHome(t *testing.T) {
 	}
 }
 
-// actionConsts 17 个 action → app.go 门面里的裁决常量名（对账：漏接一个即失败）
+// actionConsts 19 个 action → app.go 门面里的裁决常量名（对账：漏接一个即失败）
 var actionConsts = map[string]string{
 	"install":        "ActInstall",
 	"uninstall":      "ActUninstall",
@@ -301,6 +301,8 @@ var actionConsts = map[string]string{
 	"restore":        "ActRestore",
 	"backup-delete":  "ActBackupDelete",
 	"offline-prune":  "ActOfflinePrune",
+	"root-set":       "ActRootSet",
+	"cache-import":   "ActCacheImport",
 }
 
 // TestGateEveryActionWiredInFacade 每个 action 都必须在 App 门面里真跑一次后端裁决；

@@ -1,9 +1,11 @@
 // useCache（T606 / §5.14.10-11）：离线缓存的前端接线层。
-// 订阅 6 个 cache:* 事件落地 cacheStore（硬红线 4：状态只来自后端）；提供统计/全部校验/清理/删除/清临时动作。
+// 订阅 6 个 cache:* 事件：命中/未命中写 marks 供徽标，提升/损坏/清理静默补刷权威列表
+//（需求 6：界面随事件实时回流；硬红线 4：状态只来自后端读接口，前端不乐观更新）。
+// 事件的逐行实时反馈统一进任务抽屉（taskStore.eventLine），本视图不再另立流水面板（需求 3）。
 // 写操作（清理/删除）为破坏性且涉缓存，须由调用方先经 DangerConfirm 二次确认（§5.14.13 / 规则 20）后再触发。
-import { EVENT, onEvent, type CacheHitPayload, type CacheMissPayload, type CachePromotePayload, type CacheCorruptedPayload, type CacheCleanupPayload, type CacheTempdirClearedPayload } from '@/api/events'
+import { EVENT, onEvent, type CacheHitPayload, type CacheMissPayload } from '@/api/events'
 import { useCacheStore } from '@/stores/cacheStore'
-import { listEntries, stats, verifyAll as apiVerifyAll, verifyEntry as apiVerifyEntry, cleanupCache, removeEntry } from '@/api/offline'
+import { listEntries, stats, verifyAll as apiVerifyAll, verifyEntry as apiVerifyEntry, cleanupCache, removeEntry, importEntry } from '@/api/offline'
 import { toast } from '@/composables/useToast'
 import { t } from '@/composables/useI18n'
 import { humanSize } from '@/composables/useCleanup'
@@ -12,7 +14,26 @@ import type { CleanupMode, VerifyAllResult } from '@/types'
 let subscribed = false
 const offs: Array<() => void> = []
 
-// subscribeCache：注册 6 个 cache:* 事件订阅（幂等）。命中/未命中写入 marks 供 CacheHitBadge 实时标记。
+// pull 拉取权威列表 + 统计并写入 store。quiet=true 用于事件驱动的静默补刷：
+// 后台事件到达时不打扰用户，读接口失败由下一次显式刷新兜住。
+async function pull(quiet = false): Promise<boolean> {
+  const s = useCacheStore()
+  if (s.loading) return false
+  s.loading = true
+  try {
+    const [list, st] = await Promise.all([listEntries(), stats()])
+    if (list) s.setEntries(list)
+    if (st) s.setStats(st)
+    return true
+  } catch (e) {
+    if (!quiet) toast(String(e), 'err', 4600)
+    return false
+  } finally {
+    s.loading = false
+  }
+}
+
+// subscribeCache：注册 cache:* 事件订阅（幂等）。
 export function subscribeCache(): void {
   if (subscribed) return
   subscribed = true
@@ -21,30 +42,15 @@ export function subscribeCache(): void {
     onEvent(EVENT.CacheHit, (p) => {
       const e = p as CacheHitPayload
       s.recordMark(e.kind, e.version, { kind: 'hit', source: e.source, size: e.size, at: Date.now() })
-      s.pushEvent({ name: 'cache:hit', kind: e.kind, version: e.version, detail: `${e.source} · ${humanSize(e.size)}`, at: Date.now() })
     }),
     onEvent(EVENT.CacheMiss, (p) => {
       const e = p as CacheMissPayload
       s.recordMark(e.kind, e.version, { kind: 'miss', action: e.action, at: Date.now() })
-      s.pushEvent({ name: 'cache:miss', kind: e.kind, version: e.version, detail: e.action, at: Date.now() })
     }),
-    onEvent(EVENT.CachePromote, (p) => {
-      const e = p as CachePromotePayload
-      s.pushEvent({ name: 'cache:promote', kind: e.kind, version: e.version, detail: `${(e.entries ?? []).length}`, at: Date.now() })
-    }),
-    onEvent(EVENT.CacheCorrupted, (p) => {
-      const e = p as CacheCorruptedPayload
-      const name = (e.entry as { name?: string } | undefined)?.name ?? ''
-      s.pushEvent({ name: 'cache:corrupted', kind: e.kind, version: e.version, detail: name, at: Date.now() })
-    }),
-    onEvent(EVENT.CacheCleanup, (p) => {
-      const e = p as CacheCleanupPayload
-      s.pushEvent({ name: 'cache:cleanup', kind: '', version: '', detail: `${e.mode} · ${humanSize(e.freed_bytes)}`, at: Date.now() })
-    }),
-    onEvent(EVENT.CacheTempdirCleared, (p) => {
-      const e = p as CacheTempdirClearedPayload
-      s.pushEvent({ name: 'cache:tempdir-cleared', kind: '', version: '', detail: `${e.reason}`, at: Date.now() })
-    }),
+    // 提升 / 损坏 / 清理会改变条目与统计：随事件补刷权威数据，不在前端改写（硬红线 4）
+    onEvent(EVENT.CachePromote, () => void pull(true)),
+    onEvent(EVENT.CacheCorrupted, () => void pull(true)),
+    onEvent(EVENT.CacheCleanup, () => void pull(true)),
   )
 }
 
@@ -59,17 +65,7 @@ export function useCache() {
 
   // load 拉取权威列表 + 统计；打开视图与写完成后调用（无乐观更新）
   async function load(): Promise<void> {
-    if (s.loading) return
-    s.loading = true
-    try {
-      const [list, st] = await Promise.all([listEntries(), stats()])
-      if (list) s.setEntries(list)
-      if (st) s.setStats(st)
-    } catch (e) {
-      toast(String(e), 'err', 4600)
-    } finally {
-      s.loading = false
-    }
+    await pull()
   }
 
   // doVerifyAll 全量校验；检出损坏项后重拉列表（verifyOk 会变）
@@ -118,5 +114,18 @@ export function useCache() {
     }
   }
 
-  return { store: s, humanSize, load, doVerifyAll, doVerifyEntry, doCleanup, doRemove }
+  // doImport 手工导入任意文件为缓存条目（需求 1）：后端三段式任务，成功即补刷权威列表
+  async function doImport(kind: string, version: string, extType: string, srcPath: string): Promise<boolean> {
+    try {
+      await importEntry(kind, version, extType, srcPath)
+      toast(t('offline.import.done', { name: kind + '/' + version }), 'ok', 3200)
+      await load()
+      return true
+    } catch (e) {
+      toast(String(e), 'err', 4600)
+      return false
+    }
+  }
+
+  return { store: s, humanSize, load, doVerifyAll, doVerifyEntry, doCleanup, doRemove, doImport }
 }

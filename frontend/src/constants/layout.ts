@@ -2,6 +2,8 @@
 export const LAYOUT_LIMITS = {
   sidebar: { min: 64, max: 380, default: 200 },
   drawer: { min: 120, max: 600, default: 160 },
+  // split：抽屉展开体左栏（日志）占比，右栏（任务队列）取余。默认 70 即 §5.6.1 的 70%／30%
+  split: { min: 40, max: 80, default: 70 },
 } as const
 
 export const LAYOUT_PRESETS = {
@@ -28,5 +30,6 @@ export function clamp(v: number, min: number, max: number): number {
 export const LS = {
   sidebar: 'phpo-sidebar-width',
   drawer: 'phpo-drawer-height',
+  drawerSplit: 'phpo-drawer-split',
   scale: 'phpo-ui-scale',
 } as const

@@ -91,7 +91,15 @@ func ExpandHome(p string) string {
 	return filepath.Join(home, p[2:])
 }
 
-// ExpandEnvHomes 展开 Env 中 PHPO_HOME / WWW_ROOT 的 `~` 前缀并重新派生全路径
+// ExpandEnvHomes 展开 Env 中 PHPO_HOME / WWW_ROOT 的 `~` 前缀并重新派生全路径。
+// 自定义根（缓存根 / 备份根 / 数据目录）同样展开且必须随重派生保留——否则 IO 侧会把
+// `~/cache` 这类自定义根丢回默认 ./offline，等于悄悄改路径。
 func ExpandEnvHomes(e Env) Env {
-	return DerivePaths(ExpandHome(e.PHPOHome), ExpandHome(e.WWWRoot))
+	dirs := make(map[string]string, len(e.DataDirs))
+	for k, v := range e.DataDirs {
+		dirs[k] = ExpandHome(v)
+	}
+	return DerivePaths(ExpandHome(e.PHPOHome), ExpandHome(e.WWWRoot)).
+		ApplyRootOverrides(ExpandHome(e.CustomOffline), ExpandHome(e.CustomBackup)).
+		ApplyDataDirs(dirs)
 }

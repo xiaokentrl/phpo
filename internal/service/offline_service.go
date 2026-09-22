@@ -1,13 +1,16 @@
 // T606 · OfflineView 真数据化：§5.14.10 全部缓存服务层 API 的门面。
 // 组合 *cache.Manager（查找/校验/统计/提升/清理/临时目录）+ store（在用集推导）+ task/审计（缓存写操作）。
-// 缓存与 Docker/权威快照完全解耦（§5.14.13），读侧纯查询；写侧（三模式清理/单条删除）经三段式任务并落 JSON Lines 审计（§5.13.10）。
+// 缓存与 Docker/权威快照完全解耦（§5.14.13），读侧纯查询；写侧（三模式清理/单条删除/手工导入）经三段式任务并落 JSON Lines 审计（§5.13.10）。
 // 提升/清临时目录作为安装管道的组成能力对外暴露，直连 cache（其内部已发 cache:* 事件），不重复包任务。
 package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"phpo/internal/engine"
 	"phpo/internal/model"
 	"phpo/internal/task"
+	"phpo/pkg/errs"
 )
 
 // OfflineCache 缓存编排入口（*cache.Manager 满足）
@@ -28,6 +32,8 @@ type OfflineCache interface {
 	RemoveEntry(kind, version string) error
 	PromoteImage(kind, version, ref, tmpTar string) error
 	PromoteExtension(phpVersion, extType, tmpFile string) error
+	ImportImage(kind, version, ref, srcTar string) error
+	ImportExtension(phpVersion, extType, srcFile string) error
 	ClearTempDir(ctx context.Context, kind, version, reason string) error
 	LoadManifest(kind, version string) (*model.CacheManifest, error)
 }
@@ -193,6 +199,55 @@ func (s *OfflineService) RemoveCacheEntry(ctx context.Context, kind, version str
 		},
 		Apply: func() error {
 			s.auditOp("cache-remove", map[string]any{"kind": kind, "version": version})
+			return nil
+		},
+	}
+	_, err := s.tasks.Run(ctx, t)
+	return err
+}
+
+// ---- 手工导入（需求 1：读写任意缓存文件）----
+
+// ImportEntry 把手工选定的任意文件导入为一条离线缓存：
+// extType=image 落成 {kind}/{version}/image.tar（镜像引用按 kind/version 推导，与在线安装同一条目）；
+// extType=apk|pecl 落成 php/{version}/{extType}/。源文件是用户资产，只复制不搬走。
+// 走三段式任务：进度与逐行日志进抽屉，cache:promote 由缓存层当场发射。
+func (s *OfflineService) ImportEntry(ctx context.Context, kind, version, extType, srcPath string) error {
+	src := strings.TrimSpace(srcPath)
+	t := &task.Task{
+		ID:    s.newID("cache-import"),
+		Label: "导入缓存 " + kind + "/" + version + " (" + extType + ")",
+		Meta:  model.TaskMeta{Type: "cache-import"},
+		Steps: []task.Step{
+			&task.FuncStep{StepName: "读取源文件", Exec: func(_ context.Context, log task.StepLog) error {
+				st, err := os.Stat(src)
+				if err != nil || st.IsDir() {
+					return errors.New(errs.FileMissing + ": " + src)
+				}
+				log.Log(string(model.LogMeta), src+" ("+humanSize(st.Size())+")")
+				return nil
+			}},
+			&task.FuncStep{StepName: "写入缓存", Exec: func(_ context.Context, log task.StepLog) error {
+				switch extType {
+				case "apk", "pecl":
+					if err := s.cache.ImportExtension(version, extType, src); err != nil {
+						return err
+					}
+				default:
+					ref, err := engine.ImageRefFor(kind, version)
+					if err != nil {
+						return err
+					}
+					if err := s.cache.ImportImage(kind, version, ref, src); err != nil {
+						return err
+					}
+				}
+				log.Log(string(model.LogOk), "已导入 "+filepath.Base(src)+" → "+kind+"/"+version)
+				return nil
+			}},
+		},
+		Apply: func() error {
+			s.auditOp("cache-import", map[string]any{"kind": kind, "version": version, "type": extType, "src": src})
 			return nil
 		},
 	}

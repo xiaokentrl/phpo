@@ -1,27 +1,57 @@
 <script setup lang="ts">
-// Offline 视图（T606 / §5.14.7、10、11）：离线缓存真数据面板。
+// Offline 视图（T606 / §5.14.7、10、11）：离线缓存真数据面板 + 可编辑缓存根 + 手工导入（需求 1/2）。
 // 硬红线 4：条目/统计只来自后端读接口 + 6 类 cache:* 事件，前端不乐观更新；写后由 useCache 重拉列表。
 // 缓存删除不可恢复且涉离线能力（§5.14.13 / 规则 20），单条删除与批量清理均先经 DangerConfirm 二次确认。
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
-import { useAppState } from '@/stores/appState'
 import { useModalStore } from '@/stores/modalStore'
 import { useCache } from '@/composables/useCache'
+import { usePreflight } from '@/composables/usePreflight'
 import { humanSize } from '@/composables/useCleanup'
+import { toast } from '@/composables/useToast'
 import { SVC_ICON } from '@/constants/service'
-import PathInfoBar from '@/components/common/PathInfoBar.vue'
+import { defaultOfflineRoot, offlineRoot, setOfflineRoot } from '@/api/env'
+import EditablePathBar from '@/components/common/EditablePathBar.vue'
 import CacheHitBadge from '@/components/common/CacheHitBadge.vue'
 import DangerConfirm from '@/components/business/DangerConfirm.vue'
 import CacheDetailModal from '@/components/business/CacheDetailModal.vue'
 import CacheCleanupModal from '@/components/business/CacheCleanupModal.vue'
+import CacheImportModal from '@/components/business/CacheImportModal.vue'
 import type { CacheEntry } from '@/types'
 
 const { t } = useI18n()
-const state = useAppState()
 const modal = useModalStore()
+const { preflight } = usePreflight()
 const { store, load, doVerifyAll, doVerifyEntry, doRemove } = useCache()
 
 onMounted(load)
+
+const savingRoot = ref(false)
+
+// saveRoot 自定义缓存根（需求 1）：非空即互斥取代默认根，空串=恢复默认。
+// 换根后列表与统计要按新根重拉（写后补刷），不做本地乐观改写。
+async function saveRoot(root: string): Promise<void> {
+  if (savingRoot.value) return
+  const pf = preflight('root-set', { field: 'offline_root', newValue: root })
+  if (!pf.ok) {
+    toast(pf.errors.join('\n'), 'err', 4600)
+    return
+  }
+  savingRoot.value = true
+  try {
+    await setOfflineRoot(root)
+    toast(t('root.saved'), 'ok', 2600)
+    await load()
+  } catch (e) {
+    toast(String(e), 'err', 4600)
+  } finally {
+    savingRoot.value = false
+  }
+}
+
+function openImport(): void {
+  modal.open(CacheImportModal, {})
+}
 
 function fmt(ts: string): string {
   if (!ts || ts.startsWith('0001-')) return '-'
@@ -59,11 +89,20 @@ function runRemove(e: CacheEntry): void {
       <div class="header-actions">
         <button class="btn" type="button" :disabled="store.loading" @click="load()">{{ t('offline.refreshBtn') }}</button>
         <button class="btn" type="button" :disabled="store.loading" @click="doVerifyAll()">{{ t('offline.verifyAll') }}</button>
+        <button class="btn" type="button" @click="openImport()">{{ t('offline.import.btn') }}</button>
         <button class="btn btn-primary" type="button" @click="openCleanup()">{{ t('offline.cleanBtn') }}</button>
       </div>
     </header>
 
-    <PathInfoBar :label="t('offline.pathLabel')" :path="state.env.OFFLINE_ROOT + '/'" />
+    <EditablePathBar
+      :label="t('offline.pathLabel')"
+      :path="offlineRoot()"
+      :default-path="defaultOfflineRoot()"
+      :browse-title="t('offline.rootBrowse')"
+      :saving="savingRoot"
+      @save="saveRoot"
+      @reset="saveRoot('')"
+    />
 
     <div class="summary">
       <div class="summary-item"><div class="summary-num">{{ humanSize(store.stats.totalBytes) }}</div><div class="summary-label">{{ t('offline.stat.size') }}</div></div>
@@ -114,20 +153,7 @@ function runRemove(e: CacheEntry): void {
         </tbody>
       </table>
     </div>
-
-    <!-- 实时缓存事件（§5.14.11：6 类 cache:* 事件全订阅展示） -->
-    <section class="off-events">
-      <strong>{{ t('offline.events.title') }}</strong>
-      <p v-if="store.events.length === 0" class="off-empty">{{ t('offline.events.empty') }}</p>
-      <ul v-else class="off-feed">
-        <li v-for="(ev, i) in store.events" :key="i" class="off-feed-item">
-          <span class="off-feed-time">{{ new Date(ev.at).toLocaleTimeString() }}</span>
-          <span class="chip">{{ ev.name }}</span>
-          <span v-if="ev.kind" class="mono">{{ ev.kind }}{{ ev.version ? '/' + ev.version : '' }}</span>
-          <span class="off-feed-detail">{{ ev.detail }}</span>
-        </li>
-      </ul>
-    </section>
+    <!-- 需求 3：cache:* 事件不再在本视图另立流水面板——实时逐行统一进任务抽屉左栏（taskStore 系统日志通道） -->
   </div>
 </template>
 
@@ -135,11 +161,6 @@ function runRemove(e: CacheEntry): void {
 .off-empty { color: var(--text-mute); font-size: 13px; padding: 8px 0; text-align: left; }
 .off-path { font-size: 11px; color: var(--text-dim); word-break: break-all; line-height: 1.4; }
 .off-time { display: block; color: var(--text-mute); font-size: 11.5px; margin-top: 2px; }
-.off-events { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
-.off-feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; }
-.off-feed-item { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
-.off-feed-time { color: var(--text-mute); font-size: 11.5px; min-width: 78px; }
-.off-feed-detail { color: var(--text-dim); }
 .pill-ok { color: var(--ok); font-size: 11px; padding: 1px 7px; border-radius: 999px; }
 .pill-err { color: var(--danger); font-size: 11px; padding: 1px 7px; border-radius: 999px; }
 </style>

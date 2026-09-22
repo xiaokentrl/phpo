@@ -21,6 +21,10 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 	logf(log, model.LogDim, "工作目录: "+root)
 	// 版本子目录树（conf/logs/data/…，§5.13.2 隔离于 phpo 命名空间）
 	for _, sub := range config.VersionSubdirs[string(kind)] {
+		// 数据目录已自定义（需求 7）：默认的 {KIND_ROOT}/{version}/data 不再凭空建出，避免两处数据目录并存
+		if sub == "data" && env.HasCustomDataDir(string(kind), version) {
+			continue
+		}
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
 			return fmt.Errorf("创建目录失败 %s/%s: %w", root, sub, err)
 		}

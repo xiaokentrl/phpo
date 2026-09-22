@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.7
+> **文档版本**：v2.9.8
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -11,8 +11,10 @@
 > **核心原则**：以真实开发者工作流为标准；最小限制；用户是程序员；**离线优先**
 > **端口策略**：站点端口默认 80，用户可指定任意端口；**新建站点端口被占用时不顺延**——仅弹框告警并把站点降级（vhost 暂不落盘、端口暂不发布），站点照常创建；改已有站点的端口时占用才顺延 1–65535 首个可用（不报错、无窗口上限）；服务端口占用仍报错
 > **应用升级**：支持版本检查和自动升级
-> **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 每服务版本的明文密码/宿主端口；SQLite 仅存运行态，且**延迟建库**——两根工作目录写入 `config.yaml` 前不创建用户数据目录；`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」派生；不再使用 `./.env` 或 `~/.phpo/config.json`
+> **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 自定义缓存根/备份根 + 每服务版本的明文密码/宿主端口/数据目录；SQLite 仅存运行态，且**延迟建库**——两根工作目录写入 `config.yaml` 前不创建用户数据目录；`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」派生；不再使用 `./.env` 或 `~/.phpo/config.json`
+> **可自定义根**（v2.9.8 新增，见 §5.15）：离线缓存根、备份归档根、以及**每个服务版本的数据目录**皆可由用户编辑路径或浏览选定任意文件夹；三处各自**互斥唯一**——自定义一旦设定即完全取代对应默认根（`./offline/` · `./backups/` · `{KIND_ROOT}/{version}/data`），任一时刻只有一条路径生效，不并存、不做二级回退；唯一校验是路径安全（硬红线 3）
 > **路径记法**：本文件的 **`./` 一律指 PHPO_HOME 根**（即 `config.yaml` 的 `phpo_home`，由装机向导指向任意目录；`~/phpo` 只是默认值，**打包安装后不得假定工作目录在用户主目录**）。`<用户数据目录>` 仍是各平台 XDG 的 `os.UserConfigDir()/phpo`（`config.yaml` / `phpo.db` / `logs` / `trash` / `updates`），与 PHPO_HOME **不同源**；`~/www/` 是 WWW_ROOT 的默认值（同样可改）。同一记法**同等约束 `docs/` 全部文档、任务工单、代码注释与面向用户的文案（前端 locales）**——只有带「默认」字样的默认值/预填值可写字面量。详见 §0.1.1
+> **状态同步**：后端唯一权威；前端只订阅事件、不做乐观更新；**一切操作/日志/队列/请求/响应必须实时同步界面 UI 与抽屉日志**——§5.6 的 17 个事件名逐一有前端落地处（见 §5.6.2，无任务归属的事件走抽屉左栏的「系统日志通道」）
 > **密码策略**：明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看
 > **最小限制原则**：除 8 条硬红线外，所有限制放开或降级为警告
 > **Docker 清洁原则**：所有操作幂等、原子、可回滚、可清理
@@ -40,6 +42,7 @@
 **约束**：
 
 - `./` 段下的所有子路径（`offline/`、`{kind}/{version}/ext/`、`php/<ver>/conf`、`nginx/sites/`、`backups/` 等）都随 PHPO_HOME 移动，**不可在代码或文档里拼死 `~/phpo`**。
+- **`./offline/` 与 `./backups/` 是这两类根的「默认值」记法，不是它们的实际位置**（v2.9.8）：用户可把缓存根 / 备份根 / 某服务版本的数据目录自定义到任意文件夹（§5.15）。因此描述**运行时行为**时要说「缓存根（默认 `./offline/`）」而非「`./offline/` 目录」；说成后者等于断言用户没改过根。临时目录 `./{kind}/{version}/ext/` **不可自定义**，始终随 PHPO_HOME，不受此约束。
 - 描述 `config.yaml`、`phpo.db`、`logs/operations.log`、`trash/`、`updates/` 时**不得**用 `./`——它们在 `<用户数据目录>/`，不受装机向导的 PHPO_HOME 影响。
 - 历史遗留字面量 `~/.phpo/config.json` 是已废弃的旧配置路径，与本记法无关，原样保留以便识别。
 - 引用具体代码位置时保持仓库相对路径（如 `internal/cache/tempdir.go`），不加 `./` 前缀。
@@ -70,7 +73,7 @@
 19. **禁止对 Docker 留下脏状态**：任何操作前必须先清理同名/冲突资源；任何操作失败必须回滚。
 20. **禁止破坏用户数据**：卸载默认保留 volume；删除 volume 必须二次确认；回收站机制。
 21. **禁止绕过离线缓存**：
-    - **安装任何 Docker 镜像（php/mysql/pgsql/redis/nginx 等）时，必须先查 `./offline/{kind}/{version}/` 目录**；命中则 `docker load`（零网络）；未命中**先探本机 Docker 镜像库**：镜像已在本机就直接 `docker save` 提升到缓存（零网络，`cache:miss` 的 `action=local`），本机也没有才 `docker pull`（`action=pull`）。
+    - **安装任何 Docker 镜像（php/mysql/pgsql/redis/nginx 等）时，必须先到缓存根（默认 `./offline/`，用户可自定义，见 §5.15）下查 `{kind}/{version}/` 目录**；命中则 `docker load`（零网络）；未命中**先探本机 Docker 镜像库**：镜像已在本机就直接 `docker save` 提升到缓存（零网络，`cache:miss` 的 `action=local`），本机也没有才 `docker pull`（`action=pull`）。
     - **安装任何 PHP 扩展（apk/pecl）时，必须先查 `./offline/php/{version}/{apk|pecl}/` 目录**；命中则直接使用（零网络）；未命中才网络下载到临时目录。
     - **临时目录路径固定为 `./{kind}/{version}/ext/`**（如 `./php/8.4/ext/`）。
     - **未命中时下载到临时目录 → 编译/加载 → 成功后立刻把文件从临时目录提升到缓存目录 → 无论成功失败，必须清空临时目录**。
@@ -83,14 +86,21 @@
     - **不允许编译失败后保留临时目录**。
 22. **发现冲突时的处理**：立即停止执行，向用户报告冲突点，等待裁决。
 23. **遵守 §3.4 编码准则**（v2.7 新增）：编码前思考 · 简洁优先 · 精准修改 · 目标驱动执行。
+24. **禁止「同一类路径两条并存」**（v2.9.8 新增，见 §5.15）：缓存根、备份根、每服务版本的数据目录都是**互斥唯一**——用户自定义即**完全取代**对应默认根（`./offline/` · `./backups/` · `{KIND_ROOT}/{version}/data`）。不得在自定义后仍回读写默认根、不得把默认根当二级回退去探测、不得在数据目录已自定义时再凭空创建默认的那个；清空自定义值即回落默认根，同样是「一条」。**唯一校验是路径安全（硬红线 3）**，不要求绝对路径、不要求已存在、不限字符集。
+25. **禁止「事件发了界面却不动」**（v2.9.8 新增，需求 6 收口，见 §5.6.2）：§5.6 的 17 个事件名**每一个都必须有前端落地处**——要么改写 store/快照，要么逐行进任务抽屉日志；新增事件而无落地处即视为破坏本条。
 
 ### 0.3 数字权威表（Agent 引用禁止出错）
 
 | 项 | 权威值 | 来源 |
 |----|-------|------|
-| preflight action 数 | **17** | `internal/preflight/preflight.go` 的 `Run` switch-case 与 `AllActions`（`ActionCount`） |
-| NEEDS_HOME 动作数 | **15** | 同文件 `needsHome` map（`NeedsHomeCount`）；对账测试 `TestActionAndNeedsHomeCounts` |
+| preflight action 数 | **19**（原型 17 + 生产新增 `root-set` / `cache-import`） | `internal/preflight/preflight.go` 的 `Run` switch-case 与 `AllActions`（`ActionCount`） |
+| NEEDS_HOME 动作数 | **17** | 同文件 `needsHome` map（`NeedsHomeCount`）；对账测试 `TestActionAndNeedsHomeCounts` |
+| PF 校验错误码数 | **28** | `pkg/errs/codes.go`（`CodeCount`；原型 27 + 生产新增 `FileMissing`） |
 | §5.6 事件名数 | **17** | 事件协议表（冻结，不新增） |
+| 事件前端落地覆盖率 | **17/17**（`update:progress` 由升级弹窗进度条承载，不进日志） | `frontend/src/composables/useStateSync.ts` 的 `landEvent` + `eventNote`（§5.6.2） |
+| 可自定义根面数 | **3**（缓存根 · 备份根 · 每服务版本数据目录） | `config.yaml` 的 `offline_root` / `backup_root` / `services.{kind}.{ver}.data_dir`（§5.15） |
+| 抽屉两栏默认占比 | **70% ／ 30%**（可左右拖拽，夹取区间 40–80%；双击中缝复位） | `frontend/src/components/business/TaskDrawer.vue`（`.drawer-splitter`）+ `constants/layout.ts` 的 `LAYOUT_LIMITS.split` + `--drawer-split`（§5.6.1） |
+| 抽屉系统日志上限 | **200 行**（滚动裁尾） | `frontend/src/stores/taskStore.ts` 的 `SYS_MAX` |
 | 任务队列载体 | **`Snapshot.Tasks`（`TaskBoard`）** | 随 `state:changed` 推送，不新增事件名 |
 | 任务账本日志保留 | **尾部 500 行** | `internal/task/ledger.go`（`maxLedgerLines`）；写回 `operations` 表（迁移 0008 加 `task_id/label/logs`） |
 | SQLite 迁移数 | **8** | `internal/store/migrate/0001–0008.sql` |
@@ -106,7 +116,6 @@
 | UI_SCALE 档位数 | **7** | `UI_SCALE.snap` |
 | 日志行类型 | **5** | `cmd / meta / ok / dim / err` |
 | 任务状态 | **4** | `running / success / failed / cancelled` |
-| 任务抽屉左右占比 | **70% ／ 30%** | `frontend/src/components/business/TaskDrawer.vue`（§5.6.1） |
 | 队列排序 | **提交时间倒序（新任务置顶）** | §5.6.1 |
 | 原型文件规模 | **约 2500 行** | 单文件统计 |
 | 默认密码 | **`123456`** | 本项目策略 |
@@ -127,11 +136,13 @@
 | 操作审计日志 | **`<用户数据目录>/logs/operations.log`** | 见 §5.13.10 · §4.2 |
 | 幂等操作数 | **8** | 见 §5.13.4 |
 | 清理模式数 | **3** | 保守 / 标准 / 激进 |
-| 离线缓存根目录 | **`./offline/`** | 见 §5.14.2 |
-| 镜像缓存路径 | **`./offline/{kind}/{version}/image.tar`** | 见 §5.14.2 |
-| apk 缓存路径 | **`./offline/php/{version}/apk/`** | 见 §5.14.2 |
-| pecl 缓存路径 | **`./offline/php/{version}/pecl/`** | 见 §5.14.2 |
-| 临时目录路径 | **`./{kind}/{version}/ext/`** | 见 §5.14.2 |
+| 离线缓存根目录 | **默认 `./offline/`**（可自定义，见 §5.15） | 见 §5.14.2 |
+| 镜像缓存路径 | **默认 `./offline/{kind}/{version}/image.tar`** | 见 §5.14.2 |
+| apk 缓存路径 | **默认 `./offline/php/{version}/apk/`** | 见 §5.14.2 |
+| pecl 缓存路径 | **默认 `./offline/php/{version}/pecl/`** | 见 §5.14.2 |
+| 备份根目录 | **默认 `./backups/`**（可自定义，见 §5.15） | 见 §5.15 |
+| 服务数据目录 | **默认 `./{kind}/{version}/data`**（每服务版本可自定义，见 §5.15） | `config.yaml` 的 `services.{kind}.{ver}.data_dir` |
+| 临时目录路径 | **`./{kind}/{version}/ext/`**（不可自定义） | 见 §5.14.2 |
 | 缓存清单文件 | **`manifest.json`** | 每个版本一份 |
 | 缓存命中优先级 | **离线缓存 > 本机 Docker 镜像库 > 网络** | 见 §5.14.3 |
 | 临时目录生命周期 | **单任务，任务结束必清空** | 见 §5.14.4 |
@@ -208,12 +219,13 @@
 | 密码策略 | 明文；默认 `123456`；可修改；可为空；长度不校验；UI 可查看 |
 | 版本策略 | 不限制；允许任意字符串；仅做路径安全校验 |
 | PHP 切换策略 | vhost 上游精确指向 `php-{version}-fpm:9000` |
-| 状态同步 | 后端唯一权威；前端订阅事件；无本地乐观更新 |
-| 任务抽屉 | 日志左 **70%** ／ 任务队列右 **30%**；新任务永远在最上面；每行显式显示态（等待中／执行中／已完成 + 兜底位），见 §5.6.1 |
+| 状态同步 | 后端唯一权威；前端订阅事件；无本地乐观更新；**17 个事件名每一个都有前端落地处**（见 §5.6.2） |
+| 任务抽屉 | 日志左**默认 70%** ／ 任务队列右**默认 30%**（中缝可左右拖拽、双击复位，夹取 40–80%）；头部左侧标签固定为「服务」二字；新任务永远在最上面；每行显式显示态（等待中／执行中／已完成 + 兜底位）；无任务归属的 `cache:*`／`docker:*`／`update:*` 事件走**系统日志通道**逐行显示，见 §5.6.1 |
+| 可自定义根 | **缓存根 / 备份根 / 每服务版本数据目录**三处可自定义；每一类路径**永远只有一个**（自定义与默认互斥，置空即回落默认）；唯一限制是路径安全，见 §5.15 |
 | 端口策略 | 站点端口默认 80、用户可指定任意端口；新建站点占用只告警 + 降级（不改用户所填端口、不阻断建站）；改站点端口占用才顺延；服务端口占用报错 |
 | 限制策略 | 最小限制；仅 8 条硬红线；警告代替阻止 |
 | Docker 清洁策略 | 所有操作幂等、原子、可回滚、可清理 |
-| 离线缓存策略 | 装任何镜像/扩展必先查缓存；命中零网络；镜像未命中先探本机镜像库、已有即零网络重建缓存，否则下载编译；成功后提升到缓存；无论成败均清空临时目录 |
+| 离线缓存策略 | 装任何镜像/扩展必先查缓存（**在用户选定的缓存根下**，默认 `./offline/`）；命中零网络；镜像未命中先探本机镜像库、已有即零网络重建缓存，否则下载编译；成功后提升到缓存；支持**手工导入任意文件**为缓存条目；无论成败均清空临时目录 |
 
 ### 1.2 原型资产盘点
 
@@ -269,6 +281,12 @@
 ### 1.8 关于状态同步
 
 **核心原则**：后端唯一权威 + 前端订阅事件。
+
+**落地覆盖要求**（v2.9.8 补，需求 6）：状态同步不止于「快照变了界面跟着变」——**每一次操作、每一条日志、每一个队列变化、每一份请求/响应，都必须实时回流到界面 UI 与任务抽屉日志**。§5.6 的 17 个事件名每一个都必须有前端落地处（改写 store/快照，或逐行进抽屉日志），逐事件对照表见 §5.6.2；「事件发了界面却不动」即视为违反硬红线 4（§0.2 规则 25）。
+
+### 1.8.1 关于可自定义根
+
+**核心策略**（v2.9.8 新增，需求 1/2/7/8）：离线缓存根、备份根、以及**每个服务版本的数据目录**三处路径可由用户自定义（编辑输入框 + 目录选择器）。每一类路径**永远只有一个生效值**，**自定义与默认互斥**——写了自定义即用自定义，置空即回落默认；系统不得同时读写两处。唯一限制是**路径安全**（硬红线 3），此外不加绝对路径、存在性、字符集等任何限制。完整条款见 §5.15。
 
 ### 1.9 关于站点端口的说明
 
@@ -620,13 +638,13 @@
 ```
 phpo/
 ├── main.go                          # GUI 入口（embed all:frontend/dist + 注册根 Service）
-├── app.go                           # 根 Service：唯一对前端暴露的门面（64 个绑定方法）
+├── app.go                           # 根 Service：唯一对前端暴露的门面（68 个绑定方法）
 ├── app_test.go
 ├── go.mod  go.sum                   # module phpo；go 1.27
 ├── wails.json                       # Wails 配置
 ├── Taskfile.yml                     # dev / bindings / frontend:{install,build} / build / test / vet / check / package{,:linux,:windows,:darwin} / version:bump / release:local
 ├── Makefile
-├── config.example.yaml              # 配置样例：两根 + services.{kind}.{version}.{password,port}
+├── config.example.yaml              # 配置样例：两根 + 可自定义根（offline_root/backup_root）+ services.{kind}.{version}.{password,port,data_dir}
 ├── AGENTS.md                        # 本总纲
 ├── index.html                       # 原型 SSOT 镜像（由 前端唯一界面来源.txt 逐字派生，禁止手改）
 ├── 前端唯一界面来源.txt              # 单文件 HTML 原型 = 前端唯一界面来源
@@ -644,10 +662,10 @@ phpo/
 │   │
 │   ├── config/                      # 配置层
 │   │   ├── config.go
-│   │   ├── configstore.go           # 单一配置权威（YAML config.yaml：根目录 + 密码 + 端口）
+│   │   ├── configstore.go           # 单一配置权威（YAML config.yaml：两根 + 可自定义根 + 密码 + 端口 + 每版本数据目录）
 │   │   ├── userdata.go              # XDG 用户配置目录解析（config.yaml / phpo.db / logs / trash / updates）
-│   │   ├── paths.go                 # derivePaths / hostToContainer
-│   │   ├── validate.go              # 路径安全校验（§5.4 唯一保留的校验）
+│   │   ├── paths.go                 # derivePaths / ApplyRootOverrides / ApplyDataDirs / hostToContainer
+│   │   ├── validate.go              # 路径安全校验（§5.4 唯一保留的校验；ValidateRootPath 供可自定义根复用）
 │   │   ├── password.go              # 明文密码，默认 123456
 │   │   ├── versions.go              # 版本建议表（内联，仓库无 configs/versions.json）
 │   │   ├── extensions.go            # PHP 扩展元数据
@@ -681,7 +699,7 @@ phpo/
 │   │
 │   ├── cache/                       # 离线缓存核心（10 文件）
 │   │   ├── manager.go  lookup.go  manifest.go
-│   │   ├── image_cache.go  extension_cache.go  promote.go
+│   │   ├── image_cache.go  extension_cache.go  promote.go   # promote.go：提升=搬走 / 手工导入=复制（placeFile）
 │   │   ├── tempdir.go  verifier.go  # SHA256 校验直接用标准库（无 pkg/hash/）
 │   │   └── cleaner.go  stats.go
 │   │
@@ -703,12 +721,14 @@ phpo/
 │   │       └── elevate_linux.go  elevate_darwin.go  elevate_windows.go
 │   │
 │   ├── preflight/                   # 唯一裁决层（§0.2-14）
-│   │   ├── preflight.go             # Run 的 17-case switch + AllActions / needsHome 集合
+│   │   ├── preflight.go             # Run 的 19-case switch + AllActions / needsHome 集合
 │   │   ├── validators.go            # 域名 / 版本 / 路径 / 端口校验
 │   │   ├── rules_service.go  rules_site.go
-│   │   └── rules_ops.go  rules_cache.go
+│   │   ├── rules_ops.go  rules_cache.go
+│   │   └── rules_root.go            # root-set：自定义缓存根 / 备份根 / 每服务版本数据目录（§5.15，仅路径安全）
 │   │       # 占用判定内联复用 store.CollectUsedPorts（无独立 portprobe.go）
 │   │       # 清理规则在 cleanup_service 侧（无 rules_cleanup.go）
+│   │       # cache-import 规则在 rules_cache.go（手工导入任意文件为缓存条目）
 │   │
 │   ├── task/                        # 三段式任务引擎（硬红线 5）
 │   │   ├── manager.go               # 串行 FIFO 队列 + ErrBusy / ErrQueued + Cancel / CancelQueued
@@ -778,13 +798,13 @@ phpo/
 │       │   ├── OfflineView.vue  SettingsView.vue  OverviewView.vue  CleanupView.vue
 │       │   └── ServiceView.vue
 │       ├── components/
-│       │   ├── common/              # 7：ModalShell / ModalRoot / ToastHost / PasswordField
-│       │   │                        #   MountList / PathInfoBar / CacheHitBadge
-│       │   └── business/            # 18：SiteAddModal / SiteConfigModal / RewriteModal / InstallModal
+│       │   ├── common/              # 8：ModalShell / ModalRoot / ToastHost / PasswordField
+│       │   │                        #   MountList / PathInfoBar / CacheHitBadge / EditablePathBar
+│       │   └── business/            # 19：SiteAddModal / SiteConfigModal / RewriteModal / InstallModal
 │       │                            #   ConfigModal / PhpExtensionsModal / TaskDrawer / CmdPalette
 │       │                            #   DangerConfirm / HomeSetupWizard / DockerGate / AppTrayMenu
 │       │                            #   ThemePickerModal / UpdateModal / CleanupModal / TrashViewer
-│       │                            #   CacheDetailModal / CacheCleanupModal（备份与改端口无独立模态）
+│       │                            #   CacheDetailModal / CacheCleanupModal / CacheImportModal（备份与改端口无独立模态）
 │       ├── composables/             # 15：usePreflight / useTask / useStateSync / usePhpSwitch
 │       │                            #   usePortSuggest / useCache / useCleanup / useUpdater / useI18n
 │       │                            #   useModals / useCmdPalette / useDockerPreflight / useToast
@@ -827,7 +847,7 @@ phpo/
 │       ├── m5_mysql_live_test.go  m5_pgsql_live_test.go
 │       ├── m5_redis_live_test.go  m5_wordpress_live_test.go
 │       └── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
-│       # 单元测试与包同目录（60 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       # 单元测试与包同目录（77 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -848,7 +868,7 @@ phpo/
 ```
 <用户数据目录>/                         # = os.UserConfigDir()/phpo（见 internal/config/userdata.go）；不受装机向导影响
 │                                       # Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
-├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + services.{kind}.{version}.{password,port}；0600
+├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + offline_root? + backup_root? + services.{kind}.{version}.{password,port,data_dir?}；0600
 ├── phpo.db                           # SQLite，仅存运行态（installed / running / sites / php_extensions / trash / operations（含任务账本 task_id/label/logs） / offline / cache_manifest）；**延迟建库**：装机向导把两根目录写入 config.yaml 后才创建
 ├── logs/
 │   └── operations.log                # 操作审计（JSON Lines，§5.13.10）
@@ -869,8 +889,8 @@ phpo/
 ├── mysql/<ver>/{conf,data,logs,initdb}
 ├── pgsql/<ver>/{conf,data,logs,initdb}
 ├── redis/<ver>/{conf,data,logs}
-├── backups/backup-*.tar.gz
-└── offline/                          # 离线缓存根目录（持久）
+├── backups/backup-*.tar.gz           # 备份根（默认位置；config.yaml 的 backup_root 可改到任意目录，见 §5.15）
+└── offline/                          # 离线缓存根目录（持久；默认位置，config.yaml 的 offline_root 可改，见 §5.15）
     ├── php/
     │   └── 8.4/
     │       ├── image.tar
@@ -940,10 +960,10 @@ phpo/
 | `task:done` | `{ id, status, duration }` | 任务结束 |
 | `update:available` | `{ version, changelog, size }` | 发现新版本 |
 | `update:progress` | `{ stage, percent, speed }` | 升级进度 |
-| `update:done` | `{ status, version }` | 升级完成 |
+| `update:done` | `{ status, version }`；启动期回滚探测失败时为 `{ status:"failed", error }` | 升级完成 |
 | `docker:cleanup` | `{ stage, resource, action }` | 清理进度 |
 | `docker:orphan-found` | `{ resources: []Resource }` | 发现孤儿资源 |
-| `docker:state-drift` | `{ expected, actual }` | 状态漂移 |
+| `docker:state-drift` | `{ expected, actual }`；启动校准取不到比对值时退化为 `{ error }` | 状态漂移 |
 | `cache:hit` | `{ kind, version, source, size }` | 命中缓存 |
 | `cache:miss` | `{ kind, version, action }`（`action`：镜像 `local`=用本机已有镜像重建缓存（零网络）/ `pull`=联网拉取；扩展 `download`） | 未命中缓存 |
 | `cache:promote` | `{ kind, version, entries }` | 提升到缓存 |
@@ -951,22 +971,32 @@ phpo/
 | `cache:cleanup` | `{ mode, freed_bytes }` | 缓存清理完成 |
 | `cache:tempdir-cleared` | `{ path, reason }` | 临时目录已清空 |
 
-**事件名冻结为上表 17 个**；队列与进度不新增事件名，按下述三条承载：
+**事件名冻结为上表 17 个**；队列与进度不新增事件名，按下述四条承载：
 
 1. **队列详情走快照**：`Snapshot.Tasks`（`model.TaskBoard{ Running *TaskBrief, Pending []TaskBrief }`）随 `state:changed` 实时推送——`Running` 是当前任务（含 `step / total` 进度），`Pending` 是其后的 FIFO 排队项。任务状态仍为 **4** 个，运行中 / 排队中由所在分区表达，不设第 5 态（前端抽屉的「等待中 / 执行中 / 已完成」是这一分区与终态的**派生显示态**，不是第 5 个状态，见 §5.6.1）。
 2. **实时日志与进度走 `task:*` 事件**：`task:log` 逐行输出（5 种 level），`task:progress` 变更步骤，`task:done` 收尾。`duration` 是 Go `time.Duration`，JSON 序列化为**纳秒**，前端须自行换算单位。
 3. **历史与失败原因走账本**：任务退出时由 `internal/task/ledger.go` 把终态连同等效日志写回 `operations` 表（迁移 `0008` 加 `task_id / label / logs` 三列，日志取尾部 500 行）。落账失败**不改变**任务成败判定；失败原因取最后一条 `err` 级 `task:log`，并在 `operations.error` / `operations.logs` 留档。
+4. **无任务归属的协议事件走「系统日志通道」**（v2.9.8 新增，需求 3/6）：`cache:*`、`docker:*`、`update:available`、`update:done` 这一类**由后端某处直接发射、不必然属于某个任务**的事件（doctor 离线校验、手动清理缓存、启动校准、启动回滚探测…），前端仍要**逐行**落到抽屉左栏：有运行中任务时归属该任务（串行队列 ⇒ 归属唯一），无运行任务时落入 `taskStore.sysLines` 这条独立的滚动流水（上限 **200 行**，超出裁尾）。落地入口是 `taskStore.eventLine(level, text)` 一处，`useStateSync.eventNote` 是唯一调用方。
+   - **不得**为这类事件凭空创建任务记录、任务状态或第 5 个显示态（硬红线 4）；系统日志通道不是任务账本，不落 `operations` 表。
+   - `update:progress` **不进日志**——它是连续量，会淹没流水，已由升级弹窗进度条实时承载。
+   - 抽屉左栏在「无选中任务」时显示这条通道（空态文案 `task.sysEmpty`）；一旦选中某任务即回到该任务的日志。
+   - **`docker:state-drift` 额外触发一次 `syncState()`**：漂移即「Docker 实际状态 ≢ 库里状态」，界面必须跟着校准结果回流，不能只打一行日志。
 
 `task.Manager` 串行执行：嵌套提交返回 `ErrBusy`，重复标签返回 `ErrQueued`，排队项可经 `CancelQueued(id)` 撤回。preflight **不再持有「已有任务在跑」的全局守卫**——并发写操作按 FIFO 排队，不作校验错误。
 
-#### 5.6.1 任务抽屉：日志 70% ／ 队列 30%（v2.9.7 新增）
+#### 5.6.1 任务抽屉：日志默认 70% ／ 队列默认 30%（v2.9.7 新增；v2.9.8 补可拖拽、头部口径、系统日志通道）
 
-抽屉（`frontend/src/components/business/TaskDrawer.vue`）展开后是**左右两栏**，占比固定：
+抽屉（`frontend/src/components/business/TaskDrawer.vue`）展开后是**左右两栏**：
 
-| 区域 | 占比 | 内容 |
+| 区域 | 默认占比 | 内容 |
 |------|------|------|
-| 左栏 `.drawer-log` | **70%** | 当前选中任务的逐行日志（`task:log`）、步骤进度、失败原因 |
-| 右栏 `.drawer-queue` | **30%** | 任务队列列表（竖排、可滚动）：状态点 · 标签 · `step/total` · **显示态文字** · 撤回按钮 |
+| 左栏 `.drawer-main`（内含 `.drawer-log`） | **70%** | 当前选中任务的逐行日志（`task:log`）、步骤进度、失败原因；**无选中任务时显示系统日志通道**（见下） |
+| 中缝 `.drawer-splitter` | 7px（负 margin 借位，不改变占比） | 左右拖拽调宽：`pointerdown` 起拖、按 `drawer-body` 宽度换算百分比 |
+| 右栏 `.drawer-queue` | 余下 **30%** | 任务队列列表（竖排、可滚动）：状态点 · 标签 · `step/total` · **显示态文字** · 撤回按钮 |
+
+**占比是默认值，不是固定值**（需求 4）：拖拽区间 **40–80%**（`LAYOUT_LIMITS.split`），**双击中缝复位到 70%**。选定值写 `localStorage`（键 `phpo-drawer-split`，`layoutStore.setSplit` 负责夹取），并以 CSS 变量 `--drawer-split` 下发；抽屉高度仍可沿用既有 `.drawer-resizer` 拖拽（双击复位 160px）。**不得**把拖拽结果当后端状态落库——它是 UI 偏好（§3.1 原则 5）。
+
+**头部（`.drawer-head`）左侧标签固定显示「服务」二字**（需求 5）：该标签取 `t('nav.services')`，**不得**替换成任务名、状态文案或任何其他内容；同一 `.drawer-left` 内的等效命令展示、进度/状态/按钮区照旧（本条只约束那个标签的文字）。
 
 **排序：新任务永远在最上面。** 列表按**提交（入队）时间倒序**排列，最新一条置顶；正在执行的任务不因「开始执行」而移动，行位只随提交先后决定。
 
@@ -984,6 +1014,41 @@ phpo/
 **扩展约束**：新增显示态只允许改前端这一张映射表（`taskStore.ts` 的单一 `displayOf` 出口）；**不得**把新态写进后端 `model.TaskStatus`（冻结为 4 个）。兜底位存在即是「提前预留」——后端将来多一种终态，界面最坏显示「状态未知」而不是消失或误报。
 
 **即时同步**：任务一经入队即出现在列表，不等它取得执行权。后端 `SetQueueWatcher`（`internal/app/di.go`）在**入队 / 移交 / 撤回**时重发权威快照，前端 `syncBoard` 为 `Running` **和每一个 `Pending` 项**都建立/更新记录（排队项无日志，左栏给空态提示）。撤回成功后该行随下一次快照消失；若被撤回项正被选中，选中项在同一次快照里回落到运行中任务，**不留「状态未知」的幽灵详情**。全程**不做本地乐观插入、不推断终态**（硬红线 4）。
+
+#### 5.6.2 全局实时同步落地表（v2.9.8 新增，需求 6）
+
+「实时同步」在本项目是**可核对的清单**，不是口号。§5.6 的 17 个事件名逐个给出唯一落地处；新增事件而无落地处即违反 §0.2 规则 25。前端唯一分发点是 `useStateSync.ts`：先 `landEvent`（改 store / 快照），再 `eventNote`（进抽屉日志）。
+
+| 事件名 | 落地到 store / 快照 | 进抽屉日志 | 备注 |
+|--------|--------------------|-----------|------|
+| `state:changed` | `appState.applySnapshot` + `taskStore.syncBoard` | — | 权威快照；日志已由 `task:*` 逐行给出，不重复 |
+| `service:changed` | `appState` 服务运行态 | — | 随快照回流；行内状态点即时更新 |
+| `task:log` | `taskStore` 该任务日志 | ✅ 该任务左栏逐行 | 5 种 level |
+| `task:progress` | `taskStore` `step/total` | — | 进度条 + `step/total` chip 即时显示 |
+| `task:done` | `taskStore` 终态 | ✅ 收尾行 | 决定「已完成／失败／已取消」显示态 |
+| `update:available` | `updaterStore` | ✅ `meta` 行 | 版本 + 体积（`humanSize` 换算） |
+| `update:progress` | `updaterStore` 进度 | ❌ **不进日志** | 连续量会淹没流水；由升级弹窗进度条承载 |
+| `update:done` | `updaterStore` | ✅ `ok`／`err`／`dim` 行 | 按 `status` 选 level；`error` 或缺席的 `version` 作为 detail 兜底 |
+| `docker:cleanup` | — | ✅ `dim` 行 | `stage · resource · action` |
+| `docker:orphan-found` | — | ✅ `meta` 行 | 只落**计数**；不触发 rescan、不回填 `cleanupStore`（载荷是 `unknown[]`，无法无损映射成 `OrphanReport`） |
+| `docker:state-drift` | ✅ **额外 `syncState()`** | ✅ `meta` 行 | 比对值缺席时退化为 `error` 文本 |
+| `cache:hit` | `cacheStore`（经 `useCache` 重拉） | ✅ | 命中零网络的证据 |
+| `cache:miss` | 同上 | ✅ | `action=local` 显示「本机重建」，`pull`/`download` 显示「走网络」 |
+| `cache:promote` | 同上 | ✅ | 手工导入（§5.14.9a）同样发此事件 |
+| `cache:corrupted` | 同上 | ✅ | SHA256 校验失败回退网络 |
+| `cache:cleanup` | 同上 | ✅ | 三模式清理结果 + 释放体积 |
+| `cache:tempdir-cleared` | — | ✅ | 路径 + 原因 |
+
+**除事件外的实时回流要求**（同一条需求的其余部分）：
+
+| 对象 | 实时同步要求 |
+|------|-------------|
+| 写操作（请求/响应） | 所有 `api/*` 写调用必须 `await` 后端并在其后触发 `syncState()`；UI 的回显只随 `state:changed` 快照落地，**不做本地乐观更新**（硬红线 4） |
+| 非快照数据 | 缓存条目、审计列表这类不进快照的数据，写后由对应 store 主动重拉（`useCache.pull` / `cacheStore`），不得停留在旧值 |
+| 队列 | 入队 / 移交 / 撤回三处由 `SetQueueWatcher` 重发快照，前端不为排队项造占位态 |
+| 目录选择/根路径变更 | `root-set` 落 `config.yaml` → 装配层 `Rebind` → `GetState` → `state:changed`；界面路径条回显来自快照 `env`，**不回填本地输入框**（§5.15） |
+| 失败路径 | 任务失败同样要回流：终态 + 失败原因行 + 账本，不得静默（§5.13.9 每任务后校准） |
+
 
 ### 5.7 doctor 环境诊断
 
@@ -1119,9 +1184,9 @@ CI 无人值守支持。
 
 #### 5.14.2 目录结构
 
-**离线缓存根目录**：`./offline/`（**持久**）
+**离线缓存根目录**：**默认 `./offline/`**（**持久**）；用户可自定义到任意路径，见 §5.15。**本节与下文的 `./offline/` 一律读作「当前生效的缓存根」**——`config.yaml` 的 `offline_root` 一旦写入，下列所有子路径都改挂到该自定义根之下，`./offline/` 即不再参与读写（互斥唯一，不会两处并存）。
 
-**临时目录**：`./{kind}/{version}/ext/`（**单任务，任务结束即清空**）
+**临时目录**：`./{kind}/{version}/ext/`（**单任务，任务结束即清空**；**不可自定义**——它是编译中间产物而非缓存，见 §5.15 末条）。
 
 **完整结构**：
 
@@ -1321,7 +1386,26 @@ func ClearTempDir(kind, version string) error {
 
 #### 5.14.9 缓存迁移（可选）
 
-可手动拷贝 `./offline/` 或通过备份恢复功能包含离线缓存。
+三条路径，任一即可，且都**只作用于当前生效的缓存根**（§5.14.2）：
+
+1. **换根**：在离线缓存页把缓存根改成新目录（§5.15）——不改文件位置即指向既有缓存目录，零拷贝。
+2. **手拷**：直接把旧缓存根整体拷到新目录（清单、`image.tar`、`apk/`、`pecl/` 结构不变即可被识别）。
+3. **手工导入**：把单个 `image.tar` / `.apk` / `.tgz` 文件导入为缓存条目（见下 §5.14.9a），适合团队里只拿到一个包文件的场合。
+
+或通过备份恢复功能包含离线缓存。
+
+#### 5.14.9a 手工导入缓存条目（v2.9.8 新增，需求 1）
+
+> 入口：离线缓存页「导入文件」→ `CacheImportModal.vue` 选服务种类 / 版本 / 文件类型（image／apk／pecl）+ 文件选择器 → `App.OfflineImportFile`。
+
+| 环节 | 口径 |
+|------|------|
+| 裁决 | 新 preflight action **`cache-import`**（`rules_cache.go`）：`kind` 必须是五种服务之一、`version` 过路径安全校验（§5.4）、`field` ∈ {`image`,`apk`,`pecl`}，且 **apk/pecl 只允许导入到 `php`**。失败即报错，不静默丢弃 |
+| 写链路 | 走三段式（硬红线 5）：preflight → task → applyStateChange。任务类型 `cache-import`，两步「读取源文件 / 写入缓存」；源文件缺失或选了目录 → `errs.FileMissing` |
+| 落盘 | `internal/cache/promote.go` 的 `ImportImage` / `ImportExtension` → `placeFile(src, dst, keepSrc=true)`：**导入是复制，原件保留**（与自动提升的「搬走」相区分）；目标路径由 `OfflineImageTar` / 扩展缓存路径派生，**即当前生效缓存根** |
+| 清单 | 与自动提升同一条路：算 SHA256 → 写/更新 `manifest.json`，故导入后的条目下次安装即按 §5.14.3 命中（零网络），并受 SHA256 校验约束 |
+| 事件 | 复用既有 `cache:promote`（`emitPromote`），**不新增事件名**；前端 `useCache` 订阅后重拉列表，抽屉日志同步落一行 |
+| 边界 | 导入**只写缓存**，不 `docker load`、不建容器、不改任何服务状态——是否使用仍由后续安装决定（§5.14.13「缓存与 Docker 资源完全解耦」） |
 
 #### 5.14.10 缓存 API（Service 层）
 
@@ -1339,6 +1423,7 @@ type OfflineService interface {
     PromoteImage(ctx context.Context, kind, version, tarPath string) error
     PromoteExtension(ctx context.Context, phpVersion, extType, filePath string) error
     ClearTempDir(ctx context.Context, kind, version, reason string) error
+    ImportEntry(ctx context.Context, kind, version, extType, srcPath string) error // v2.9.8：手工导入（§5.14.9a）
 }
 ```
 
@@ -1370,6 +1455,9 @@ type OfflineService interface {
 - ❌ 静默跳过缓存检查。
 - ❌ 静默清理缓存。
 - ❌ 清理正在使用的缓存。
+- ❌ 把缓存路径写死成 `./offline/`（必须经当前生效缓存根派生，用户可自定义，见 §5.15）。
+- ❌ 用户已自定义缓存根，安装链路却仍去读默认的 `./offline/`（或反之）——同一类路径**只允许一个生效根**（§0.2 规则 24）。
+- ❌ 手工导入时移动/删除用户的源文件（导入是**复制**，原件保留；只有自动提升才搬走临时目录里的文件）。
 
 #### 5.14.13 与 Docker 清洁机制的协同
 
@@ -1385,6 +1473,60 @@ type OfflineService interface {
 
 **关键约束**：缓存不受 Docker 清洁机制影响；缓存与 Docker 资源完全解耦。
 
+### 5.15 可自定义根（缓存根 / 备份根 / 每服务版本数据目录）（v2.9.8 新增，需求 1/2/7/8）
+
+**一句话**：**三处路径用户可自定义；每一类永远只有一个生效值——自定义与默认互斥；唯一限制是路径安全。**
+
+#### 5.15.1 三个可自定义根
+
+| 面 | `config.yaml` 键 | 默认值（未自定义时） | 快照 `env` 回显键 | UI 入口 |
+|----|-----------------|--------------------|------------------|---------|
+| 离线缓存根 | `offline_root` | 默认 `./offline/`（即 `{phpo_home}/offline`） | `OFFLINE_ROOT` | 离线缓存页顶部路径条（需求 1） |
+| 备份根 | `backup_root` | 默认 `./backups/`（即 `{phpo_home}/backups`） | `BACKUP_ROOT` | 备份页顶部路径条（需求 8） |
+| 每服务版本数据目录 | `services.{kind}.{version}.data_dir` | 默认 `./{kind}/{version}/data` | `{KIND}_{VER}_DATA_DIR` | 服务卡片 + 安装弹窗（需求 7） |
+
+**互斥唯一（核心口径）**：判定发生在 `internal/config/paths.go` 的 `applyRoot` / `DataDirFor`——**非空即用自定义、默认派生值同时作废；置空（或删键）即回落默认**。因此不存在「两个根并存、按顺序找」的实现：全链路只有 `Env.OfflineRoot` / `Env.BackupRoot` / `Env.DataDirFor(kind,ver)` **一个出口**，任何缓存/备份读写与容器挂载都必须经它取路径。**不得**新增第二处判定，**不得**在两处之间复制或回退（§0.2 规则 24）。
+
+**数据目录的自定义是「换位置」而非「多一层」**：`workdir.prepareService` 在该版本 `HasCustomDataDir` 为真时**跳过**默认 `{KIND_ROOT}/{ver}/data` 的创建，容器挂载点直接指向自定义目录（`ResolveMounts` 中 `sub=="data"` 行走 `DataDirFor`）——默认目录不会因此凭空出现。
+
+#### 5.15.2 唯一的限制：路径安全（硬红线 3）
+
+`config.ValidateRootPath`（`internal/config/validate.go`）是**全部**校验：`NormPath` 归一 → 拒绝 `..`（含 Windows 反斜杠分段）→ 拒绝 `\x00`。**空串合法，语义即「清除自定义、回落默认」**。不要求绝对路径、不要求目录已存在、不限制字符集、不校验长度——**除此之外不得加任何限制**（§0.2 规则 15/16，最小限制原则）。
+
+#### 5.15.3 写链路与生效时机
+
+三段式照旧（硬红线 5）：**`root-set` preflight → 落 `config.yaml` → 装配层 `Rebind` → `GetState` → `state:changed`**。
+
+1. **入口**：`App.SetOfflineRoot` / `App.SetBackupRoot` / `App.SetServiceDataDir`，共用内部 `setCustomRoot(field, kind, version, value)`；`field` ∈ {`offline_root`, `backup_root`, `data_dir`}。
+2. **裁决**：新增 preflight action **`root-set`**（`internal/preflight/rules_root.go`）。其中 `data_dir` 额外要求 `kind`/`version` 与安装同判据（路径安全）；缓存根/备份根是全局根，不涉及 kind/version。
+3. **队列门禁**：`Rebind` 会整图换掉配置派生的路径基准，**中途换图会把在跑任务的门面抽掉**，因此 `setCustomRoot` 在 `a.Running()` 为真时直接返回 `errs.TaskBusy`——**改根不得与运行中任务并发**（§5.13.1 原子性）。
+4. **生效**：`internal/app` 的 `Rebind(ctx)` 以 `rootsKey(cfg)`（两根 + `OfflineRoot` + `BackupRoot` + 排序后的 `DataDirs`）为指纹做**幂等换图**；指纹未变即不重建。改根后缓存枚举、清理、提升、导入、容器挂载**立即**跟着新根，无需重启应用。
+5. **回显**：UI 路径条显示的当前根取自快照 `env`（`EditablePathBar.vue`），**不做本地乐观回填**（硬红线 4）；保存按钮的 disabled 判据是「输入 ≠ 快照回显值」，失败即输入框自动回落到快照值。
+6. **数据目录改了且服务正在运行**：preflight 给**警告**（「正在运行，数据目录要重建容器后才生效」），不阻止保存——卷里的数据要重建容器才切过去。
+
+#### 5.15.4 目录选择器与「读写任意路径」
+
+「打开到任意文件夹」用 Wails 原生对话框（`Dialogs.OpenFile({ CanChooseDirectories: true, CanChooseFiles: false, Directory })`），选到的路径**不做必须在 `PHPO_HOME` / `WWW_ROOT` 内的限制**（§5.12 同口径，最多加警告）。手工导入缓存条目同理：文件选择器可选任意文件，唯一判据是 §5.14.9a 的 `cache-import` 规则。
+
+#### 5.15.5 不可自定义的路径（明确排除）
+
+| 路径 | 为何不放开了自定义 |
+|------|------------------|
+| `phpo_home` / `www_root` | 已在装机向导里由用户选定，等价于自定义 |
+| `<用户数据目录>/`（`config.yaml` / `phpo.db` / `logs` / `trash` / `updates`） | 由 OS 的 XDG 规则决定（§0.1.1、§4.2）；放开会让「找配置文件」变成用户负担，且与打包/升级/回滚定位强绑定 |
+| 临时目录 `./{kind}/{version}/ext/` | 它是**编译中间产物**而非缓存，路径固定才能保证「任务结束必清空 + 不跨任务持久化」（§5.14.4）；自定义根只影响缓存**结果**的落点，不影响这里 |
+| 站点根目录 | 已是每站点独立字段（需求外），不属本条三个面 |
+
+#### 5.15.6 明确禁止
+
+- ❌ 同一类路径出现两个生效根（自定义与默认并用、按顺序回退查找）。
+- ❌ 在 `ValidateRootPath` 之外对可自定义根追加校验（绝对路径、存在性、字符集、是否在 `PHPO_HOME` 内、是否可写…).
+- ❌ 把「警告」当「阻止」——运行中改数据目录只能警告，不得拒绝保存。
+- ❌ 队列非空时改根（必须 `errs.TaskBusy` 挡住，不得绕过 `Rebind` 直接改内存字段）。
+- ❌ 前端本地乐观更新路径条文字（回显只认快照 `env`）。
+- ❌ 手工导入时删除或移动用户的源文件。
+- ❌ 把缓存/备份路径写死为字面量 `~/phpo/offline`、`~/phpo/backups`（违反 §0.1.1 记法，且直接绕过自定义）。
+
 ---
 
 ## 6. 原型 → 生产映射表
@@ -1393,8 +1535,8 @@ type OfflineService interface {
 |---------|----------|---------|
 | state 全局对象 | `internal/store/ + SQLite` | `stores/appState.ts` |
 | persistState / hydrateState | `internal/store/snapshot.go` | — |
-| preflight()（17 action） | `internal/preflight/preflight.go` | `composables/usePreflight.ts` |
-| NEEDS_HOME（15 action） | `internal/preflight/preflight.go`（`needsHome` map） | — |
+| preflight()（原型 17 action；生产 19） | `internal/preflight/preflight.go` | `composables/usePreflight.ts` |
+| NEEDS_HOME（原型 15；生产 17） | `internal/preflight/preflight.go`（`needsHome` map） | — |
 | validators | `internal/preflight/validators.go` | `composables/usePreflight.ts`（即时反馈）+ `utils/`（无独立 validate.ts） |
 | VHosts（9 方法） | `internal/vhost/manager.go` | `api/site.ts` |
 | parseVhost / replaceListen | `internal/vhost/parse.go` | — |
@@ -1458,6 +1600,11 @@ type OfflineService interface {
 | 缓存校验 | `internal/cache/verifier.go` | `OfflineView.vue`「全部校验」按钮 |
 | 缓存清理 | `internal/cache/cleaner.go` | `CacheCleanupModal.vue` |
 | 缓存统计 | `internal/cache/stats.go` | `OfflineView.vue` |
+| 可自定义缓存根/备份根（v2.9.8，需求 1/8） | `internal/config/{paths,configstore,validate}.go` + `internal/preflight/rules_root.go` + `app.go#setCustomRoot` + `internal/app`（`Rebind`/`rootsKey`） | `components/common/EditablePathBar.vue` + `OfflineView.vue` + `BackupView.vue` + `api/env.ts` |
+| 每服务版本自定义数据目录（v2.9.8，需求 7） | `config.yaml` 的 `services.{kind}.{ver}.data_dir` + `Env.DataDirFor`/`HasCustomDataDir` + `config/paths.go#ResolveMounts` + `service/workdir.go` | `ServiceView.vue` + `InstallModal.vue` + `constants/mounts.ts#dataDirKey` |
+| 手工导入缓存条目（v2.9.8，需求 1） | `internal/preflight/rules_cache.go#cacheImport` + `service/offline_service.go#ImportEntry` + `cache/promote.go#{ImportImage,ImportExtension,placeFile}` | `components/business/CacheImportModal.vue` + `api/offline.ts#importEntry` + `useCache.ts#doImport` |
+| 无任务归属事件的系统日志通道（v2.9.8，需求 3/6） | —（纯前端落地；事件源见 §5.6.2） | `stores/taskStore.ts#eventLine` + `sysLines` + `TaskDrawer.vue` 左栏 |
+| 抽屉两栏可拖拽（v2.9.8，需求 4） | — | `TaskDrawer.vue#.drawer-splitter` + `layoutStore.setSplit` + `--drawer-split` |
 
 ---
 
@@ -1501,6 +1648,45 @@ type OfflineService interface {
 - ❌ 应用启动时不扫描临时目录残留。
 - ❌ 临时目录跨任务持久化。
 
+### 决策 23：可自定义根采用「单一生效根 + 路径唯一出口 + 改根即换图」（v2.9.8，需求 1/2/7/8）
+
+**核心决策**：缓存根、备份根、每服务版本数据目录三处开放自定义，**每一类路径任何时刻只有一个生效值**；全链路只经 `config.Env` 的一个出口取路径。
+
+#### 理由
+
+1. **画像 A/D**：外包机器磁盘零散，缓存和数据库数据要能放到某块大盘；高级用户要能完全控制环境（画像 D）。
+2. **画像 F**：内网/离线时，团队共享的缓存往往挂在网络盘或另一块盘——不能只认 `./offline/`。
+3. **互斥而非合并**：若允许「自定义根 + 默认根」两处并存查找，则缓存清理、SHA256 校验、损坏回退都会出现「哪一份为准」的二义性，且用户无法确认自己清掉的是不是正在用的那一份。单一生效根把这个二义性从设计上取消。
+4. **换图而非热改字段**：路径基准散落在缓存管理器、装配层、服务层多处；只改内存字段会留下半新半旧的图。`Rebind` + `rootsKey` 指纹保证一次改根 = 一次一致的重建。
+
+#### 具体规则（四条）
+
+1. **单一出口**：`Env.OfflineRoot` / `Env.BackupRoot` / `Env.DataDirFor(kind,ver)`；默认派生值在自定义非空时即被丢弃。
+2. **唯一校验**：`config.ValidateRootPath`（路径安全）。空串合法 = 清除自定义。
+3. **改根走三段式**且**必须队列空闲**（`errs.TaskBusy`）；成功后 `Rebind` → `GetState` → `state:changed`。
+4. **回显只认快照**；运行时服务改数据目录需重建容器才生效，preflight 给警告不阻止。
+
+#### 明确禁止
+
+见 §5.15.6。
+
+### 决策 24：全局实时同步采用「17 事件名逐一落地 + 无任务归属者进系统日志通道」（v2.9.8，需求 3/6）
+
+**核心决策**：把「实时同步」从原则降级为**可核对的清单**——§5.6.2 逐个事件写明落地处；不属于任何任务的 `cache:*` / `docker:*` / `update:*` 事件不再停在各自的视图面板里，而是逐行进入任务抽屉左栏的**系统日志通道**（有运行任务时归属该任务）。
+
+#### 理由
+
+1. 原设计里 `OfflineView` 自带一块 `.off-events` 小面板，`docker:*` 只在清理视图闪现，升级事件只在弹窗里——**同一事实三处各说一半**，用户在一个地方看不到完整时间线。现统一到抽屉（唯一日志出口），删除视图内的重复面板。
+2. 抽屉的日志模型是「按任务组织的」，而缓存/Docker/升级事件的产生者未必是任务（doctor 校验、启动校准）。**不为此造第 5 个任务状态**（后端 4 态冻结、17 事件名冻结）——`sysLines` 只是前端一条 200 行滚动流水，不是任务记录、不落账本。
+3. `docker:state-drift` 光打日志不够：漂移意味着「库里状态 ≢ Docker 实际」，故额外 `syncState()` 让界面跟着校准结果回流。
+
+#### 明确禁止
+
+- ❌ 新增事件名来承载「无任务日志」（17 个冻结）。
+- ❌ 为系统日志通道凭空造任务记录或终态（硬红线 4）。
+- ❌ 把 `update:progress` 铺进日志流水（连续量淹没日志；进度条已承载）。
+- ❌ 在视图里再立一份事件小面板（唯一出口是抽屉）。
+
 ---
 
 ## 8. 跨平台差异矩阵
@@ -1539,6 +1725,11 @@ type OfflineService interface {
 | **R85** | **Agent 过度抽象导致代码复杂** | **简洁优先；YAGNI；Code Review 时识别过度设计**（v2.7） |
 | **R86** | **Agent 顺手修改无关代码引入 Bug** | **精准修改；只动任务相关代码；无关问题仅提醒**（v2.7） |
 | **R87** | **Agent 声称「完成」但无验证标准** | **目标驱动执行；必须先定义成功标准；必须有测试用例**（v2.7） |
+| **R88** | **改根后新旧路径并存导致缓存/数据二义** | **单一生效根 + 唯一出口（§5.15.1）；`rootsKey` + `Rebind` 幂等换图；互斥唯一由 `applyRoot`/`DataDirFor` 一处决定**（v2.9.8） |
+| **R89** | **运行中改根抽走在跑任务的门面** | **`setCustomRoot` 以 `a.Running()` 挡住并返回 `errs.TaskBusy`；`internal/app/rebind_test.go` 覆盖队列门禁**（v2.9.8） |
+| **R90** | **手工导入误删用户源文件** | **`placeFile(keepSrc=true)` 即复制不搬走；`internal/cache/import_test.go` 断言导入后源文件仍在**（v2.9.8） |
+| **R91** | **事件发了界面却不动（「实时同步」沦为口号）** | **§5.6.2 逐事件落地对照表 + §0.2 规则 25；`update:progress` 是唯一显式豁免项；`docker:state-drift` 额外触发 `syncState()`**（v2.9.8） |
+| **R92** | **系统日志通道被高频事件撑爆内存** | **`SYS_MAX = 200` 滚动裁尾；连续量（`update:progress`）不进日志**（v2.9.8） |
 
 ---
 
@@ -1599,7 +1790,7 @@ type OfflineService interface {
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest 四项门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（60 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` 真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（77 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` 真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -1654,6 +1845,29 @@ type OfflineService interface {
 
 - [ ] 是否在 MVP 阶段引入了任何插件相关代码？（应为否）
 
+### 12.7 可自定义根检查（v2.9.8 新增，§5.15）
+
+- [ ] 缓存根 / 备份根 / 每服务版本数据目录三处是否都支持「编辑路径 + 打开到任意文件夹 + 读写」？
+- [ ] 是否**只有一条生效路径**？（自定义非空即完全取代默认根；无二级回退、无并存）
+- [ ] 取路径是否统一经 `config.Env` 的单一出口（`OfflineRoot` / `BackupRoot` / `DataDirFor`），而不是在别处再拼一次默认值？
+- [ ] 除路径安全外是否**没有**追加任何校验（绝对路径、存在性、字符集、是否在 `PHPO_HOME` 内）？
+- [ ] 改根是否走三段式（`root-set` preflight → 落 `config.yaml` → `Rebind` → `state:changed`）并在队列非空时返回 `errs.TaskBusy`？
+- [ ] 数据目录是否**每服务版本一份**（而非整个 kind 共用）？自定义时默认的 `{KIND_ROOT}/{ver}/data` 是否不再凭空创建？
+- [ ] 路径条回显是否只认快照 `env`（不做本地乐观回填）？运行中改数据目录是否只**警告**？
+- [ ] 手工导入是否**复制**而不移走用户源文件、并写入 `manifest.json` + 发 `cache:promote`？
+- [ ] 文案/注释里的 `./offline/`、`./backups/`、`{kind}/{ver}/data` 是否带「默认」字样（§0.1.1）？
+
+### 12.8 全局实时同步检查（v2.9.8 新增，§5.6.2）
+
+- [ ] §5.6 的 17 个事件名是否**每一个**都能在 §5.6.2 表里找到落地处？（新增事件而无落地处即违反 §0.2 规则 25）
+- [ ] `cache:*` / `docker:*` / `update:available` / `update:done` 是否逐行进抽屉左栏（有运行任务归该任务，无任务进系统日志通道）？
+- [ ] 系统日志通道是否**只**是前端流水——没有凭空造任务记录、任务状态或第 5 个显示态？（硬红线 4）
+- [ ] `update:progress` 是否**没有**进日志流水（由进度条承载）？
+- [ ] `docker:state-drift` 是否额外触发一次 `syncState()` 让校准结果回流界面？
+- [ ] 离线缓存页是否**没有**再放一份 `.off-events` 小面板（唯一日志出口是抽屉）？
+- [ ] 抽屉两栏是否默认 70%／30% 且**可左右拖拽**（40–80%、双击中缝复位、写 `localStorage`）？头部左侧标签是否固定为「服务」二字？
+- [ ] 所有写操作是否 `await` 后端 + 触发快照回流？非快照数据（缓存列表、审计）写后是否主动重拉？
+
 ---
 
 ## 13. 总纲变更流程
@@ -1670,8 +1884,33 @@ type OfflineService interface {
 
 ---
 
-**phpo 项目总纲 v2.9.7**
+**phpo 项目总纲 v2.9.8**
 
+> **v2.9.8 变更（三处「可自定义根」+ 手工导入缓存 + 十七事件全落地 + 抽屉占比改默认值，把 Request F 的八条一次性收口为冻结条款）**：
+> 本版本处理的不是文案，而是四类真实缺口：① 缓存根/备份根/每服务版本数据目录此前只有后端能配、界面上改不了，
+> 且「自定义」与「默认」两条路径可能同时被读到，行为二义；② 离线缓存页的 `off-events` 只是本地列表，与 §5.6
+> 的 `cache:*`／`docker:*` 事件协议脱节——用户在那里看不到真实事件，抽屉里也没有任何地方承接「无运行任务时」的事件；
+> ③ 抽屉 70%／30% 被 v2.9.7 写成「固定占比」，日志长行无处扩展；④ 抽屉头部左侧标签跟着路由名变字，任务运行时
+> 看不出这是全局抽屉。现新增 **§5.15 可自定义根**（三根表 + 互斥唯一判据 + 六步写链路 + 目录选择器 + 不可自定义
+> 清单）、**§5.14.9a 手工导入缓存条目**（复制保留原件、写 manifest、复用 `cache:promote`、**不 `docker load`**）、
+> **§5.6.2 全局实时同步落地表**（17 事件 × 落地 store／是否进日志逐行核对 + 事件之外的五类回流要求）、
+> **§7 决策 23**（单一生效根 + 唯一出口 + 改根即 `Rebind` 换图）与 **决策 24**（事件逐一落地 + 系统日志通道）。
+> 关键口径：**同一类路径永远只有一个生效值**——自定义与默认互斥，出口是 `config` 层的 `DerivePaths` →
+> `ApplyRootOverrides` → `ApplyDataDirs`，任何层不得自行拼 `~/phpo/offline`；**「未自定义」必须读作空值回落**，
+> 不能读作「两条都试一遍」。**抽屉占比改为「默认 70%／30%」**（可拖拽、40–80 夹取、双击复位、写 `localStorage`、
+> 属 UI 偏好不落库）——本条**覆盖** v2.9.7 变更段中「两栏固定占比」的表述；抽屉头部左侧标签**固定显示「服务」二字**
+> （取 `t('nav.services')`，不随路由变）。系统日志通道的合规性显式写明：它**不是任务记录、不落账本、不造第 5 态、
+> 不新增事件名**（硬红线 4），`update:progress` 是唯一不进日志的显式豁免。§0.3 权威数字同步为
+> **preflight 19 action／NEEDS_HOME 17／errs 码 28／事件落地覆盖率 17／17／可自定义根面数 3／系统日志上限 200**，
+> 并删除该表内重复的「任务抽屉左右占比」行；§4.1 目录树按真实仓库修正为 **68 个绑定方法**（以生成的
+> `frontend/bindings/phpo/app.ts` 为准）、补 `rules_root.go`、`EditablePathBar.vue`、`CacheImportModal.vue`；
+> §0.2 补规则 **24**（禁止同类路径两条并存）与 **25**（17 事件名每个都要有落地处），且**故意不重编号**——
+> 文档内已按号引用既有规则。同步落点：`config.example.yaml` 补 `offline_root`／`backup_root`／`data_dir` 三键；
+> `docs/{CHANGELOG,界面规格,事件流协议,状态同步,离线缓存机制,路径策略,接口契约,目录规范,用户手册,备份脱敏规范}.md`、
+> `任务工单.md`、`实施顺序.md`。**明确未改**：任务状态仍 **4** 个、事件名仍 **17** 个且未新增、8 条硬红线原文、
+> 三段式写操作、端口／密码／版本／域名策略、临时目录「四必清」与 SHA256 校验、§5.14 离线缓存三条铁律的方向、
+> `DefaultHome`／`DefaultWWW` 等已标注「默认」的字面量。
+>
 > **v2.9.7 变更（新增 §5.6.1「任务抽屉：日志 70% ／ 队列 30%」，把抽屉的布局／排序／显示态写成冻结条款）**：
 > 此前 §5.6 只规定「队列详情走快照」，抽屉长什么样没有条款，于是实现把任务队列铺成日志上方的一横条 chip，既看不清
 > 每条任务的态，也无法在提交后立刻确认「它进队列了没有」。现补三条硬约束：① 展开后**左栏日志 70% ／ 右栏任务队列 30%**
@@ -1751,7 +1990,8 @@ type OfflineService interface {
 - 技术栈：Wails ≥ 3 + Go ≥ 1.27 + Vue 3.5+ + TypeScript
 - 目标：Windows / macOS / Linux 三平台桌面应用
 - 形态：**仅 GUI，不提供 CLI**
-- 配置存储：**单一 `config.yaml`（YAML，各平台 XDG 用户配置目录内 `phpo` 子目录）承载根目录 + 明文密码 + 端口；SQLite 仅存运行态且延迟建库（两根未落地即首启零落盘）；`dirReady` 由快照派生、不落库；不再有 `./.env` / `~/.phpo/config.json`**
+- 配置存储：**单一 `config.yaml`（YAML，各平台 XDG 用户配置目录内 `phpo` 子目录）承载两根 + 可自定义根（`offline_root`/`backup_root`）+ 明文密码 + 端口 + 每服务版本 `data_dir`；SQLite 仅存运行态且延迟建库（两根未落地即首启零落盘）；`dirReady` 由快照派生、不落库；不再有 `./.env` / `~/.phpo/config.json`**
+- 可自定义根（v2.9.8）：**缓存根（默认 `./offline/`）· 备份根（默认 `./backups/`）· 每服务版本数据目录（默认 `./{kind}/{version}/data`）三处支持编辑路径 + 打开到任意文件夹 + 读写；每一类互斥唯一、永远只有一条生效路径（自定义即完全取代默认）；唯一限制是路径安全；改根走 `root-set` preflight → 落库 → `Rebind` → `state:changed`，队列非空即 `TaskBusy`；见 §5.15**
 - 路径记法：**`./` = PHPO_HOME 根（`config.yaml` 的 `phpo_home`，装机向导可指向任意目录，`~/phpo` 仅默认值）；`<用户数据目录>/` = `os.UserConfigDir()/phpo`（两者不同源）；该记法同等约束 `docs/`、任务工单、代码注释与前端 locales 文案，只有带「默认」字样的默认值/预填值可写字面量；见 §0.1.1**
 - 密码：**明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看**
 - 版本：**不限制字符集，仅做路径安全校验**
@@ -1760,11 +2000,12 @@ type OfflineService interface {
 - 路径：**允许 WWW_ROOT 外（警告）**
 - vhost：**放开 `proxy_pass`、`ssl_certificate`、`load_module` 等（保留 nginx -t）**
 - PHP 切换：**精确对应 `php-{version}-fpm:9000`**
-- 状态同步：**后端唯一权威 + 前端订阅事件**
-- 任务抽屉：**日志左 70% ／ 队列右 30% · 新任务永远在最上面（提交时间倒序） · 每行显式显示态（等待中／执行中／已完成，另留 unknown 兜底位；系派生，后端任务状态仍为 4 个）**
+- 状态同步：**后端唯一权威 + 前端订阅事件 + 17 事件名逐一实时落地（§5.6.2）；无任务归属的 `cache:*`/`docker:*`/`update:*` 逐行进抽屉「系统日志通道」（`update:progress` 除外）**
+- 可自定义根（v2.9.8）：**缓存根（默认 `./offline/`）／备份根（默认 `./backups/`）／每服务版本数据目录（默认 `./{kind}/{version}/data`）三处可编辑路径 + 打开任意文件夹 + 读写；每一类互斥唯一（自定义即完全取代默认，不做二级回退），唯一限制是路径安全；改根走三段式并需队列空闲，`Rebind` 后即生效；缓存条目可手工导入（复制、不搬走源文件）**
+- 任务抽屉：**日志左默认 70% ／ 队列右默认 30%（中缝可左右拖拽 40–80%、双击复位；头部左侧标签固定为「服务」二字） · 新任务永远在最上面（提交时间倒序） · 每行显式显示态（等待中／执行中／已完成，另留 unknown 兜底位；系派生，后端任务状态仍为 4 个）**
 - 升级：**支持版本检查和自动升级（SHA256 + Ed25519 双校验）**
 - Docker 清洁：**所有操作幂等、原子、隔离、一致、可清理、可恢复**
-- 离线缓存：**装任何镜像/扩展必先查缓存 · 命中零网络 · 镜像未命中先探本机镜像库（已有即零网络重建缓存）· 否则下载编译 · 成功后提升到缓存 · 无论成败均清空临时目录 · 断网重装靠缓存 · 内网开发靠缓存**
+- 离线缓存：**装任何镜像/扩展必先查缓存（在用户选定的缓存根下，默认 `./offline/`）· 命中零网络 · 镜像未命中先探本机镜像库（已有即零网络重建缓存）· 否则下载编译 · 成功后提升到缓存 · 无论成败均清空临时目录 · 支持手工导入任意包文件为缓存条目 · 断网重装靠缓存 · 内网开发靠缓存**
 - **编码准则：编码前思考 · 简洁优先 · 精准修改 · 目标驱动执行**
 - 插件：**不做**
 - **核心原则：最小限制 + 警告代替阻止 + 用户是程序员 + Docker 操作干净 + 离线优先 + 临时目录必清 + 编码准则**
