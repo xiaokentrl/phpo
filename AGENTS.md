@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.8
+> **文档版本**：v2.9.10
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -13,6 +13,9 @@
 > **应用升级**：支持版本检查和自动升级
 > **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 自定义缓存根/备份根 + 每服务版本的明文密码/宿主端口/数据目录；SQLite 仅存运行态，且**延迟建库**——两根工作目录写入 `config.yaml` 前不创建用户数据目录；`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」派生；不再使用 `./.env` 或 `~/.phpo/config.json`
 > **可自定义根**（v2.9.8 新增，见 §5.15）：离线缓存根、备份归档根、以及**每个服务版本的数据目录**皆可由用户编辑路径或浏览选定任意文件夹；三处各自**互斥唯一**——自定义一旦设定即完全取代对应默认根（`./offline/` · `./backups/` · `{KIND_ROOT}/{version}/data`），任一时刻只有一条路径生效，不并存、不做二级回退；唯一校验是路径安全（硬红线 3）
+> **PHP 扩展**（v2.9.9 新增，见 §5.16）：每个 PHP 版本一份**全量扩展目录**（73 项 · 8 分组），安装弹窗与「管理扩展」弹窗共用同一份；常用 11 项在安装时**默认勾选**，勾选/取消即本次的**目标扩展集**；容器内编译输出**逐行实时**进抽屉日志，某一项失败必须**点名该扩展**并中止本单（不静默、不吞）；**固化镜像不在本机即容器退回基座重建时，待编译集换成完整目标集**（基座不含原启用集，只装增量会让库里「已启用」而容器里没有，§5.16.2）
+> **备份归档**（v2.9.9 新增，见 §5.17）：打包时读不动的条目**跳过并逐目录聚合告警**，不判死整包；mysql / pgsql / redis 在暂停服务**之前**先做**逻辑导出**（`mysqldump` / `pg_dumpall` / `redis-cli --rdb`），产物入归档 `dump/` 前缀——冷拷贝缺的那部分由 dump 补回
+> **容器日志出口**（v2.9.9 新增，见 §5.18）：服务容器内进程**不得往宿主 bind 挂载目录写日志文件**（容器 uid 对该目录无写权限即 FATAL 崩溃循环，服务永远启不来）；日志一律走 stderr → 由 Docker 收集；启停必须等**稳定 running**，失败报错带容器日志尾部
 > **路径记法**：本文件的 **`./` 一律指 PHPO_HOME 根**（即 `config.yaml` 的 `phpo_home`，由装机向导指向任意目录；`~/phpo` 只是默认值，**打包安装后不得假定工作目录在用户主目录**）。`<用户数据目录>` 仍是各平台 XDG 的 `os.UserConfigDir()/phpo`（`config.yaml` / `phpo.db` / `logs` / `trash` / `updates`），与 PHPO_HOME **不同源**；`~/www/` 是 WWW_ROOT 的默认值（同样可改）。同一记法**同等约束 `docs/` 全部文档、任务工单、代码注释与面向用户的文案（前端 locales）**——只有带「默认」字样的默认值/预填值可写字面量。详见 §0.1.1
 > **状态同步**：后端唯一权威；前端只订阅事件、不做乐观更新；**一切操作/日志/队列/请求/响应必须实时同步界面 UI 与抽屉日志**——§5.6 的 17 个事件名逐一有前端落地处（见 §5.6.2，无任务归属的事件走抽屉左栏的「系统日志通道」）
 > **密码策略**：明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看
@@ -88,6 +91,9 @@
 23. **遵守 §3.4 编码准则**（v2.7 新增）：编码前思考 · 简洁优先 · 精准修改 · 目标驱动执行。
 24. **禁止「同一类路径两条并存」**（v2.9.8 新增，见 §5.15）：缓存根、备份根、每服务版本的数据目录都是**互斥唯一**——用户自定义即**完全取代**对应默认根（`./offline/` · `./backups/` · `{KIND_ROOT}/{version}/data`）。不得在自定义后仍回读写默认根、不得把默认根当二级回退去探测、不得在数据目录已自定义时再凭空创建默认的那个；清空自定义值即回落默认根，同样是「一条」。**唯一校验是路径安全（硬红线 3）**，不要求绝对路径、不要求已存在、不限字符集。
 25. **禁止「事件发了界面却不动」**（v2.9.8 新增，需求 6 收口，见 §5.6.2）：§5.6 的 17 个事件名**每一个都必须有前端落地处**——要么改写 store/快照，要么逐行进任务抽屉日志；新增事件而无落地处即视为破坏本条。
+26. **禁止「容器内命令的输出攒成一段」**（v2.9.9 新增，见 §5.16.3）：容器内 exec（扩展编译、逻辑导出）的 stdout / stderr 必须**去帧后逐行**实时进 `task:log`；失败必须**点名**到具体扩展 / 具体服务，不得只报「命令失败」。Docker exec attach 流带 8 字节帧头，直读原始流即把二进制垃圾打进日志。
+27. **禁止备份归档被单个读不动的条目判死**（v2.9.9 新增，见 §5.17）：宿主数据目录由容器内 uid 拥有，逐文件读权限不可保证——读不动的条目**跳过 + 逐目录聚合告警**，整包照常产出；数据靠**逻辑导出**（`mysqldump` / `pg_dumpall` / `redis-cli --rdb`）补齐，不得静默缺项。
+28. **禁止服务容器往宿主 bind 挂载目录写日志文件**（v2.9.9 新增，见 §5.18）：该目录由宿主用户创建（0755），容器内进程是另一个 uid，建文件即 `Permission denied` → 进程 FATAL → `unless-stopped` 无限重启，服务永远启不来。日志一律走 stderr 由 Docker 收集；启动必须等**稳定 running**，失败报错必须带容器日志尾部。
 
 ### 0.3 数字权威表（Agent 引用禁止出错）
 
@@ -99,6 +105,13 @@
 | §5.6 事件名数 | **17** | 事件协议表（冻结，不新增） |
 | 事件前端落地覆盖率 | **17/17**（`update:progress` 由升级弹窗进度条承载，不进日志） | `frontend/src/composables/useStateSync.ts` 的 `landEvent` + `eventNote`（§5.6.2） |
 | 可自定义根面数 | **3**（缓存根 · 备份根 · 每服务版本数据目录） | `config.yaml` 的 `offline_root` / `backup_root` / `services.{kind}.{ver}.data_dir`（§5.15） |
+| 同类路径生效根数 | **1**（自定义与默认**互斥唯一**，不并存、不做二级回退） | `internal/config/paths.go` 的 `applyRoot` / `DataDirFor` 一处判定（§5.15.1 · 决策 23） |
+| PHP 扩展目录条目数 | **73**（内置 **49** ／ pecl **24**，分 **8** 组） | `frontend/src/constants/ext.ts` 的 `EXT_CATALOG`；与 `internal/config/extensions.go` 的 `peclExts` 由 `scripts/check-ext-catalog.go` 对账（§5.16） |
+| 安装时默认勾选的常用扩展 | **11** | 同文件 `common: true` → `commonExts(version)` |
+| 数据服务逻辑导出数 | **3**（mysql ／ pgsql ／ redis） | `internal/service/backup_service.go` 的 `dumpKinds`（§5.17.2） |
+| 归档读不动条目的处置 | **跳过 + 按所在目录聚合告警**（每目录至多列 5 项，另起一行报总数） | `pkg/archive/targz.go` 的 `Skip` + `backup_service.go` 的 `logSkips`（§5.17.1） |
+| 容器启动就绪等待 | **12s**（轮询 300ms；见 running 后复验 2s） | `internal/engine/container.go` 的 `startWait` / `startInterval` / `startHold`（§5.18.3） |
+| CI 门禁 check 脚本数 | **5** | `scripts/check-{i18n-keys,templates,docker-naming,cache-manifest,ext-catalog}.go`（`task check` 与 `ci.yml` 同步登记） |
 | 抽屉两栏默认占比 | **70% ／ 30%**（可左右拖拽，夹取区间 40–80%；双击中缝复位） | `frontend/src/components/business/TaskDrawer.vue`（`.drawer-splitter`）+ `constants/layout.ts` 的 `LAYOUT_LIMITS.split` + `--drawer-split`（§5.6.1） |
 | 抽屉系统日志上限 | **200 行**（滚动裁尾） | `frontend/src/stores/taskStore.ts` 的 `SYS_MAX` |
 | 任务队列载体 | **`Snapshot.Tasks`（`TaskBoard`）** | 随 `state:changed` 推送，不新增事件名 |
@@ -222,6 +235,9 @@
 | 状态同步 | 后端唯一权威；前端订阅事件；无本地乐观更新；**17 个事件名每一个都有前端落地处**（见 §5.6.2） |
 | 任务抽屉 | 日志左**默认 70%** ／ 任务队列右**默认 30%**（中缝可左右拖拽、双击复位，夹取 40–80%）；头部左侧标签固定为「服务」二字；新任务永远在最上面；每行显式显示态（等待中／执行中／已完成 + 兜底位）；无任务归属的 `cache:*`／`docker:*`／`update:*` 事件走**系统日志通道**逐行显示，见 §5.6.1 |
 | 可自定义根 | **缓存根 / 备份根 / 每服务版本数据目录**三处可自定义；每一类路径**永远只有一个**（自定义与默认互斥，置空即回落默认）；唯一限制是路径安全，见 §5.15 |
+| PHP 扩展目录 | **每版本一份全量目录（73 项 · 8 分组）**，安装弹窗与「管理扩展」弹窗共用；常用 **11** 项默认勾选，勾选/取消即目标扩展集；编译输出逐行进抽屉日志，失败点名扩展并中止（见 §5.16） |
+| 备份归档 | 读不动的条目**跳过 + 逐目录聚合告警**，不判死整包；mysql／pgsql／redis 暂停**之前**先**逻辑导出**入归档 `dump/`；恢复侧明示「dump 不自动重放」（见 §5.17） |
+| 数据服务运行态 | 容器内进程**不往宿主 bind 目录写日志**（pgsql 走 stderr → Docker 收集）；旧装机的坏配置就地自愈；启停等稳定 running，失败带容器日志尾部（见 §5.18） |
 | 端口策略 | 站点端口默认 80、用户可指定任意端口；新建站点占用只告警 + 降级（不改用户所填端口、不阻断建站）；改站点端口占用才顺延；服务端口占用报错 |
 | 限制策略 | 最小限制；仅 8 条硬红线；警告代替阻止 |
 | Docker 清洁策略 | 所有操作幂等、原子、可回滚、可清理 |
@@ -798,8 +814,9 @@ phpo/
 │       │   ├── OfflineView.vue  SettingsView.vue  OverviewView.vue  CleanupView.vue
 │       │   └── ServiceView.vue
 │       ├── components/
-│       │   ├── common/              # 8：ModalShell / ModalRoot / ToastHost / PasswordField
+│       │   ├── common/              # 9：ModalShell / ModalRoot / ToastHost / PasswordField
 │       │   │                        #   MountList / PathInfoBar / CacheHitBadge / EditablePathBar
+│       │   │                        #   ExtPicker
 │       │   └── business/            # 19：SiteAddModal / SiteConfigModal / RewriteModal / InstallModal
 │       │                            #   ConfigModal / PhpExtensionsModal / TaskDrawer / CmdPalette
 │       │                            #   DangerConfirm / HomeSetupWizard / DockerGate / AppTrayMenu
@@ -825,6 +842,7 @@ phpo/
 │
 ├── scripts/
 │   ├── check-i18n-keys.go  check-templates.go  check-docker-naming.go  check-cache-manifest.go
+│   ├── check-ext-catalog.go                      # 前端扩展目录与后端 peclExts 分类对账（第 5 项门禁）
 │   ├── sign-release.sh  gen-checksums.sh  verify-signing-guard.sh
 │   └── bump-version.sh  version.sh  gen-locales.mjs   # gen-locales 会重写 locales，禁止随意执行
 │       # dev / build / bindings / 打包统一走 Taskfile，无 dev.* / bindings.* / build-all.* / pkg.* 脚本
@@ -846,8 +864,9 @@ phpo/
 │       ├── m3_live_test.go  m4_live_test.go
 │       ├── m5_mysql_live_test.go  m5_pgsql_live_test.go
 │       ├── m5_redis_live_test.go  m5_wordpress_live_test.go
-│       └── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
-│       # 单元测试与包同目录（77 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       ├── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
+│       └── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
+│       # 单元测试与包同目录（78 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -1485,7 +1504,7 @@ type OfflineService interface {
 | 备份根 | `backup_root` | 默认 `./backups/`（即 `{phpo_home}/backups`） | `BACKUP_ROOT` | 备份页顶部路径条（需求 8） |
 | 每服务版本数据目录 | `services.{kind}.{version}.data_dir` | 默认 `./{kind}/{version}/data` | `{KIND}_{VER}_DATA_DIR` | 服务卡片 + 安装弹窗（需求 7） |
 
-**互斥唯一（核心口径）**：判定发生在 `internal/config/paths.go` 的 `applyRoot` / `DataDirFor`——**非空即用自定义、默认派生值同时作废；置空（或删键）即回落默认**。因此不存在「两个根并存、按顺序找」的实现：全链路只有 `Env.OfflineRoot` / `Env.BackupRoot` / `Env.DataDirFor(kind,ver)` **一个出口**，任何缓存/备份读写与容器挂载都必须经它取路径。**不得**新增第二处判定，**不得**在两处之间复制或回退（§0.2 规则 24）。
+**互斥唯一（核心口径）**：**自定义一旦设定即完全取代对应默认根**（`./offline/` · `./backups/` · `{KIND_ROOT}/{version}/data`）——任一时刻只有一条路径生效，不并存、不做二级回退。判定发生在 `internal/config/paths.go` 的 `applyRoot` / `DataDirFor`——**非空即用自定义、默认派生值同时作废；置空（或删键）即回落默认**。因此不存在「两个根并存、按顺序找」的实现：全链路只有 `Env.OfflineRoot` / `Env.BackupRoot` / `Env.DataDirFor(kind,ver)` **一个出口**，任何缓存/备份读写与容器挂载都必须经它取路径。**不得**新增第二处判定，**不得**在两处之间复制或回退（§0.2 规则 24）。
 
 **数据目录的自定义是「换位置」而非「多一层」**：`workdir.prepareService` 在该版本 `HasCustomDataDir` 为真时**跳过**默认 `{KIND_ROOT}/{ver}/data` 的创建，容器挂载点直接指向自定义目录（`ResolveMounts` 中 `sub=="data"` 行走 `DataDirFor`）——默认目录不会因此凭空出现。
 
@@ -1526,6 +1545,179 @@ type OfflineService interface {
 - ❌ 前端本地乐观更新路径条文字（回显只认快照 `env`）。
 - ❌ 手工导入时删除或移动用户的源文件。
 - ❌ 把缓存/备份路径写死为字面量 `~/phpo/offline`、`~/phpo/backups`（违反 §0.1.1 记法，且直接绕过自定义）。
+
+### 5.16 PHP 扩展目录 · 选择器 · 全程实时日志（v2.9.9 新增，需求 ①/②/③）
+
+**一句话**：**每个 PHP 版本一份全量扩展目录，两处入口共用同一份数据；勾选/取消即「目标扩展集」；从编译到重建的每一步都要逐行进抽屉日志，某一项失败必须点名该扩展。**
+
+#### 5.16.1 唯一目录：前端一处清单，后端分类由门禁对账
+
+| 项 | 口径 | 落点 |
+|----|------|------|
+| 目录规模 | **73** 项（内置 **49** ／ pecl **24**），分 **8** 组：`basic` / `db` / `cache` / `media` / `net` / `async` / `framework` / `debug` | `frontend/src/constants/ext.ts` 的 `EXT_CATALOG`（前端唯一清单） |
+| 版本可见性 | `minVer` 按 `major.minor` 过滤（`ffi` ≥ 7.4、`sodium` ≥ 7.2）；版本号非数字（用户自定义标签）时**不做限制**，交后端路径安全裁决 | `extMatchesVersion` / `catalogFor(version)` |
+| 默认勾选 | 常用 **11** 项（bcmath · curl · exif · mbstring · opcache · pcntl · mysqli · pdo_mysql · apcu · igbinary · redis） | `common: true` → `commonExts(version)` |
+| 安装方式分类 | `builtin` → `docker-php-ext-install <name>`；`pecl` → `pecl install <name>` 再 `docker-php-ext-enable <name>`；命令以 **argv** 传入容器 exec，**不经 shell**（防注入） | `internal/config/extensions.go` 的 `ClassifyExt` / `ExtInstallCmds` |
+| 对账门禁 | 前端 `tool: 'pecl'` 项与后端 `peclExts` 必须**逐项相等**——分类错了就是「用内置命令装第三方扩展」，必然编译失败 | `scripts/check-ext-catalog.go`（第 5 项门禁，登记在 `task check` 与 `ci.yml`） |
+
+**目录外仍可手工添加**：用户手输的扩展名只要过扩展名格式校验（`config.ValidateExt`）即入列并选中——最小限制原则（§0.2 规则 15），目录只是「常用可见」的便利集，**不是白名单**。
+
+#### 5.16.2 两个入口，一套语义
+
+| 入口 | 位置 | 默认勾选 | 提交后 |
+|------|------|---------|--------|
+| 安装期选扩展 | `InstallModal.vue`（仅 `kind === 'php'` 显示扩展区，弹窗转 `lg`） | `commonExts(version)`；**一项都不选即只装基座镜像** | 安装任务之后**串第二个任务**跑 `applyExtensions`（扩展是「容器内编译 → 固化镜像 → 重建」另一条链路） |
+| 管理扩展 | `PhpExtensionsModal.vue`（PHP 列表页「管理扩展」） | 本版本**当前已应用的扩展**（= 安装时勾选的 + 之后改过的） | `preflight('extensions')` → `applyExtensions` → `syncState()`；扩展列表写后**拉权威快照归位**，不做本地乐观更新 |
+
+**目标扩展集语义**：弹窗提交的始终是**完整集合**（不是增量），后端 `diffExts(prev, next)` 自算 `added` / `removed`；两者皆空即**不产生任务、不重建容器**（幂等，§5.13.4）。`removed` 不等于删数据——只是不再启用。
+
+**基座退回支：待编译集换成完整目标集**（v2.9.10）：`prevRef` 按本机实际态现取——库里启用过扩展但固化镜像 `phpo/php:{ver}` **不在本机**（手工删镜像、换机没带过来）时，容器只能退回基座 `php:{ver}-fpm` 重建，而**基座不含任何 `prev` 扩展**。此时若仍只编译 `diffExts` 的 `added`，`prev` 里那几项既没被装进容器、又会在任务结尾被原样写进 `php_extensions` 并随快照广播，界面从此显示「已启用」而 `php -m` 里没有——违反 §5.13.1 一致性（Docker 实际状态 ≡ 库里状态）。故该分支把待编译集换成**完整目标集**（`added = 去重排序后的 enabled`），且 `removed` **置空**（基座本就不含那几项，无需再删 ini）。口径变了必须**写进日志**：一行 `dim`「固化镜像 {ref} 不在本机，容器上无原扩展集，目标扩展集全量重编译」，不得静默（§5.16.3）。用例 `TestExtension_Apply_BaseFallbackRecompilesFullSet` 锁死命令序列 + 落库集合 + 该日志行。
+
+**失败口径**：任一扩展编译失败 → 整个目标扩展集**不应用**（`Apply` 报错、`step.Rollback()` 用未变动的原镜像重建干净容器、撤回本次固化镜像、清空临时目录），弹窗**不关闭**并把短消息原样 toast 给用户（`submitWrite` 直出后端 error 原文），用户改一项重试即可。
+
+#### 5.16.3 执行期日志契约（这条是需求 ③ 的硬约束）
+
+六步全链路的日志**一行都不能少**，且**实时**：
+
+| 步骤 | 必须出现的日志 |
+|------|--------------|
+| 写扩展清单 `extensions.env` | `cmd` 行：路径 → 目标扩展集全文 |
+| 准备基座镜像（缓存优先） | `cmd` 行 + `cache:hit`／`cache:miss` 的既有徽标链路 |
+| 容器内编译扩展 | `meta` 行「待启用 N 项 / 待停用 N 项」→ 基座退回支另起一行 `dim`（§5.16.2）→ 每条命令一行 `cmd`（含 argv 全文）→ **命令的 stdout/stderr 逐行**（stdout 为 `meta`、stderr 为 `dim`）→ 每项成功一行 `ok` |
+| 固化镜像 `phpo/php:{version}` | `docker commit →` 与「已固化镜像」`cmd` 行；导出到离线缓存、提升成功各一行 |
+| 从扩展镜像重建容器 | `cmd` 行「以扩展镜像重建容器 ← ref」+ `ok` 行「容器已运行于固化镜像」 |
+| 重载 Nginx | `nginx -s reload` + `ok` 行；未接入 nginx 时 `dim` 行「跳过重载」，**不得静默** |
+
+**去帧是硬要求**：Docker exec attach 流每帧带 **8 字节二进制帧头**，直读原始流即把垃圾打进日志。唯一出口是 `engine.ExecStream(ctx, name, argv, stdout, stderr io.Writer)`（内部 `stdcopy.StdCopy` 去帧并分流 stdout/stderr）；写日志侧用逐行 writer 适配 `task.StepLog`，**无换行的超长进度条按 4 KiB 强制断行**——攒成整串等于让用户盯着一段时长未知的「执行中」。同一出口供备份逻辑导出复用（转储写文件、stderr 只留作报错原因）。
+
+**失败点名**：编译／停用失败时先落一行 `err`「扩展 {name} {安装|停用}失败：{原因}」，再把错误消息收紧成「**扩展 {name} {安装|停用}失败，本次扩展集未应用**」——短、可读、含扩展名，供 toast 直出（§3.2 原则 3「错误信息是人话」）。
+
+#### 5.16.4 停用扩展 = 删 ini（真机取证）
+
+官方 `php` 镜像**没有** `docker-php-ext-disable`。`docker-php-ext-enable` 的全部效果就是往 `/usr/local/etc/php/conf.d/` 写 `docker-php-ext-<name>.ini`，故停用即：
+
+```
+rm -f /usr/local/etc/php/conf.d/docker-php-ext-<name>.ini
+```
+
+真机取证（干净 `php:8.4-fpm`）：`conf.d/` 默认只有 `docker-fpm.ini`、`docker-php-ext-opcache.ini`、`docker-php-ext-sodium.ini`；`rm -f docker-php-ext-sodium.ini` 后 `php -m` 里 sodium 由有到无，且对不存在的 ini `rm -f` 退出码 0（幂等）。`.so` 留在镜像里不加载即视为停用，不做镜像层瘦身（那是 commit 新镜像的事）。
+
+#### 5.16.5 明确禁止
+
+- ❌ 安装弹窗只列三五个扩展、其余要用户手输（需求 ① 的原始缺陷）；也**不得**在两个弹窗里各维护一份裁剪清单。
+- ❌ 管理扩展弹窗的默认勾选不是「本版本当前已应用的扩展」。
+- ❌ 前端本地乐观改写扩展列表（回显只认快照，硬红线 4）。
+- ❌ 编译期把 exec 输出攒成一段、或把 stderr 打进 stdout 混作一行（§5.16.3）。
+- ❌ 失败消息只说「编译失败」不点名扩展、不说明「本次扩展集未应用」。
+- ❌ 调用镜像里不存在的 `docker-php-ext-disable`。
+- ❌ 用 shell 字符串拼接扩展名进容器执行（必须 argv；扩展名过 `ValidateExt` 格式校验）。
+- ❌ 目标扩展集无变化仍重建容器；编译失败不清临时目录或不回滚。
+- ❌ 容器退回基座重建时仍只编译 `added`（等于把未装的扩展写进权威库），或对该口径静默不写日志行（§5.16.2）。
+
+### 5.17 备份归档：读不动即跳过并告警 + 数据服务逻辑导出（v2.9.9 新增，需求 ④）
+
+**一句话**：**归档不被单个读不动的文件判死；缺的那份数据靠暂停前的逻辑导出补回；缺了什么必须写进日志。**
+
+#### 5.17.1 读不动的条目：跳过 + 按目录聚合告警
+
+**根因**：`./{kind}/{ver}/data`（或自定义数据目录）与 `./{kind}/{ver}/logs` 里的文件由**容器内 uid** 创建，宿主用户读不动——真机取证（同一台机、宿主登录用户既非 root 也不在那些组里，四个路径 `head -c 4` 全部 `Permission denied`）：
+
+| 路径 | 实际属主与权限 | 创建者 |
+|------|--------------|--------|
+| `./php/8.0/logs/{access,slow}.log` | `-rw------- root root` | php-fpm 主进程 uid 0 |
+| `./mysql/8.0/data/ibdata1` | `-rw-r----- {容器 uid} {容器组}` | mysqld |
+| `./pgsql/17/data/` | `drwx------ {容器 uid}` | postgres |
+| `./redis/8/data/dump.rdb` | `-rw------- root root` | redis-server |
+
+旧实现让整包打包失败（真机报错：`打包归档 失败: open …/php/8.0/logs/access.log: permission denied`）。
+
+**新口径**（`pkg/archive/targz.go`）：
+
+| 环节 | 行为 |
+|------|------|
+| 单条目读不动（权限不足、打包期间消失） | **跳过该条目**并记 `Skip{Path, Reason}`，整包继续；`Create` 的返回签名是 `([]string, []Skip, error)` |
+| 目录级读不动 | 同样跳过并记一条，不递归 |
+| 真正致命的错误（建目录、建归档文件、写盘失败） | 照旧上抛，任务失败 |
+| 界面回显 | `logSkips` 按**所在目录聚合**（每目录至多列 5 项 + 一行总数）进抽屉日志——真实数据目录动辄上百个不可读文件，一行一条会淹掉日志，但**缺了什么必须看得见** |
+
+#### 5.17.2 逻辑导出（dump 先行，冷拷贝兜底）
+
+`dumpKinds` = **mysql / pgsql / redis** 三种数据服务。备份任务里排在**暂停服务之前**（服务停了就 dump 不动），产物落归档内 `dump/` 前缀：
+
+| 服务 | 容器内命令 | 归档产物 | 要点 |
+|------|-----------|---------|------|
+| mysql | `mysqldump -u root [--password={明文}] --single-transaction --routines --triggers --events --all-databases` | `dump/mysql-{ver}.sql` | 空密码即原生无密码（§1.5，不校验长度）；口令作 **argv 元素**传，不拼命令行文本 |
+| pgsql | `pg_dumpall -U postgres` | `dump/pgsql-{ver}.sql` | 走 `pg_hba` 的 `local trust`，无需口令 |
+| redis | `sh -c`：`redis-cli [-a {明文}] --rdb /tmp/phpo-backup.rdb` → `cat` 流回 → 删暂存 | `dump/redis-{ver}.rdb` | `--rdb` 会 `ftruncate` 目标文件，吐 `/dev/stdout` 即 `Invalid argument`（真机取证），只能容器内暂存后流回；暂存文件无论成败都删 |
+
+**容错口径**：
+
+- 单个服务 dump 失败 → 一行 `err` 点名「{kind} {version} 逻辑导出失败：{原因} —— 本次归档不含该库数据」，**继续**备份其余服务，不判死整包。
+- 已安装但**未运行**的数据服务 → 一行 `dim`「未运行，跳过逻辑导出（其数据目录按冷拷贝打包，读不动的部分不在归档内）」，不阻止备份。
+- dump 产物只在真要导出时才建目录（空目录不会进归档，即不会凭空多出 `dump/` 顶层）；半途而废的转储文件**必须删除**（比没有更危险）；转储为空亦删并报错。
+- **stderr 不进转储文件**（否则帧头/告警会把 SQL 污染成不可重放的文本），只留作报错原因。
+
+#### 5.17.3 恢复侧口径
+
+恢复只做冷拷贝回放，**不自动重放 dump**；恢复日志必须给一行明示「归档内的 `dump/` 未自动重放，需要请按库手工导入」，不得静默让用户以为数据已完整回来（§5.13.11 口径不变：导入前清空目标命名空间）。备份脱敏口径见 `docs/备份脱敏规范.md`——明文密码随 `config.yaml` 入档是本项目的既定策略（§1.5），dump 产物含用户数据但不含额外口令（`mysqldump` 的 `--password` 只是连接参数，不落 SQL）。
+
+#### 5.17.4 明确禁止
+
+- ❌ 单个文件读不动即判死整包（需求 ④ 的原始缺陷）。
+- ❌ 跳过后不告警、或把上百条 skip 一行条铺进日志（要按目录聚合 + 总数）。
+- ❌ 在暂停服务**之后**才 dump。
+- ❌ 把 dump 口令拼成 shell 命令行文本（特殊字符需转义、且会被二次展开）。
+- ❌ 恢复侧静默吞掉「dump 未重放」这件事。
+
+### 5.18 数据服务运行态：日志出口 · 坏配置自愈 · 启停就绪（v2.9.9 新增，需求 ③）
+
+**一句话**：**容器内进程不得往宿主 bind 挂载目录写日志；旧装机的坏配置要在「启用」时也修；启动必须等到稳定 running，失败要带容器日志尾部。**
+
+#### 5.18.1 根因：容器内写宿主 bind 目录 = 崩溃循环
+
+`pgsql` 的默认 `postgresql.conf` 原写 `logging_collector = on` + `log_directory = '/var/log/postgresql'`，而 `/var/log/postgresql` 是宿主 `./pgsql/{ver}/logs` **bind 挂进去**的目录：该目录由宿主用户创建（0755）、容器内 `postgres` 是另一个 uid，**建文件即 `Permission denied`** → `postgres` FATAL 退出 → `restart=unless-stopped` 无限重启。表现为反复启停后无法启用：`运行态校验失败：phpo-pgsql-17 期望 running=true，实际 false`。
+
+> **真机 A/B 取证**（同一台机、同一 `postgres:17` 镜像、同样把宿主 logs 目录 bind 到 `/var/log/postgresql`）：拿旧版 `postgresql.conf` 起容器 → `FATAL: could not open log file "/var/log/postgresql/…": Permission denied`，永远到不了 `ready to accept connections`；换成 §5.18.1 两行 → `database system is ready to accept connections`、0 次 FATAL、宿主 logs 目录保持为空（日志不再落盘）。崩溃循环中的真机容器实测 `ExitCode=1`、`RestartCount` 持续累加（首次取证 40，收口复现时同一容器已 128）。
+
+**修法**（模板 `internal/template/templates/pgsql/postgresql.conf.tmpl`）：
+
+```
+log_destination = 'stderr'
+logging_collector = off
+```
+
+日志随容器标准输出由 Docker 收集（`docker logs phpo-pgsql-{version}`）。这是**唯一一处**对冻结原型 `DEFAULT_CONFIGS` 的生产偏离，已在 `scripts/check-templates.go` 的 golden 里同步并注明原因（冻结原型 `前端唯一界面来源.txt` 与 `index.html` 不改；demo-only 的 `frontend/src/constants/configs.ts` 是 `!hasBackend()` 回落文本，仍留旧写法）。
+
+#### 5.18.2 旧装机就地自愈
+
+`prepareService` 只在装/重建时执行，且对已存在的配置**一律保留不覆盖**——旧装机的坏 `postgresql.conf` 永远等不到被换掉。故「启用」路径上也跑一次 `healPgLogging`（`internal/service/workdir.go`）：
+
+| 情形 | 行为 |
+|------|------|
+| 文件仍是旧默认那三行（按原文精确匹配） | 就地把该段替换成 §5.18.1 两行，`ok` 行说明已修复 |
+| 含 `logging_collector = on` 但已非默认写法 | **不改写**（用户自己的配置），只 `dim` 行提示「请自行核对该项」 |
+| 已是新写法 / 非 pgsql / 读不到文件 | 直接返回 |
+
+**写入必须原地截断**：`postgresql.conf` 是单文件 bind，写临时文件再 `rename` 会换 inode，容器读到的仍是旧那份。
+
+#### 5.18.3 启停就绪与失败取证
+
+| 环节 | 口径 |
+|------|------|
+| `StartContainer` | 按当前 `ContainerStatus` 分流：已 `running` 不动 → `restarting`／其他一律 `ContainerRestart`／`ContainerStart` |
+| `waitRunning` | 轮询到 running 后再静默 `startHold = 2s` **复验**（躲开「起来即崩」窗口），超时 `startWait = 12s`、间隔 `startInterval = 300ms`；这三个量是 `var`，供单测收紧到毫秒级 |
+| 失败消息 | `startFailureMsg`：容器名 + 状态 + 退出码 + **容器日志尾部 5 行**（`LogTail`，同样去帧）——人话且自带证据，不用再去翻 Docker |
+| `StopContainer` | 只对 `needsStop`（`running`／`restarting`）执行，其余幂等跳过 |
+
+**容器 `State.Running` ≠ 服务进程就绪**（entrypoint 有前置脚本）；运行态校验失败的报错要能指向真正原因，因此 §5.13.9 校准之后仍失败的启停必须走上表的取证路径。
+
+#### 5.18.4 明确禁止
+
+- ❌ 任何服务模板让容器内进程往宿主 bind 目录写日志文件（不止 pgsql）。
+- ❌ 只在装/重建时修配置，「启用」路径不修。
+- ❌ 用「写临时文件 + rename」改单文件 bind 挂载里的配置文件。
+- ❌ 启动只看一次 `State.Running` 即判成功，或超时前不复验。
+- ❌ 启动失败只报「期望 running=true，实际 false」而不带退出码与容器日志尾部。
 
 ---
 
@@ -1605,6 +1797,10 @@ type OfflineService interface {
 | 手工导入缓存条目（v2.9.8，需求 1） | `internal/preflight/rules_cache.go#cacheImport` + `service/offline_service.go#ImportEntry` + `cache/promote.go#{ImportImage,ImportExtension,placeFile}` | `components/business/CacheImportModal.vue` + `api/offline.ts#importEntry` + `useCache.ts#doImport` |
 | 无任务归属事件的系统日志通道（v2.9.8，需求 3/6） | —（纯前端落地；事件源见 §5.6.2） | `stores/taskStore.ts#eventLine` + `sysLines` + `TaskDrawer.vue` 左栏 |
 | 抽屉两栏可拖拽（v2.9.8，需求 4） | — | `TaskDrawer.vue#.drawer-splitter` + `layoutStore.setSplit` + `--drawer-split` |
+| PHP 扩展全量目录 + 选择器（v2.9.9，需求 ①/②） | `internal/config/extensions.go`（`peclExts` / `ExtInstallCmds`）+ `scripts/check-ext-catalog.go` 对账 | `constants/ext.ts`（唯一清单）+ `components/common/ExtPicker.vue` + `InstallModal.vue` + `PhpExtensionsModal.vue` |
+| 扩展执行期实时日志 + 失败点名（v2.9.9，需求 ③） | `engine/exec.go#ExecStream`（`stdcopy` 去帧双 writer）+ `extension_service.go`（`extLogWriter` / `extFailed` / `extDisableArgs`） | 抽屉左栏 `task:log` 逐行 + `submitWrite` toast 原样显示后端短消息 |
+| 备份跳过告警 + 逻辑导出（v2.9.9，需求 ④） | `pkg/archive/targz.go`（`Skip`，`Create` 返回 `([]string, []Skip, error)`）+ `backup_service.go`（`dumpKinds` / `dumpStep` / `dumpOne` / `dumpCmd` / `logSkips`） | `BackupView.vue` 无独立模态；结果与缺项进抽屉日志 |
+| 数据服务运行态（v2.9.9，需求 ③） | `template/templates/pgsql/postgresql.conf.tmpl`（stderr）+ `workdir.go#healPgLogging` + `engine/container.go`（`waitRunning` / `startFailureMsg` / `needsStop`）+ `engine/inspect.go`（`ContainerStatus` / `LogTail`） | —（报错文本经服务卡片状态点与 toast 回流） |
 
 ---
 
@@ -1687,6 +1883,65 @@ type OfflineService interface {
 - ❌ 把 `update:progress` 铺进日志流水（连续量淹没日志；进度条已承载）。
 - ❌ 在视图里再立一份事件小面板（唯一出口是抽屉）。
 
+### 决策 25：PHP 扩展采用「每版本一份全量目录 + 目标扩展集 + 实时逐行日志 + 失败点名」（v2.9.9，需求 ①/②/③）
+
+**核心决策**：扩展不再是「让用户手输几个名字」的输入框，而是**一处前端全量目录（73 项 · 8 分组）驱动两处入口**；提交的是**完整目标扩展集**；执行期容器输出**去帧逐行**实时进抽屉日志，失败**点名**到扩展并中止本单。
+
+#### 理由
+
+1. **画像 A/C**：外包与学习者不知道该装哪些扩展（Laravel 要 `mbstring/bcmath/curl/openssl`，WordPress 要 `mysqli/gd`）。目录 + 常用默认勾选把「查教程装环境」变成「看一眼就勾对」。
+2. **画像 D**：高级用户要能装目录外的扩展——目录是便利集不是白名单，格式过校验即可添加（最小限制原则）。
+3. **两处清单必然漂移**：安装弹窗与管理弹窗各维护一份裁剪清单，迟早一份有 `swoole` 一份没有。单一 `EXT_CATALOG` + 与后端 `peclExts` 的门禁对账（`check-ext-catalog.go`）把「分类错了必编译失败」变成 CI 事实。
+4. **编译是有时长的黑盒**：`docker-php-ext-install` / `pecl install` 一跑几十秒。日志攒成一段等于没有日志；失败不点名扩展，用户无从知道该取消勾选哪一项。
+
+#### 具体规则（四条）
+
+1. **单一清单**：`frontend/src/constants/ext.ts`；`catalogFor(version)` 管可见性、`commonExts(version)` 管安装期默认勾选（11 项）。
+2. **完整集合语义**：后端 `diffExts` 自算增删，无变化不建任务；停用 = 删 `conf.d` 里的 ini（§5.16.4）。
+3. **实时逐行日志**：唯一 exec 出口 `engine.ExecStream`（`stdcopy` 去帧 + stdout/stderr 双 writer + 4 KiB 无换行兜底）。
+4. **失败即中止并点名**：`err` 行 + 短错误消息（含扩展名与「本次扩展集未应用」）→ toast 原样显示；容器回滚到原镜像、临时目录清空。
+
+#### 明确禁止
+
+见 §5.16.5。
+
+### 决策 26：备份归档采用「跳过并聚合告警 + 暂停前逻辑导出」双保险（v2.9.9，需求 ④）
+
+**核心决策**：归档**不因单个读不动的条目判死**，缺项写进日志；数据靠 `mysqldump` / `pg_dumpall` / `redis-cli --rdb` 在**暂停服务之前**导出，与冷拷贝并存。
+
+#### 理由
+
+1. **权限现实**：宿主数据目录里的文件由容器内 uid 创建（`0700`/`0600`），宿主侧逐文件可读从来不是可靠前提——真机即因一个 `logs/access.log` 读不动而整包失败。
+2. **冷拷贝对运行中的库本就不完备**：热拷贝 `ibdata1` / WAL / AOF 未必自洽；逻辑导出才是「备份 → 换机 → 恢复数据」这条主路的可靠形态。
+3. **不假装完整**：跳过必须告警、未运行必须说明、dump 失败必须点名——用户要能判断这份归档值不值得留（可恢复性 §5.13.1）。
+4. **不做静默重放**：恢复侧不自动灌 dump（会覆盖用户既有库，风险不可逆），只明示「dump 未重放」，由用户手工导入。
+
+#### 具体规则（四条）
+
+1. `archive.Create` 返回 `([]string, []Skip, error)`：读不动即跳过并记账，致命错误照旧上抛。
+2. `logSkips` 按目录聚合（每目录至多 5 项 + 总数一行）进抽屉日志。
+3. dump 步骤排在暂停之前，产物入 `dump/` 前缀，口令走 argv，stderr 不入转储文件。
+4. 单库 dump 失败只 `err` 点名并继续；未运行的服务 `dim` 说明后跳过。
+
+#### 明确禁止
+
+见 §5.17.4。
+
+### 决策 27：数据服务运行态采用「日志走 stderr + 启用时就地自愈 + 启动复验取证」（v2.9.9，需求 ③）
+
+**核心决策**：模板层把 pgsql 日志改成 `stderr` + `logging_collector = off`；「启用」路径对旧装机的坏配置**就地截断修复**；`StartContainer` 必须等到**稳定 running**（running 后复验 2s），失败消息带退出码与容器日志尾部 5 行。
+
+#### 理由
+
+1. **bind 挂载目录写日志是设计缺陷**：宿主建目录（0755）、容器内另一 uid 建文件必 `Permission denied`，`postgres` FATAL + `unless-stopped` = 无限重启，表现为「反复启停后无法启用」——这正是需求 ③ 的现象。
+2. **只改模板修不了旧装机**：`prepareService` 不覆盖已存在的配置，旧 `postgresql.conf` 永远留着那三行；卸载重装不是可接受的修法（画像 A 会因此丢数据）。
+3. **`State.Running` ≠ 服务就绪**：只看一次的就绪判定会把「起来即崩」报成成功；复验 + 日志尾部把「为什么起不来」直接放进报错文本，省掉一轮排查（§3.2 原则 3）。
+4. 这是**唯一一处**对冻结原型 `DEFAULT_CONFIGS` 的生产偏离，已在 `scripts/check-templates.go` 的 golden 注明；原型 SSOT 不动。
+
+#### 明确禁止
+
+见 §5.18.4。
+
 ---
 
 ## 8. 跨平台差异矩阵
@@ -1730,6 +1985,11 @@ type OfflineService interface {
 | **R90** | **手工导入误删用户源文件** | **`placeFile(keepSrc=true)` 即复制不搬走；`internal/cache/import_test.go` 断言导入后源文件仍在**（v2.9.8） |
 | **R91** | **事件发了界面却不动（「实时同步」沦为口号）** | **§5.6.2 逐事件落地对照表 + §0.2 规则 25；`update:progress` 是唯一显式豁免项；`docker:state-drift` 额外触发 `syncState()`**（v2.9.8） |
 | **R92** | **系统日志通道被高频事件撑爆内存** | **`SYS_MAX = 200` 滚动裁尾；连续量（`update:progress`）不进日志**（v2.9.8） |
+| **R93** | **扩展目录与后端安装方式分类漂移（用内置命令装 pecl 扩展必编译失败）** | **第 5 项门禁 `scripts/check-ext-catalog.go` 逐项对账 `EXT_CATALOG` ↔ `peclExts`（登记在 `task check` 与 `ci.yml`）**（v2.9.9） |
+| **R94** | **容器 exec 输出带 8 字节帧头或被攒成一段，抽屉日志不可读、失败不点名** | **唯一出口 `engine.ExecStream`（`stdcopy` 去帧 + stdout/stderr 双 writer + 4 KiB 无换行强断）；`extension_service_test.go` 三条用例 + `test/integration/t601_extension_live_test.go` 真机取证**（v2.9.9） |
+| **R95** | **单个读不动的文件判死整包备份** | **`archive.Create` 跳过并记 `Skip`，`logSkips` 按目录聚合告警（§5.17.1）**（v2.9.9） |
+| **R96** | **冷拷贝缺库内数据，恢复后用户以为数据完整** | **暂停服务前先逻辑导出入 `dump/`；恢复侧明示「dump 未重放」（§5.17.2 / §5.17.3）**（v2.9.9） |
+| **R97** | **容器内往宿主 bind 挂载目录写日志 → FATAL 崩溃循环，且旧装机的坏配置永不更新** | **pgsql 日志改走 stderr（模板 + `check-templates.go` golden 注明唯一生产偏离）；「启用」路径 `healPgLogging` 原地截断修复；`waitRunning` 复验 + 失败消息带退出码与容器日志尾部；`test/integration/g4_pgsql_heal_live_test.go` 真机两头取证（旧配置裸启动必失败 → 经 `Start` 自愈后就绪）（§5.18）**（v2.9.9） |
 
 ---
 
@@ -1787,10 +2047,10 @@ type OfflineService interface {
 ### 11.3 开发者工具
 
 - CI 流水线（`.github/workflows/{ci,lint,release}.yml`）
-- i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest 四项门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
+- i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（77 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` 真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（78 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **10** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -1868,6 +2128,34 @@ type OfflineService interface {
 - [ ] 抽屉两栏是否默认 70%／30% 且**可左右拖拽**（40–80%、双击中缝复位、写 `localStorage`）？头部左侧标签是否固定为「服务」二字？
 - [ ] 所有写操作是否 `await` 后端 + 触发快照回流？非快照数据（缓存列表、审计）写后是否主动重拉？
 
+### 12.9 PHP 扩展目录 · 备份容错 · 数据服务运行态检查（v2.9.9 新增，§5.16–§5.18）
+
+**扩展（§5.16）**：
+
+- [ ] 两处入口（安装弹窗 / 管理扩展弹窗）是否共用 `constants/ext.ts` 这一份全量目录？有没有另立裁剪清单？
+- [ ] 安装期是否默认勾选 `commonExts(version)`（11 项）？管理弹窗默认勾选是否等于**本版本当前已应用的扩展**？
+- [ ] 提交的是**完整目标扩展集**吗（无变化不建任务、不重建容器）？
+- [ ] 容器内命令的输出是否**去帧后逐行实时**进 `task:log`（stdout `meta` / stderr `dim`，超长无换行 4 KiB 强断）？
+- [ ] 失败是否一行 `err` 点名扩展 + 短消息「本次扩展集未应用」并让弹窗**不关**？
+- [ ] 停用是否走 `rm -f conf.d/docker-php-ext-<name>.ini`（不是镜像里不存在的 `docker-php-ext-disable`）？
+- [ ] 命令是否以 argv 传入容器（不经 shell）？`check-ext-catalog.go` 门禁是否绿？
+- [ ] 固化镜像不在本机、容器退回基座重建时，待编译集是否换成**完整目标集**（不是只装 `added`）、并给一行 `dim` 说明？（§5.16.2 / v2.9.10）
+
+**备份（§5.17）**：
+
+- [ ] 读不动的条目是否跳过 + 按目录聚合告警（每目录至多 5 项 + 总数一行），而不是判死整包或静默缺项？
+- [ ] 逻辑导出是否排在**暂停服务之前**？未运行的服务是否 `dim` 说明后跳过？
+- [ ] 单库 dump 失败是否点名并继续？半途/空转储文件是否删除？
+- [ ] 口令是否作 argv 元素传（不拼命令行文本）？stderr 是否**不入**转储文件？
+- [ ] 恢复侧是否明示「`dump/` 未自动重放」？
+
+**数据服务运行态（§5.18）**：
+
+- [ ] 服务模板里是否还有让容器内进程往宿主 bind 目录写日志文件的配置项（`logging_collector` 一类）？
+- [ ] 「启用」路径是否也修旧装机的坏配置（`healPgLogging`）？是否用**原地截断**写（不换 inode）？
+- [ ] 启动是否等到稳定 running（running 后复验）？失败消息是否带状态 + 退出码 + 容器日志尾部？
+- [ ] `check-templates.go` 的 golden 是否仍注明「pgsql 日志段是唯一生产偏离」？原型 SSOT 是否未改？
+
 ---
 
 ## 13. 总纲变更流程
@@ -1884,8 +2172,55 @@ type OfflineService interface {
 
 ---
 
-**phpo 项目总纲 v2.9.8**
+**phpo 项目总纲 v2.9.10**
 
+> **v2.9.10 变更（§5.16.2 补「基座退回支：待编译集换成完整目标集」，收口一处权威态与容器实际态不一致的缺陷）**：
+> v2.9.9 把扩展目录、执行期日志与失败点名写成冻结条款，但漏掉了**恢复路径的编译集合**这一格：库里已启用过扩展、而
+> 固化镜像 `phpo/php:{ver}` 不在本机时（手工删镜像、换机没带过来），容器只能退回基座 `php:{ver}-fpm` 重建——基座
+> **不含任何** `prev` 扩展，而编译步骤仍只装 `diffExts` 算出的 `added`，于是 `prev` 里那几项既没被编译、又会在任务
+> 结尾被原样写进 `php_extensions` 并随快照广播，界面从此显示「已启用」而 `php -m` 里没有。这违反 §5.13.1 一致性
+> （Docker 实际状态 ≡ 库里状态），并把 `任务工单.md` T601 已登记的那条「勾掉再勾回任一扩展」轻量恢复限制放大成
+> 静默的数据不一致。现冻结为一条正向条款：**该分支的待编译集换成完整目标集、`removed` 置空（基座本就不含那几项，
+> 无需再删 ini）、并给一行 `dim` 说明口径已变**（§5.16.3 日志契约同步补这一行、§5.16.5 补一条禁止项、§12.9 补一项
+> 自查）。落地：`internal/service/extension_service.go` 的 `rebuiltFromBase` 分支 + `uniqueSorted` 助手；用例
+> `TestExtension_Apply_BaseFallbackRecompilesFullSet` 锁死命令序列 / 落库集合 / 该日志行。假件前提一并校正：
+> `ImageExists` 原先只认**本次** commit，导致「固化镜像已在本机」的正常路径无法构造，现加 `hasImages` 供用例显式
+> 声明（`TestExtension_Apply_DisableRemovesIni` 据此走回正常支，原有断言一字未削）。同源同步：`任务工单.md` T601
+> 段新增 2026-09-23 修正条、`docs/CHANGELOG.md` v2.9.9 段新增「缺陷审计追加」子条。验真：`gofmt -l .` 无输出、
+> `go vet ./...`、`go build ./...`、`go test ./... -count=1` 全绿，五项门禁全过（i18n 各 608／模板 golden 空 diff／
+> 命名／清单／扩展 73 项分类对账）。**真宿主 GUI 点击级验收仍未做**（本轮只补后端语义与文档）。
+> **明确未改**：8 条硬红线原文、三段式写操作、17 个事件名（未新增）、后端任务状态 4 个、preflight **19** action 与
+> NEEDS_HOME **17**、`pkg/errs` **28** 码、§0.3 全部数字（扩展目录仍 73／常用仍 11／门禁仍 5 项）、密码／版本／
+> 域名／端口策略、离线缓存三条铁律与临时目录四必清、§5.15 三根互斥唯一、§5.16.1 目录与 §5.16.4 停用=删 ini 口径、
+> 冻结的原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）。
+>
+> **v2.9.9 变更（新增 §5.16 PHP 扩展目录与实时日志、§5.17 备份归档容错与逻辑导出、§5.18 数据服务运行态，把 Request G 的四条收口为冻结条款）**：
+> 本版本处理的是四处真实缺陷：① 安装 PHP 时扩展区只有零星几项、要用户手输，且「管理扩展」弹窗的清单被裁剪掉，
+> 用户看不见本版本可用扩展的全貌；② 扩展编译期容器内输出既不实时也不可读（Docker exec attach 流带 **8 字节帧头**），
+> 失败只报「编译失败」不点名是哪一项；③ pgsql 反复启停后无法启用——默认 `postgresql.conf` 让容器内进程往**宿主 bind
+> 挂载的日志目录**写文件（宿主 0755、容器内另一 uid），`Permission denied` → FATAL → `unless-stopped` 无限重启，且
+> `prepareService` 不覆盖已存在的配置，旧装机永远修不到；④ 备份因单个读不动的文件（真机是 `logs/access.log`）整包失败。
+> 现新增 **§5.16**（唯一全量目录 73 项 · 8 分组 · 常用 11 项默认勾选、目录外可手工添加、**目标扩展集**语义、六步全链路
+> 逐行日志、失败点名扩展并中止、停用 = 删 `conf.d` ini 的真机取证）、**§5.17**（读不动即跳过 + 按目录聚合告警、暂停前
+> `mysqldump` / `pg_dumpall` / `redis-cli --rdb` 逻辑导出入 `dump/`、恢复侧明示未重放）、**§5.18**（pgsql 日志走 stderr、
+> 启用路径 `healPgLogging` 原地截断自愈、`waitRunning` 复验 + 失败带退出码与容器日志尾部）三节条款，并补 §7 **决策 25 / 26 / 27**、
+> §9 风险 **R93–R97**、§12.9 自查清单。关键口径：**扩展目录是便利集不是白名单**（过 `ValidateExt` 格式即可添加，最小限制原则）；
+> **提交的永远是完整集合**（后端自算增删，无变化不建任务、不重建）；**容器内命令的输出一行都不能少、失败必须点名**
+> （§0.2 新增规则 **26**）；**归档不被单个读不动的条目判死，但缺了什么必须写进日志**（规则 **27**）；
+> **容器内不得往宿主 bind 目录写日志文件**（规则 **28**）。唯一出口 `engine.ExecStream`（`stdcopy` 去帧 + stdout/stderr 双 writer）
+> 取代 `ExecInContainer`，扩展编译与备份转储共用。同步落点：头部三条新条款、§0.3 权威表补 **同类路径生效根数 1（把 v2.9.8 的互斥唯一口径显式写进权威表）／扩展目录 73／常用 11／逻辑导出 3／
+> 归档跳过处置／启动就绪 12s／门禁脚本 5** 七行、§1.1 结论表三行、§4.1 目录树（`ExtPicker.vue` 使 common 组件 8→9、
+> `scripts/check-ext-catalog.go`）、§6 映射表四行、§11.3 门禁四项→五项。**pgsql 日志段是对冻结原型 `DEFAULT_CONFIGS` 的
+> 唯一一处生产偏离**，已在 `scripts/check-templates.go` 的 golden 注明原因；原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）
+> 与 demo-only 的 `frontend/src/constants/configs.ts` 未改。
+> **同源补全（真机取证之后）**：§4.1 与 §11.3 登记 `test/integration/g4_pgsql_heal_live_test.go`——旧版 `postgresql.conf` 裸
+> `StartContainer` 必超时失败且报错自带容器日志尾部（`could not open log file`），同一份坏配置经 `AppService.Start` 即自愈并等到就绪，
+> 把 §5.18.2 的因果在真机上两头锁死（R97 缓解列同步）；`*_test.go` 计数按真实仓库校正为 **78**（与包同目录）+ `test/integration/` **10**
+> 个 live 用例（原 77 系既有漂移，非本轮引入）。
+> **明确未改**：8 条硬红线原文、三段式写操作、17 个事件名（未新增）、
+> 后端任务状态 4 个、preflight **19** action 与 NEEDS_HOME **17**、`pkg/errs` **28** 码、密码／版本／域名／端口策略、
+> 离线缓存三条铁律与临时目录四必清、§5.15 三根互斥唯一条款、抽屉 70%／30% 与系统日志通道 200 行上限。
+>
 > **v2.9.8 变更（三处「可自定义根」+ 手工导入缓存 + 十七事件全落地 + 抽屉占比改默认值，把 Request F 的八条一次性收口为冻结条款）**：
 > 本版本处理的不是文案，而是四类真实缺口：① 缓存根/备份根/每服务版本数据目录此前只有后端能配、界面上改不了，
 > 且「自定义」与「默认」两条路径可能同时被读到，行为二义；② 离线缓存页的 `off-events` 只是本地列表，与 §5.6
@@ -2002,6 +2337,9 @@ type OfflineService interface {
 - PHP 切换：**精确对应 `php-{version}-fpm:9000`**
 - 状态同步：**后端唯一权威 + 前端订阅事件 + 17 事件名逐一实时落地（§5.6.2）；无任务归属的 `cache:*`/`docker:*`/`update:*` 逐行进抽屉「系统日志通道」（`update:progress` 除外）**
 - 可自定义根（v2.9.8）：**缓存根（默认 `./offline/`）／备份根（默认 `./backups/`）／每服务版本数据目录（默认 `./{kind}/{version}/data`）三处可编辑路径 + 打开任意文件夹 + 读写；每一类互斥唯一（自定义即完全取代默认，不做二级回退），唯一限制是路径安全；改根走三段式并需队列空闲，`Rebind` 后即生效；缓存条目可手工导入（复制、不搬走源文件）**
+- PHP 扩展（v2.9.9）：**每版本一份全量目录（73 项 · 8 分组，常用 11 项安装时默认勾选，目录外可手工添加）· 安装弹窗与「管理扩展」弹窗共用同一份 · 提交完整目标扩展集（无变化不重建）· 容器内编译输出去帧逐行实时进抽屉 · 失败点名扩展并中止本单 · 停用 = 删 `conf.d` ini（见 §5.16）**
+- 备份归档（v2.9.9）：**读不动的条目跳过 + 按目录聚合告警，不判死整包 · mysql／pgsql／redis 在暂停服务前逻辑导出（`mysqldump`／`pg_dumpall`／`redis-cli --rdb`）入归档 `dump/` · 恢复侧明示 dump 未自动重放（见 §5.17）**
+- 数据服务运行态（v2.9.9）：**容器内进程不往宿主 bind 挂载目录写日志文件（pgsql 日志走 stderr 由 Docker 收集）· 旧装机的坏配置在「启用」时就地截断自愈 · 启动等稳定 running，失败带退出码与容器日志尾部（见 §5.18）**
 - 任务抽屉：**日志左默认 70% ／ 队列右默认 30%（中缝可左右拖拽 40–80%、双击复位；头部左侧标签固定为「服务」二字） · 新任务永远在最上面（提交时间倒序） · 每行显式显示态（等待中／执行中／已完成，另留 unknown 兜底位；系派生，后端任务状态仍为 4 个）**
 - 升级：**支持版本检查和自动升级（SHA256 + Ed25519 双校验）**
 - Docker 清洁：**所有操作幂等、原子、隔离、一致、可清理、可恢复**

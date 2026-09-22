@@ -27,7 +27,7 @@ func TestArchive_RoundTrip(t *testing.T) {
 	writeFile(t, filepath.Join(src, "mysql", "8.4", "data", "ibdata"), "bin")
 	archivePath := filepath.Join(dst, "backup.tar.gz")
 
-	tops, err := Create(archivePath, []Source{
+	tops, _, err := Create(archivePath, []Source{
 		{ArcPrefix: "home", HostPath: src},
 		{ArcPrefix: "missing", HostPath: filepath.Join(src, "does-not-exist")},
 	})
@@ -61,7 +61,7 @@ func TestArchive_TopLevel(t *testing.T) {
 	www := t.TempDir()
 	writeFile(t, filepath.Join(www, "index.php"), "B")
 	archivePath := filepath.Join(t.TempDir(), "b.tar.gz")
-	if _, err := Create(archivePath, []Source{
+	if _, _, err := Create(archivePath, []Source{
 		{ArcPrefix: "db", HostPath: filepath.Join(src, "a.txt")},
 		{ArcPrefix: "www", HostPath: www},
 	}); err != nil {
@@ -97,5 +97,58 @@ func TestArchive_RejectsTraversal(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(out), "escape.txt")); !os.IsNotExist(err) {
 		t.Fatal("不应在 dstDir 之外落地文件")
+	}
+}
+
+// 真机装机后 mysql 的 ibdata1、pgsql 的整个 data/、各服务 logs 里的文件由容器内 uid 拥有且 0700/0600，
+// 宿主进程读不动。读不动的条目必须「跳过 + 上报」而非判死整包——否则备份功能在真实数据目录上直接不可用。
+func TestArchive_SkipsUnreadableAndReports(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 下 chmod 000 不生效")
+	}
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "conf", "php.ini"), "[PHP]\n")
+	writeFile(t, filepath.Join(src, "logs", "access.log"), "owned-by-root-in-real-life")
+	writeFile(t, filepath.Join(src, "data", "PG_VERSION"), "17\n")
+	if err := os.Chmod(filepath.Join(src, "logs", "access.log"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(src, "data")
+	if err := os.Chmod(dataDir, 0o000); err != nil { // 仿 pgsql/17/data：连 ReadDir 都失败
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) }) // 后注册先跑，赶在 TempDir 清场之前
+
+	dst := filepath.Join(t.TempDir(), "b.tar.gz")
+	tops, skipped, err := Create(dst, []Source{{ArcPrefix: "home", HostPath: src}})
+	if err != nil {
+		t.Fatalf("个别条目读不动不应判死整包: %v", err)
+	}
+	if len(tops) != 1 || tops[0] != "home" {
+		t.Fatalf("可读内容仍应入档，tops 实得 %v", tops)
+	}
+	if len(skipped) != 2 {
+		t.Fatalf("应上报 2 条跳过（不可读文件 + 不可进目录），实得 %+v", skipped)
+	}
+	for _, s := range skipped {
+		if !strings.Contains(s.Reason, "权限不足") {
+			t.Fatalf("跳过原因应是人话权限说明，实得 %+v", s)
+		}
+	}
+	if !strings.HasSuffix(skipped[0].Path, "data") || !strings.HasSuffix(skipped[1].Path, "access.log") {
+		t.Fatalf("跳过项应按 walk 字典序（data 目录先于 logs/access.log），实得 %v / %v", skipped[0].Path, skipped[1].Path)
+	}
+
+	// 归档本身必须完好：解包不得因跳过的条目而中断
+	out := t.TempDir()
+	n, err := Extract(dst, out)
+	if err != nil {
+		t.Fatalf("归档应仍可解包: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("应只解出 php.ini 一个文件，实得 %d", n)
+	}
+	if _, err := os.Stat(filepath.Join(out, "home", "conf", "php.ini")); err != nil {
+		t.Fatalf("php.ini 应解出: %v", err)
 	}
 }

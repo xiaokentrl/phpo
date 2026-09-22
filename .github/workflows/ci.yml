@@ -43,12 +43,13 @@ jobs:
       - name: Test
         run: go test ./...
 
-      - name: Project checks (i18n / templates / docker-naming / cache-manifest)
+      - name: Project checks (i18n / templates / docker-naming / cache-manifest / ext-catalog)
         run: |
           go run ./scripts/check-i18n-keys.go
           go run ./scripts/check-templates.go
           go run ./scripts/check-docker-naming.go
           go run ./scripts/check-cache-manifest.go
+          go run ./scripts/check-ext-catalog.go
 
   # 说明：本作业与 go 作业共用同一构建口径（wails3 task），且必须先有 TS 绑定。
   # frontend/bindings/ 是 wails3 生成物且被 gitignore（§4.1），全新 checkout 里并不存在，

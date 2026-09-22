@@ -95,9 +95,10 @@ tasks:
       - go vet ./...
 
   check:
-    desc: 工程规范校验脚本全量（i18n/模板/命名/缓存清单）
+    desc: 工程规范校验脚本全量（i18n/模板/命名/缓存清单/扩展目录）
     cmds:
       - go run ./scripts/check-i18n-keys.go
       - go run ./scripts/check-templates.go
       - go run ./scripts/check-docker-naming.go
       - go run ./scripts/check-cache-manifest.go
+      - go run ./scripts/check-ext-catalog.go

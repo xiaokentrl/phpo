@@ -12,9 +12,12 @@ work_mem = 8MB
 maintenance_work_mem = 64MB
 wal_level = replica
 
-logging_collector = on
-log_directory = '/var/log/postgresql'
-log_filename = 'postgresql-%Y-%m-%d.log'
+# 日志走 stderr → 容器标准输出，由 Docker 收集（docker logs phpo-pgsql-{{ .Version }}）。
+# 不开 logging_collector：它要往宿主 bind 挂进来的 ./pgsql/{{ .Version }}/logs 写文件，
+# 而该目录由宿主用户创建（0755）、容器内 postgres 是另一个 uid，建文件即 Permission denied，
+# postgres FATAL 退出后被 unless-stopped 无限重启，服务永远启不来。
+log_destination = 'stderr'
+logging_collector = off
 log_timezone = 'Asia/Shanghai'
 timezone = 'Asia/Shanghai'
 log_min_duration_statement = 1000

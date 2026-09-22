@@ -12,12 +12,15 @@ const (
 	ExtToolPECL    ExtTool = "pecl"    // pecl install + docker-php-ext-enable（第三方扩展：redis/swoole 等）
 )
 
-// peclExts 需经 PECL 分发的常见第三方扩展名（小写）；不在此表者按内置处理
+// peclExts 需经 PECL 分发的常见第三方扩展名（小写）；不在此表者按内置处理。
+// 这份表必须与前端唯一清单 frontend/src/constants/ext.ts 的 tool: 'pecl' 项一致，
+// 由 scripts/check-ext-catalog.go（task check）对账——分类错了就是「内置命令装第三方扩展」，必然编译失败。
 var peclExts = map[string]bool{
-	"redis": true, "swoole": true, "xdebug": true, "imagick": true, "mongodb": true,
+	"redis": true, "swoole": true, "xdebug": true, "imagick": true, "gmagick": true, "mongodb": true,
 	"apcu": true, "memcached": true, "msgpack": true, "igbinary": true, "yaf": true,
 	"phalcon": true, "ssh2": true, "protobuf": true, "rdkafka": true, "zmq": true,
-	"uuid": true, "ds": true,
+	"uuid": true, "ds": true, "yaml": true, "amqp": true, "grpc": true, "uv": true,
+	"event": true, "xlswriter": true,
 }
 
 // ClassifyExt 判定扩展安装方式（大小写不敏感）

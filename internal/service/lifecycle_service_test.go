@@ -182,12 +182,14 @@ func (s *fakeStore) setPort(kind, version string, port int) {
 type fakeEmitter struct {
 	events []string
 	logs   []string // 捕获 task:log 文本，用于断言步骤日志真的可见
+	levels []string // 与 logs 同序的日志级别，用于断言失败行是 err 级
 }
 
 func (e *fakeEmitter) Emit(event string, payload any) {
 	e.events = append(e.events, event)
 	if l, ok := payload.(model.TaskLogEvent); ok {
 		e.logs = append(e.logs, l.Text)
+		e.levels = append(e.levels, string(l.Level))
 	}
 }
 func (e *fakeEmitter) has(name string) bool { return contains(e.events, name) }

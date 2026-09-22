@@ -3,19 +3,22 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"strings"
+	"io"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
-// ExecInContainer 在容器内执行命令并回收 stdout+stderr；cmd 以 argv 传入（非 shell 拼接），退出码非零即报错并附输出。
-func (c *Client) ExecInContainer(ctx context.Context, name string, cmd []string) (string, error) {
+// execAttach 建好 exec 并挂上输出流；调用方负责 attach.Close()。
+// Tty=false：Docker 把 stdout/stderr 复用同一条流并加 8 字节帧头，读侧必须 stdcopy 去帧，
+// 否则帧头会混进内容——备份转储会被写坏，日志会带上一串不可见垃圾。
+func (c *Client) execAttach(ctx context.Context, name string, cmd []string) (string, types.HijackedResponse, error) {
 	id, err := c.containerID(ctx, name)
 	if err != nil {
-		return "", err
+		return "", types.HijackedResponse{}, err
 	}
 	resp, err := c.cli.ContainerExecCreate(ctx, id, container.ExecOptions{
 		Cmd:          cmd,
@@ -24,27 +27,43 @@ func (c *Client) ExecInContainer(ctx context.Context, name string, cmd []string)
 		Tty:          false,
 	})
 	if err != nil {
-		return "", fmt.Errorf("docker exec 创建失败: %w", err)
+		return "", types.HijackedResponse{}, fmt.Errorf("docker exec 创建失败: %w", err)
 	}
 	attach, err := c.cli.ContainerExecAttach(ctx, resp.ID, container.ExecAttachOptions{Tty: false})
 	if err != nil {
-		return "", fmt.Errorf("docker exec attach 失败: %w", err)
+		return "", types.HijackedResponse{}, fmt.Errorf("docker exec attach 失败: %w", err)
+	}
+	return resp.ID, attach, nil
+}
+
+// execExit 取 exec 退出码；非零即报错。错误消息只带退出码——输出去向由调用方决定并已在流里，
+// 把整段 stdout 塞进 error 会让 toast 变成日志堆（错误信息要是人话）。
+func (c *Client) execExit(ctx context.Context, execID string) error {
+	insp, err := c.cli.ContainerExecInspect(ctx, execID)
+	if err != nil {
+		return fmt.Errorf("docker exec inspect 失败: %w", err)
+	}
+	if insp.ExitCode != 0 {
+		return fmt.Errorf("容器内命令失败（退出码 %d）", insp.ExitCode)
+	}
+	return nil
+}
+
+// ExecStream 在容器内执行命令，把去帧后的 stdout / stderr 分别写进两个 io.Writer（同源传同一个 writer 即交错保序）。
+// 两条用途：备份的逻辑导出把 mysqldump/pg_dumpall 的字节直接写进文件（不经内存串）；
+// 扩展编译把 stdout+stderr 逐行实时转进任务抽屉日志（§5.6.2 每一步都要回流）。退出码非零即报错。
+// cmd 以 argv 传入容器，不经 shell 拼接（防注入）。
+func (c *Client) ExecStream(ctx context.Context, name string, cmd []string, stdout, stderr io.Writer) error {
+	execID, attach, err := c.execAttach(ctx, name, cmd)
+	if err != nil {
+		return err
 	}
 	defer attach.Close()
 
-	var buf bytes.Buffer
-	if _, err := buf.ReadFrom(attach.Reader); err != nil {
-		return buf.String(), fmt.Errorf("读取 exec 输出失败: %w", err)
+	if _, err := stdcopy.StdCopy(stdout, stderr, attach.Reader); err != nil {
+		return fmt.Errorf("读取 exec 输出失败: %w", err)
 	}
-	insp, err := c.cli.ContainerExecInspect(ctx, resp.ID)
-	if err != nil {
-		return buf.String(), fmt.Errorf("docker exec inspect 失败: %w", err)
-	}
-	out := buf.String()
-	if insp.ExitCode != 0 {
-		return out, fmt.Errorf("容器内命令失败（退出码 %d）: %s", insp.ExitCode, strings.TrimSpace(out))
-	}
-	return out, nil
+	return c.execExit(ctx, execID)
 }
 
 // CommitContainer 把容器当前文件系统固化为镜像 ref（docker commit -r ref）。

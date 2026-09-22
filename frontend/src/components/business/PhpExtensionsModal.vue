@@ -1,15 +1,16 @@
 <script setup lang="ts">
-// PHP 扩展管理弹窗：忠实迁移原型 openPhpExtensionsModal（3054–3099）
-// 已启用药丸（开关/删除）+ 推荐开关 + 自定义新增；脏态应用；preflight('extensions')
-// T601 接真：有宿主时经后端三段式（编译→固化→重建→重载），状态由 state:changed 回流；无宿主回落本地 mock
+// PHP 扩展管理弹窗：列全量目录（不只当前已启用那几个），默认勾选 = 本版本已应用的扩展，
+// 点选即改启用集；应用后由后端编译 → commit 固化镜像 → 重建容器 → 重载 Nginx。
+// T601 接真：有宿主时走后端三段式，状态由 state:changed 回流；无宿主回落本地 mock
 import { computed, ref } from 'vue'
 import ModalShell from '@/components/common/ModalShell.vue'
+import ExtPicker from '@/components/common/ExtPicker.vue'
 import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
 import { runTask } from '@/composables/useTask'
 import { useAppState } from '@/stores/appState'
-import { EXT_LIB } from '@/constants/ext'
+import { catalogFor } from '@/constants/ext'
 import { hasBackend } from '@/api/site'
 import { syncState } from '@/composables/useStateSync'
 import { applyExtensions } from '@/api/extension'
@@ -21,41 +22,22 @@ const { preflight } = usePreflight()
 const app = useAppState()
 
 const originalExts = [...(app.phpExtensions[props.version] || [])]
-const enabledList = ref<string[]>([...originalExts])
-const selected = ref<Set<string>>(new Set(originalExts))
-
-const suggestions = computed(() => EXT_LIB.filter((e) => !enabledList.value.includes(e)).slice(0, 12))
-const enabledOnCount = computed(() => enabledList.value.filter((e) => selected.value.has(e)).length)
-const suggestOnCount = computed(() => suggestions.value.filter((e) => selected.value.has(e)).length)
-
+const selected = ref<string[]>([...originalExts])
+const catalogCount = computed(() => catalogFor(props.version).length)
 const addName = ref('')
+
 const dirty = computed(() => {
-  if (selected.value.size !== originalExts.length) return true
-  for (const e of selected.value) if (!originalExts.includes(e)) return true
-  return false
+  if (selected.value.length !== originalExts.length) return true
+  return selected.value.some((e) => !originalExts.includes(e))
 })
 
-function toggle(e: string): void {
-  const s = new Set(selected.value)
-  if (s.has(e)) s.delete(e)
-  else s.add(e)
-  selected.value = s
-}
-function removeExt(e: string): void {
-  enabledList.value = enabledList.value.filter((x) => x !== e)
-  const s = new Set(selected.value)
-  s.delete(e)
-  selected.value = s
-}
+// addExt 目录之外的扩展名同样允许启用（最小限制原则）：过白名单格式即入列并选中
 function addExt(): void {
   const name = addName.value.trim()
   if (!name) return
   if (!/^[a-zA-Z0-9._-]+$/.test(name)) { toast(t('toast.extInvalid'), 'err'); return }
-  if (enabledList.value.includes(name)) { toast(t('toast.extAdded', { name }), 'info', 1600); addName.value = ''; return }
-  enabledList.value = [...enabledList.value, name]
-  const s = new Set(selected.value)
-  s.add(name)
-  selected.value = s
+  if (selected.value.includes(name)) { toast(t('toast.extAdded', { name }), 'info', 1600); addName.value = ''; return }
+  selected.value = [...selected.value, name]
   addName.value = ''
 }
 
@@ -100,31 +82,10 @@ async function apply(): Promise<void> {
       <div class="field">
         <div style="display: flex; justify-content: space-between; align-items: center">
           <label>{{ t('ext.enabled') }}</label>
-          <span class="mono" style="font-size: 11.5px; color: var(--text-mute)">{{ t('ext.selected', { count: enabledOnCount, total: enabledList.length }) }}</span>
+          <span class="mono" style="font-size: 11.5px; color: var(--text-mute)">{{ t('ext.pickedTotal', { count: selected.length, total: catalogCount }) }}</span>
         </div>
-        <div class="ext-toggle-grid">
-          <template v-if="enabledList.length">
-            <span v-for="e in enabledList" :key="e" class="ext-pill" :class="selected.has(e) ? 'on' : 'off'">
-              <button type="button" class="ext-pill-main" :title="selected.has(e) ? t('ext.disable') : t('ext.enable')" @click="toggle(e)">{{ e }}</button>
-              <button type="button" class="ext-pill-del" :title="t('ext.remove')" @click="removeExt(e)">×</button>
-            </span>
-          </template>
-          <span v-else style="color: var(--text-mute); font-size: 12.5px">{{ t('ext.empty.enabled') }}</span>
-        </div>
-        <div class="hint">{{ t('ext.enabled.hint') }}</div>
-      </div>
-      <div class="field">
-        <div style="display: flex; justify-content: space-between; align-items: center">
-          <label>{{ t('ext.suggestions') }}</label>
-          <span class="mono" style="font-size: 11.5px; color: var(--text-mute)">{{ t('ext.selected', { count: suggestOnCount, total: suggestions.length }) }}</span>
-        </div>
-        <div class="ext-toggle-grid">
-          <template v-if="suggestions.length">
-            <button v-for="e in suggestions" :key="e" type="button" class="ext-toggle" :class="selected.has(e) ? 'on' : 'off'" @click="toggle(e)">{{ e }}</button>
-          </template>
-          <span v-else style="color: var(--text-mute); font-size: 12.5px">{{ t('ext.empty.suggestions') }}</span>
-        </div>
-        <div class="hint">{{ t('ext.suggestions.hint') }}</div>
+        <ExtPicker v-model="selected" :version="version" />
+        <div class="hint">{{ t('ext.picker.hint') }}</div>
       </div>
       <div class="field">
         <label>{{ t('ext.add') }}</label>
@@ -138,7 +99,7 @@ async function apply(): Promise<void> {
     </template>
     <template #foot>
       <button class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
-      <button class="btn btn-primary" type="button" :disabled="!dirty" @click="apply">{{ dirty ? t('ext.applyWithCount', { count: selected.size }) : t('rw.current') }}</button>
+      <button class="btn btn-primary" type="button" :disabled="!dirty" @click="apply">{{ dirty ? t('ext.applyWithCount', { count: selected.length }) : t('rw.current') }}</button>
     </template>
   </ModalShell>
 </template>

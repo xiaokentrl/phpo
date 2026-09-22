@@ -1,12 +1,14 @@
 // prepareService：安装前把 bind 挂载所需的宿主工作目录与默认配置落盘到 PHPO_HOME，
 // 使 MOUNTS 表解析出的每个挂载源在 Docker 建容器前即存在且类型正确（目录/文件），
-// 兑现「容器创建即可起」并兑现 §0.2 规则 19 / §5.13 清洁性（幂等：仅在缺失时写入，重装不覆盖用户改动）。
+// 兑现「容器创建即可起」并兑现 §0.2 规则 19 / §5.13 清洁性（幂等：仅在缺失时写入，重装不覆盖用户改动；
+// 唯一例外是旧版 postgresql.conf 的日志段按原文精确匹配后就地修复，见 healPgLogging）。
 package service
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"phpo/internal/config"
 	"phpo/internal/model"
@@ -65,7 +67,44 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 	if kept > 0 {
 		logf(log, model.LogDim, fmt.Sprintf("保留既有配置 %d 个（重装不覆盖用户改动）", kept))
 	}
+	healPgLogging(env, kind, version, log)
 	return nil
+}
+
+// 旧版默认 postgresql.conf 的日志三行：logging_collector 要往宿主 bind 挂进来的 ./pgsql/{ver}/logs
+// 建文件，而那目录由宿主用户创建（0755）、容器内 postgres 是另一个 uid，建文件即 Permission denied →
+// postgres FATAL 退出 → unless-stopped 无限重启，服务永远启不来（真机取证退出码 1、重启 40 次）。
+const (
+	oldPgLogBlock = "logging_collector = on\nlog_directory = '/var/log/postgresql'\nlog_filename = 'postgresql-%Y-%m-%d.log'\n"
+	newPgLogBlock = "log_destination = 'stderr'\nlogging_collector = off\n"
+)
+
+// healPgLogging 就地把磁盘上仍是旧默认写法的 postgresql.conf 换成「日志走 stderr」。
+// 必须在「启用」路径上也跑一次：prepareService 只在装/重建时执行，且对已存在的配置一律保留不覆盖，
+// 于是旧装机的坏配置永远等不到被换掉——除非卸载重装。写入用 WriteFile 原地截断：postgresql.conf 是
+// 单文件 bind，换成新 inode（写临时文件再 rename）容器读到的仍是旧那份。
+func healPgLogging(env config.Env, kind model.ServiceKind, version string, log task.StepLog) {
+	if kind != model.KindPgsql {
+		return
+	}
+	path := filepath.Join(env.RootFor(string(kind), version), "conf", "postgresql.conf")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return // 尚未落盘：新装由模板直接给出正确内容
+	}
+	s := string(raw)
+	fixed := strings.Replace(s, oldPgLogBlock, newPgLogBlock, 1)
+	if fixed == s {
+		if strings.Contains(s, "logging_collector = on") {
+			logf(log, model.LogDim, "postgresql.conf 里 logging_collector 已被改成非默认写法，不自动改写；容器反复重启时请自行核对该项")
+		}
+		return
+	}
+	if err := os.WriteFile(path, []byte(fixed), 0o644); err != nil {
+		logf(log, model.LogErr, fmt.Sprintf("修复 %s 失败: %v", path, err))
+		return
+	}
+	logf(log, model.LogOk, "已把 "+path+" 的日志改回 stderr（旧写法往宿主 logs 目录建文件，容器内无权限即崩溃循环）")
 }
 
 // logf 向步骤日志写一行；未注入 logger（只读校验路径）时静默

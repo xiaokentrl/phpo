@@ -5,6 +5,7 @@ import { computed, ref } from 'vue'
 import { Dialogs } from '@wailsio/runtime'
 import ModalShell from '@/components/common/ModalShell.vue'
 import MountList from '@/components/common/MountList.vue'
+import ExtPicker from '@/components/common/ExtPicker.vue'
 import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
@@ -15,6 +16,7 @@ import { defaultDataDir, setServiceDataDir } from '@/api/env'
 import { hasBackend } from '@/api/site'
 import { useAppState } from '@/stores/appState'
 import { DIR_ROWS, SVC_META } from '@/constants/service'
+import { catalogFor, commonExts } from '@/constants/ext'
 import { needsPassword, needsPort, suggestPortFor } from '@/utils/format'
 import { DEFAULT_PASSWORD, genPassword } from '@/utils/str'
 import type { ServiceKind } from '@/types'
@@ -37,7 +39,8 @@ const needDataDir = computed(() => (DIR_ROWS[props.kind as ServiceKind] || []).s
 const version = ref(isSingle.value ? meta.value.suggested[0] : '')
 const port = ref(needPort.value ? String(suggestPortFor(props.kind, version.value || meta.value.suggested[0])) : '')
 const password = ref(needPw.value ? DEFAULT_PASSWORD : '')
-const extensions = ref('')
+const extensions = ref<string[]>(commonExts(isSingle.value ? meta.value.suggested[0] : ''))
+const catalogCount = computed(() => catalogFor(version.value.trim() || meta.value.suggested[0]).length)
 const dataDir = ref('')
 const pwVisible = ref(true)
 
@@ -67,7 +70,7 @@ function previewText(): string {
     lines.push(`--password ${p ? '****' + p.slice(-4) : '""'}`)
   }
   if (needDataDir.value && dataDir.value.trim()) lines.push(`--data-dir ${dataDir.value.trim()}`)
-  if (needExt.value && extensions.value.trim()) lines.push(`--ext ${extensions.value.trim()}`)
+  if (needExt.value && extensions.value.length) lines.push(`--ext ${extensions.value.join(',')}`)
   return lines.length > 1 ? lines.join(' \\\n  ') : lines[0]
 }
 
@@ -86,7 +89,7 @@ function onOk(): void {
     version: v,
     port: needPort.value ? port.value.trim() : null,
     password: needPw.value ? password.value : null,
-    extensions: needExt.value ? extensions.value.trim() : null,
+    extensions: needExt.value && extensions.value.length ? extensions.value.join(',') : null,
     dataDir: dir,
   }
   const check = preflight('install', ctx)
@@ -113,7 +116,8 @@ function onOk(): void {
 </script>
 
 <template>
-  <ModalShell @close="emit('close')">
+  <!-- 只有 php 安装带扩展目录，其余服务保持原型 480px 宽 -->
+  <ModalShell :size="needExt ? 'lg' : ''" @close="emit('close')">
     <template #head>
       <h3>{{ t('install.title', { name: t(meta.titleKey) }) }}</h3>
       <p>{{ t('install.subtitle') }}</p>
@@ -160,8 +164,11 @@ function onOk(): void {
         <div class="hint">{{ t('install.dataDir.hint', { path: defaultDataDir(kind, version || meta.suggested[0]) }) }}</div>
       </div>
       <div v-if="needExt" class="field">
-        <label>{{ t('php.extensions') }} ({{ t('common.optional') }})</label>
-        <input v-model="extensions" type="text" autocomplete="off" placeholder="redis,gd,imagick">
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <label>{{ t('php.extensions') }}</label>
+          <span class="mono" style="font-size: 11.5px; color: var(--text-mute)">{{ t('ext.pickedTotal', { count: extensions.length, total: catalogCount }) }}</span>
+        </div>
+        <ExtPicker v-model="extensions" :version="version.trim() || meta.suggested[0]" />
         <div class="hint">{{ t('install.ext.hint') }}</div>
       </div>
       <div class="field">

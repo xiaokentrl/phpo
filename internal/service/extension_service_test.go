@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,9 @@ type fakeExtRuntime struct {
 	savedTo     string
 	promoteOK   bool
 	execFailOn  string // 命中该子串的 exec 失败
+	execOut     string // 每次 exec 往 stdout 写的字节，模拟 configure/make 的输出流
 	createCalls []engine.ContainerSpec
+	hasImages   []string // 本机已存在的镜像（不依赖本次 commit，用于「固化镜像仍在」的正常路径）
 }
 
 func newFakeExtRuntime() *fakeExtRuntime {
@@ -58,10 +61,10 @@ func (f *fakeExtRuntime) RemoveContainer(_ context.Context, name string) error {
 	return nil
 }
 
-// ImageExists 扩展链路不探镜像库：本次 commit 过的 ref 即视为本机就绪
+// ImageExists 假世界以「本次 commit 过的 ref」＋「显式预置的 hasImages」视为本机就绪
 func (f *fakeExtRuntime) ImageExists(_ context.Context, ref string) (bool, error) {
-	for _, c := range f.commits {
-		if c == ref {
+	for _, r := range append(append([]string(nil), f.commits...), f.hasImages...) {
+		if r == ref {
 			return true, nil
 		}
 	}
@@ -85,13 +88,20 @@ func (f *fakeExtRuntime) ContainerExists(_ context.Context, name string) bool {
 func (f *fakeExtRuntime) ContainerRunning(_ context.Context, name string) (bool, error) {
 	return f.running[name], nil
 }
-func (f *fakeExtRuntime) ExecInContainer(_ context.Context, name string, cmd []string) (string, error) {
+
+// ExecStream 将去帧后的 stdout/stderr 分别写进两个 writer；假件把 execOut 当 stdout、把命令行当 stderr，
+// 以便测试断言编译输出逐行进了任务日志。execFailOn 命中则返回失败错误，模拟编译中断。
+func (f *fakeExtRuntime) ExecStream(_ context.Context, name string, cmd []string, stdout, stderr io.Writer) error {
 	line := strings.Join(cmd, " ")
 	f.execs = append(f.execs, line)
-	if f.execFailOn != "" && strings.Contains(line, f.execFailOn) {
-		return "configure: error", errors.New("容器内命令失败: " + line)
+	if f.execOut != "" {
+		_, _ = io.WriteString(stdout, f.execOut)
 	}
-	return "ok", nil
+	_, _ = io.WriteString(stderr, "stderr<"+line+">\n")
+	if f.execFailOn != "" && strings.Contains(line, f.execFailOn) {
+		return errors.New("容器内命令失败（退出码 2）")
+	}
+	return nil
 }
 func (f *fakeExtRuntime) CommitContainer(_ context.Context, name, ref string) error {
 	f.commits = append(f.commits, ref)
@@ -250,6 +260,31 @@ func TestExtension_Apply_NoCommittedImage_UsesBase(t *testing.T) {
 	}
 }
 
+// TestExtension_Apply_BaseFallbackRecompilesFullSet 退回基座那一支必须连带把目标集全量重编译。
+// 基座镜像里不含任何 prev 扩展：若只编译 added，prev 那几项从未装进容器，
+// 而任务结尾仍把「完整目标集」写库并广播快照——界面显示「已启用」，实际 php -m 里没有
+// （§5.13.1 一致性：Docker 实际状态 ≡ 库里状态）。
+func TestExtension_Apply_BaseFallbackRecompilesFullSet(t *testing.T) {
+	svc, rt, _, st, em, _ := newExtSvc(t)
+	_ = st.SetPHPExtensions("8.4", []string{"redis", "gd"})
+	// 固化镜像不在本机（假件只认本次 commit 过的 ref），目标集在原集上再加一项
+	if err := svc.Apply(context.Background(), "8.4", []string{"redis", "gd", "zip"}); err != nil {
+		t.Fatal(err)
+	}
+	// gd 与 zip 内置（各一条命令），redis 走 pecl（install + enable 两条）；全量重编译即三项都在，按扩展名稳定序
+	want := []string{"docker-php-ext-install gd", "pecl install redis", "docker-php-ext-enable redis", "docker-php-ext-install zip"}
+	if got := strings.Join(rt.execs, "|"); got != strings.Join(want, "|") {
+		t.Fatalf("退回基座时应全量重编译目标扩展集\n期望 %v\n实得 %v", want, rt.execs)
+	}
+	if strings.Join(st.saved["8.4"], ",") != "redis,gd,zip" {
+		t.Fatalf("库应落地完整目标集，实得 %v", st.saved)
+	}
+	// 不静默：日志要说明为什么从基座重建并全量重编译
+	if all := strings.Join(em.logs, "\n"); !strings.Contains(all, "不在本机") {
+		t.Fatalf("应有一行说明固化镜像缺席，实得 %v", em.logs)
+	}
+}
+
 func TestExtension_Apply_CompileFailure_Rollback(t *testing.T) {
 	svc, rt, c, st, em, env := newExtSvc(t)
 	rt.execFailOn = "pecl install redis" // 注入编译失败
@@ -283,5 +318,64 @@ func TestExtension_Apply_CompileFailure_Rollback(t *testing.T) {
 	// 失败任务发 task:done（failed）
 	if !em.has("task:done") {
 		t.Fatalf("应发 task:done，实得 %v", em.events)
+	}
+}
+
+// TestExtension_Apply_DisableRemovesIni 停用扩展走删 ini：官方 php 镜像里根本没有 docker-php-ext-disable
+// （真机取证 command -v 缺失），启用态由 conf.d/docker-php-ext-<name>.ini 表达。
+// 继续调不存在的命令 = 用户每取消勾选一个扩展就必然编译失败并整单回滚。
+func TestExtension_Apply_DisableRemovesIni(t *testing.T) {
+	svc, rt, _, st, _, _ := newExtSvc(t)
+	_ = st.SetPHPExtensions("8.4", []string{"redis", "gd"})
+	// 正常路径：原扩展集来自本机已有的固化镜像（否则就是 TestExtension_Apply_BaseFallbackRecompilesFullSet 那一支）
+	rt.hasImages = []string{engine.CommittedPHPRef("8.4")}
+	if err := svc.Apply(context.Background(), "8.4", []string{"gd"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "rm -f /usr/local/etc/php/conf.d/docker-php-ext-redis.ini"
+	if len(rt.execs) != 1 || rt.execs[0] != want {
+		t.Fatalf("停用应删该扩展的 ini\n期望 %s\n实得 %v", want, rt.execs)
+	}
+}
+
+// TestExtension_Apply_StreamsBuildOutput 编译输出必须逐行实时进抽屉日志（§5.6.2 每一步都要回流）：
+// 用户在界面上要看得见 configure/make 正在跑，而不是盯着一段时长未知的「执行中」。stdout 与 stderr 都要有。
+func TestExtension_Apply_StreamsBuildOutput(t *testing.T) {
+	svc, rt, _, _, em, _ := newExtSvc(t)
+	rt.execOut = "Configuring for redis\nBuild complete. Don't forget to enable your extensions\n"
+	if err := svc.Apply(context.Background(), "8.4", []string{"redis"}); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(em.logs, "\n")
+	for _, want := range []string{"Configuring for redis", "Build complete", "stderr<pecl install redis>"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("编译输出未进日志 %q，实得 %v", want, em.logs)
+		}
+	}
+}
+
+// TestExtension_Apply_FailureNamesExtension 失败必须点名是哪个扩展，并留一行 err 级日志：
+// 错误消息会被 toast 原样弹出，「容器内命令失败（退出码 2）」不告诉用户该改哪一个。
+func TestExtension_Apply_FailureNamesExtension(t *testing.T) {
+	svc, rt, _, _, em, _ := newExtSvc(t)
+	rt.execFailOn = "docker-php-ext-install gd"
+	err := svc.Apply(context.Background(), "8.4", []string{"gd", "redis"})
+	if err == nil {
+		t.Fatal("编译失败应报错")
+	}
+	if !strings.Contains(err.Error(), "gd") {
+		t.Fatalf("错误消息未点名失败的扩展: %v", err)
+	}
+	if !strings.Contains(err.Error(), "未应用") {
+		t.Fatalf("错误消息应说明本次扩展集未生效: %v", err)
+	}
+	var hasErrLine bool
+	for i, l := range em.levels {
+		if l == "err" && strings.Contains(em.logs[i], "gd") {
+			hasErrLine = true
+		}
+	}
+	if !hasErrLine {
+		t.Fatalf("应有一行 err 级日志点名扩展，实得 %+v %v", em.levels, em.logs)
 	}
 }

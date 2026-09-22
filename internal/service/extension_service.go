@@ -5,8 +5,10 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,7 +26,7 @@ import (
 type ExtRuntime interface {
 	DockerOps
 	ContainerRunning(ctx context.Context, name string) (bool, error)
-	ExecInContainer(ctx context.Context, name string, cmd []string) (string, error)
+	ExecStream(ctx context.Context, name string, cmd []string, stdout, stderr io.Writer) error
 	CommitContainer(ctx context.Context, name, ref string) error
 	ImageSave(ctx context.Context, ref, dstTar string) error
 	ImageRemove(ctx context.Context, ref string) error
@@ -101,6 +103,17 @@ func toSet(xs []string) map[string]bool {
 	return m
 }
 
+// uniqueSorted 去重并给出稳定序，与 diffExts 的 added/removed 同口径
+func uniqueSorted(xs []string) []string {
+	set := toSet(xs)
+	out := make([]string, 0, len(set))
+	for x := range set {
+		out = append(out, x)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Apply 应用某 php 版本的目标扩展集：写清单 → 保证镜像/容器 → 容器内编译 → commit 固化 → 重建容器 → 重载 nginx → 落库广播。
 // 编译失败即回滚（容器恢复原镜像、临时目录清空、缓存不写入该固化镜像）。
 func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []string) error {
@@ -123,6 +136,11 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 	// 镜像被手工删掉/换机没带过来时退回基座，否则第一步建容器就 "No such image"，
 	// 用户连「重新点一次扩展」这条恢复路都没有（§5.13.1 可恢复性）。
 	prevRef := baseRef
+	// rebuiltFromBase：退回基座即等于「原启用集从未装进容器」——基座不含任何 prev 扩展。
+	// 此时若仍只编译 added，prev 那几项没被编译却照样在任务结尾写进权威库并广播快照，
+	// 界面显示「已启用」而 php -m 里没有（§5.16.2：Docker 实际状态 ≡ 库里状态，§5.13.1）。
+	// 故该支改为全量重编译目标集；基座本就不含 removed 那几项，无需再删 ini。
+	var rebuiltFromBase bool
 	if len(prev) > 0 {
 		has, err := s.rt.ImageExists(ctx, committedRef)
 		if err != nil {
@@ -130,6 +148,9 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 		}
 		if has {
 			prevRef = committedRef
+		} else {
+			rebuiltFromBase = true
+			added, removed = uniqueSorted(enabled), nil
 		}
 	}
 
@@ -145,7 +166,8 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 	var committedNew bool
 
 	steps := []task.Step{
-		&task.FuncStep{StepName: "写扩展清单 extensions.env", Exec: func(_ context.Context, _ task.StepLog) error {
+		&task.FuncStep{StepName: "写扩展清单 extensions.env", Exec: func(_ context.Context, log task.StepLog) error {
+			log.Log(string(model.LogCmd), "写扩展清单: "+envPath+" → "+strings.Join(enabled, " "))
 			return s.writeEnv(envPath, enabled)
 		}, RB: func(context.Context) error {
 			if hadEnv {
@@ -161,14 +183,23 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 			return s.cache.EnsureImage(ctx, string(model.KindPHP), version, baseRef)
 		}},
 		&task.FuncStep{StepName: "容器内编译扩展", Exec: func(ctx context.Context, log task.StepLog) error {
+			log.Log(string(model.LogMeta), fmt.Sprintf("待启用 %d 项 / 待停用 %d 项", len(added), len(removed)))
+			if rebuiltFromBase {
+				log.Log(string(model.LogDim), "固化镜像 "+committedRef+" 不在本机，容器上无原扩展集，目标扩展集全量重编译")
+			}
 			if err := s.ensureRunning(ctx, name, version, prevRef, log); err != nil {
 				return err
 			}
 			for _, e := range removed {
-				log.Log(string(model.LogDim), "停用扩展: "+e)
-				if _, err := s.rt.ExecInContainer(ctx, name, []string{"docker-php-ext-disable", e}); err != nil {
-					return err
+				if !config.ValidateExt(e) {
+					return fmt.Errorf("扩展名不合法: %s", e)
 				}
+				args := extDisableArgs(e)
+				log.Log(string(model.LogCmd), "停用扩展 "+e+": "+strings.Join(args, " "))
+				if err := s.runInContainer(ctx, name, log, args); err != nil {
+					return extFailed(log, e, "停用", err)
+				}
+				log.Log(string(model.LogOk), "已停用扩展: "+e)
 			}
 			for _, e := range added {
 				cmds := config.ExtInstallCmds(e)
@@ -177,10 +208,11 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 				}
 				for _, cmd := range cmds {
 					log.Log(string(model.LogCmd), "安装扩展 "+e+": "+strings.Join(cmd, " "))
-					if _, err := s.rt.ExecInContainer(ctx, name, cmd); err != nil {
-						return err
+					if err := s.runInContainer(ctx, name, log, cmd); err != nil {
+						return extFailed(log, e, "安装", err)
 					}
 				}
+				log.Log(string(model.LogOk), "已安装扩展: "+e)
 			}
 			return nil
 		}, RB: func(ctx context.Context) error {
@@ -193,10 +225,16 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 				return err
 			}
 			committedNew = true
+			log.Log(string(model.LogOk), "已固化镜像: "+committedRef)
 			return s.promoteCommitted(ctx, version, committedRef, log)
 		}},
 		&task.FuncStep{StepName: "从扩展镜像重建容器", Exec: func(ctx context.Context, log task.StepLog) error {
-			return s.recreate(ctx, name, version, committedRef)
+			log.Log(string(model.LogCmd), "以扩展镜像重建容器: "+name+" ← "+committedRef)
+			if err := s.recreate(ctx, name, version, committedRef); err != nil {
+				return err
+			}
+			log.Log(string(model.LogOk), "容器已运行于固化镜像: "+name)
+			return nil
 		}, RB: func(ctx context.Context) error {
 			// 重建失败：撤回本次固化镜像，退回原镜像运行态
 			if committedNew {
@@ -206,11 +244,17 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 			}
 			return s.recreate(ctx, name, version, prevRef)
 		}},
-		&task.FuncStep{StepName: "重载 Nginx", Exec: func(ctx context.Context, _ task.StepLog) error {
+		&task.FuncStep{StepName: "重载 Nginx", Exec: func(ctx context.Context, log task.StepLog) error {
 			if s.reload == nil {
+				log.Log(string(model.LogDim), "未接入 nginx，跳过重载")
 				return nil
 			}
-			return s.reload.Reload(ctx)
+			log.Log(string(model.LogCmd), "nginx -s reload")
+			if err := s.reload.Reload(ctx); err != nil {
+				return err
+			}
+			log.Log(string(model.LogOk), "Nginx 已重载，上游指向 "+name)
+			return nil
 		}},
 	}
 
@@ -228,6 +272,72 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 	}
 	_, err = s.tasks.Run(ctx, t)
 	return err
+}
+
+// runInContainer 在容器内执行 cmd，并把 stdout/stderr 逐行实时转写进任务日志（§5.6.2 每步都要回流）。
+func (s *ExtensionService) runInContainer(ctx context.Context, name string, log task.StepLog, cmd []string) error {
+	out := &extLogWriter{log: log, level: string(model.LogMeta)}
+	defer out.flush()
+	errOut := &extLogWriter{log: log, level: string(model.LogDim)}
+	defer errOut.flush()
+	return s.rt.ExecStream(ctx, name, cmd, out, errOut)
+}
+
+// extFailed 失败必须点名是哪个扩展：错误消息会被前端 toast 原样弹出，
+// 而「容器内命令失败（退出码 2）」不告诉用户该改哪一项；输出细节已逐行进日志，这里只补一行 err 级定位。
+func extFailed(log task.StepLog, name, verb string, err error) error {
+	log.Log(string(model.LogErr), fmt.Sprintf("扩展 %s %s失败：%v", name, verb, err))
+	return fmt.Errorf("扩展 %s %s失败，本次扩展集未应用", name, verb)
+}
+
+// extLogWriter 按行落地容器内命令输出：configure/make 可达数百行且是流式产出，
+// 攒成整串再打印等于让用户盯着一段时长未知的「执行中」。无换行的超长进度条按 extLineMax 强制断行。
+type extLogWriter struct {
+	log   task.StepLog
+	level string
+	buf   []byte
+}
+
+const extLineMax = 4096
+
+func (w *extLogWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		w.emit(string(w.buf[:i]))
+		w.buf = w.buf[i+1:]
+	}
+	if len(w.buf) > extLineMax {
+		w.emit(string(w.buf[:extLineMax]))
+		w.buf = w.buf[extLineMax:]
+	}
+	return len(p), nil
+}
+
+// flush 收尾不足一行的一段输出（容器命令结束时通常没有末尾换行）
+func (w *extLogWriter) flush() {
+	if len(w.buf) > 0 {
+		w.emit(string(w.buf))
+		w.buf = nil
+	}
+}
+
+func (w *extLogWriter) emit(line string) {
+	if s := strings.TrimRight(line, " \r"); s != "" {
+		w.log.Log(w.level, s)
+	}
+}
+
+// phpExtConfDir 官方 php 镜像的扩展 ini 目录：docker-php-ext-enable 即往此处写 docker-php-ext-<name>.ini
+const phpExtConfDir = "/usr/local/etc/php/conf.d"
+
+// extDisableArgs 停用扩展 = 删掉它的 ini。真机取证 php 镜像内没有 docker-php-ext-disable
+// （只有 -install / -enable / docker-php-source），沿用不存在的命令会让每次取消勾选必然失败并整单回滚。
+func extDisableArgs(name string) []string {
+	return []string{"rm", "-f", phpExtConfDir + "/docker-php-ext-" + strings.TrimSpace(name) + ".ini"}
 }
 
 // ensureRunning 保证 name 容器以 image 运行：未运行则从 image 重建并启动
@@ -275,6 +385,7 @@ func (s *ExtensionService) promoteCommitted(ctx context.Context, version, commit
 	if err := s.cache.PromoteImage(string(model.KindPHP), version, committedRef, tmpTar); err != nil {
 		return err
 	}
+	log.Log(string(model.LogOk), "已提升到离线缓存: "+committedRef)
 	reason = configReasonOK
 	return nil
 }

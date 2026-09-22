@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -294,6 +295,35 @@ func TestAppService_ServiceTasksAdvertiseTarget(t *testing.T) {
 		if !found {
 			t.Errorf("%s 任务的面板运行项应带目标 %s/%s，实得 %+v", c.op, c.kind, c.ver, seen)
 		}
+	}
+}
+
+// TestAppService_Start_HealsLegacyPgsqlConf 配置只在装/重建时渲染且从不覆盖用户文件，于是旧装机的
+// postgresql.conf 仍是会让容器崩溃循环的 logging_collector 写法。点「启用」必须就地修好并逐行告知，
+// 否则这条路径只有「卸载重装」一个出口（真机报错：期望 running=true，实际 false）。
+func TestAppService_Start_HealsLegacyPgsqlConf(t *testing.T) {
+	a, d, _, em, _, env := newApp(t, nil)
+	path := filepath.Join(env.RootFor("pgsql", "17"), "conf", "postgresql.conf")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(oldPgConf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.containers["phpo-pgsql-17"] = false // 已安装、当前停着
+
+	if err := a.Start(context.Background(), model.KindPgsql, "17"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "logging_collector = on") {
+		t.Fatalf("启动应顺带修好旧配置: %s", raw)
+	}
+	if !hasLog(em.logs, "改回 stderr") {
+		t.Errorf("修了什么必须逐行进抽屉日志: %v", em.logs)
 	}
 }
 

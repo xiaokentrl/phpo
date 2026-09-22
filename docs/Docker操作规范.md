@@ -57,6 +57,21 @@ Step 五接口：`Name / Execute / Rollback / Cleanup / Cancelable`（[任务取
 - `engine/verify.go` + `engine/inspect.go`：操作后自检（§5.13.8，支持 CI 无人值守）。
 - `engine/health.go`：就绪门控不只看容器 `State.Running`（entrypoint 前置脚本，见 project 记忆「container readiness race」）。
 
+### 6.1 启动就绪与失败取证（§5.18.3）
+
+| 环节 | 口径 |
+|------|------|
+| `StartContainer`（`engine/container.go`） | 按当前 `ContainerStatus` 分流：已 `running` 不动 → `restarting`／其他一律 `ContainerRestart` → 其余 `ContainerStart` |
+| `waitRunning` | 轮询到 running 后再静默 `startHold = 2s` **复验**（躲开「起来即崩」窗口）；超时 `startWait = 12s`、间隔 `startInterval = 300ms` |
+| 失败消息 | `startFailureMsg`：容器名 + 状态 + **退出码** + **容器日志尾部 5 行**（`LogTail`，经 `ExecStream`/stdcopy 去帧）——报错自带证据，不用用户去翻 `docker logs` |
+| `StopContainer` | 只对 `needsStop`（`running`／`restarting`）执行，其余幂等跳过 |
+
+**容器内进程不得往宿主 bind 目录写日志文件**（§5.18.4）：那些文件由容器内 uid 创建、权限常为 `0700`/`0600`，宿主侧既读不动、也会在写不下时把服务打进 FATAL 崩溃循环。所有服务模板的日志一律走标准输出/标准错误，由 Docker 收集。
+
+### 6.2 容器内命令输出口径（§5.16.3）
+
+Docker exec attach 流每帧带 **8 字节二进制帧头**，直读原始流即把垃圾打进日志。唯一出口是 `engine.ExecStream(ctx, name, argv, stdout, stderr io.Writer)`（内部 `stdcopy.StdCopy` 去帧并分流）；扩展编译与备份逻辑导出共用它。无换行的超长进度条按 **4 KiB** 强制断行——攒成整串等于让用户盯着一段时长未知的「执行中」。
+
 ## 7. 明确禁止（§5.13.13）
 
 不检查冲突 / 不回滚 / 留无名资源 / 删用户数据 / 重装清数据 / 导入不清空 / 状态不一致 / 静默失败 / 非幂等 / 无审计。

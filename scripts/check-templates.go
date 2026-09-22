@@ -14,6 +14,9 @@ import (
 )
 
 // golden 为原型 前端唯一界面来源.txt 中 DEFAULT_CONFIGS 各服务在代表版本下的渲染结果，逐字转录。
+// 唯一的生产偏离：pgsql 的 logging_collector/log_directory/log_filename 三行改为
+// log_destination='stderr' + logging_collector=off——原型那份要往宿主 bind 目录写日志文件，
+// 容器内 postgres uid 无写权限即 FATAL 崩溃循环，服务永远启不来。
 var golden = map[string]map[string]string{
 	"php|8.4": {
 		"php.ini": `; phpo · PHP 8.4 php.ini
@@ -98,9 +101,12 @@ work_mem = 8MB
 maintenance_work_mem = 64MB
 wal_level = replica
 
-logging_collector = on
-log_directory = '/var/log/postgresql'
-log_filename = 'postgresql-%Y-%m-%d.log'
+# 日志走 stderr → 容器标准输出，由 Docker 收集（docker logs phpo-pgsql-17）。
+# 不开 logging_collector：它要往宿主 bind 挂进来的 ./pgsql/17/logs 写文件，
+# 而该目录由宿主用户创建（0755）、容器内 postgres 是另一个 uid，建文件即 Permission denied，
+# postgres FATAL 退出后被 unless-stopped 无限重启，服务永远启不来。
+log_destination = 'stderr'
+logging_collector = off
 log_timezone = 'Asia/Shanghai'
 timezone = 'Asia/Shanghai'
 log_min_duration_statement = 1000`,

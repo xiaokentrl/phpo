@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,11 +76,14 @@ func (i *bkImages) EnsureImage(_ context.Context, kind, version, ref string) err
 	return nil
 }
 
-// bkDocker 实现 BackupDocker：受控托管容器列表 + 停删记录
+// bkDocker 实现 BackupDocker：受控托管容器列表 + 停删记录 + 容器内命令（逻辑导出）回放
 type bkDocker struct {
-	actual  []engine.ActualState
-	stopped []string
-	removed []string
+	actual    []engine.ActualState
+	stopped   []string
+	removed   []string
+	execs     []string // 每次容器内命令："<容器名> <argv 拼接>"
+	execErr   error    // 非空则令转储失败
+	execEmpty bool     // true 则写出零字节转储（模拟命令成功但没内容）
 }
 
 func (d *bkDocker) ManagedContainers(context.Context) ([]engine.ActualState, error) {
@@ -92,6 +96,17 @@ func (d *bkDocker) StopContainer(_ context.Context, name string) error {
 func (d *bkDocker) RemoveContainer(_ context.Context, name string) error {
 	d.removed = append(d.removed, name)
 	return nil
+}
+func (d *bkDocker) ExecStream(_ context.Context, name string, cmd []string, stdout, _ io.Writer) error {
+	d.execs = append(d.execs, name+" "+strings.Join(cmd, " "))
+	if d.execErr != nil {
+		return d.execErr
+	}
+	if d.execEmpty {
+		return nil
+	}
+	_, err := io.WriteString(stdout, "-- phpo dump of "+name+"\n")
+	return err
 }
 
 // bkReader 实现 SnapshotReader（归档内只读快照）
@@ -186,6 +201,168 @@ func TestBackup_Create_ExportFailure_NoRestart(t *testing.T) {
 	}
 	if em.has("state:changed") {
 		t.Fatalf("失败不应广播 state:changed")
+	}
+}
+
+// ---- 逻辑导出（归档内的 dump/）----
+
+// extractArchive 把归档解到临时目录，供断言「本次备份到底带了什么」。
+func extractArchive(t *testing.T, env config.Env, file string) string {
+	t.Helper()
+	dst := t.TempDir()
+	if _, err := archive.Extract(filepath.Join(env.BackupRoot, file), dst); err != nil {
+		t.Fatal(err)
+	}
+	return dst
+}
+
+func TestBackup_Create_DumpsRunningServices(t *testing.T) {
+	svc, st, lc, _, dock, em, env, cfg := newBackupSvc(t)
+	if err := cfg.SetPassword("mysql", "8.4", "p@ss w0rd"); err != nil { // 含空格：argv 直传，不经 shell
+		t.Fatal(err)
+	}
+	st.snap.Running["mysql"] = []string{"8.4"}
+	st.snap.Running["pgsql"] = []string{"17"}
+	st.snap.Installed["mysql"] = []string{"8.4", "8.0"} // 8.0 装了但没跑
+
+	bf, err := svc.Create(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dock.execs) != 2 {
+		t.Fatalf("只应在跑的库上各转储一次，实得 %v", dock.execs)
+	}
+	if !strings.HasPrefix(dock.execs[0], "phpo-mysql-8.4 mysqldump -u root --password=p@ss w0rd") {
+		t.Fatalf("mysql 转储命令应带明文密码，实得 %q", dock.execs[0])
+	}
+	if dock.execs[1] != "phpo-pgsql-17 pg_dumpall -U postgres" {
+		t.Fatalf("pgsql 走 local trust，不应带密码，实得 %q", dock.execs[1])
+	}
+	if !hasLog(em.logs, "mysql 8.0 未运行") {
+		t.Fatalf("已装未跑的库应点名跳过，实得 %v", em.logs)
+	}
+	if strings.Join(lc.stopped, ",") != "mysql/8.4,pgsql/17" {
+		t.Fatalf("转储不得影响暂停序列，实得 %v", lc.stopped)
+	}
+	dumped := extractArchive(t, env, bf.File)
+	for _, want := range []string{"dump/mysql-8.4.sql", "dump/pgsql-17.sql"} {
+		b, err := os.ReadFile(filepath.Join(dumped, want))
+		if err != nil {
+			t.Fatalf("%s 应入档: %v", want, err)
+		}
+		if !strings.Contains(string(b), "phpo dump of") {
+			t.Fatalf("%s 内容应为转储字节，实得 %q", want, b)
+		}
+	}
+}
+
+func TestBackup_Create_DefaultsPasswordWhenUnset(t *testing.T) {
+	svc, st, _, _, dock, _, _, _ := newBackupSvc(t)
+	st.snap.Running["mysql"] = []string{"8.0"} // 未 SetPassword
+
+	if _, err := svc.Create(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dock.execs[0], "--password="+config.DefaultPassword) {
+		t.Fatalf("未设密码应回落默认值（与容器生效值同口径），实得 %q", dock.execs[0])
+	}
+}
+
+func TestBackup_Create_EmptyPasswordOmitsFlag(t *testing.T) {
+	svc, st, _, _, dock, _, _, cfg := newBackupSvc(t)
+	if err := cfg.SetPassword("mysql", "8.0", ""); err != nil {
+		t.Fatal(err)
+	}
+	st.snap.Running["mysql"] = []string{"8.0"}
+
+	if _, err := svc.Create(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(dock.execs[0], "--password") {
+		t.Fatalf("空密码必须省略 --password=，否则 mysqldump 会交互式挂起，实得 %q", dock.execs[0])
+	}
+}
+
+// 单个库转储失败只点名，不判死整包：可读的配置/站点/其余库仍是有效备份。
+func TestBackup_Create_DumpFailureNotFatal(t *testing.T) {
+	svc, st, _, _, dock, em, env, _ := newBackupSvc(t)
+	st.snap.Running["pgsql"] = []string{"17"}
+	dock.execErr = errors.New("pg_dumpall: could not connect to server")
+
+	bf, err := svc.Create(context.Background())
+	if err != nil {
+		t.Fatalf("转储失败不应中断备份: %v", err)
+	}
+	if !hasLog(em.logs, "pgsql 17 逻辑导出失败") || !hasLog(em.logs, "本次归档不含该库数据") {
+		t.Fatalf("失败必须点名并说明缺了什么，实得 %v", em.logs)
+	}
+	dumped := extractArchive(t, env, bf.File)
+	if _, err := os.Stat(filepath.Join(dumped, "dump")); !os.IsNotExist(err) {
+		t.Fatalf("不得留下半截转储文件")
+	}
+}
+
+// 命令退出码 0 但没吐字节：空文件比没有更危险（恢复时会当成「库里本来就没数据」）。
+func TestBackup_Create_EmptyDumpDiscarded(t *testing.T) {
+	svc, st, _, _, dock, em, env, _ := newBackupSvc(t)
+	st.snap.Running["mysql"] = []string{"8.4"}
+	dock.execEmpty = true
+
+	bf, err := svc.Create(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasLog(em.logs, "转储结果为空") {
+		t.Fatalf("空转储应报错，实得 %v", em.logs)
+	}
+	if _, err := os.Stat(filepath.Join(extractArchive(t, env, bf.File), "dump", "mysql-8.4.sql")); !os.IsNotExist(err) {
+		t.Fatalf("空转储文件不得入档")
+	}
+}
+
+// redis 的宿主数据目录同样是 root 0600/0700（真机取证：dump.rdb 与 appendonlydir 宿主全读不动），
+// 只能从在跑实例经 redis-cli --rdb 取，产物是二进制 .rdb 而非 .sql。
+func TestBackup_Create_DumpsRedisAsRdb(t *testing.T) {
+	svc, st, _, _, dock, _, env, cfg := newBackupSvc(t)
+	if err := cfg.SetPassword("redis", "8", "123456"); err != nil {
+		t.Fatal(err)
+	}
+	st.snap.Running["redis"] = []string{"8"}
+
+	bf, err := svc.Create(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dock.execs) != 1 || !strings.HasPrefix(dock.execs[0], "phpo-redis-8 sh -c ") {
+		t.Fatalf("redis 应经容器内脚本转储，实得 %v", dock.execs)
+	}
+	b, err := os.ReadFile(filepath.Join(extractArchive(t, env, bf.File), "dump", "redis-8.rdb"))
+	if err != nil {
+		t.Fatalf("redis 转储应以 .rdb 入档: %v", err)
+	}
+	if !strings.Contains(string(b), "phpo dump of") {
+		t.Fatalf("入档内容应为转储字节，实得 %q", b)
+	}
+}
+
+// 口令作位置参数传给容器内的 sh，不拼进脚本字符串：含空格/引号/分号的密码无需转义也不会被二次展开。
+func TestBackup_DumpCmd_RedisPasswordIsArgvNotScript(t *testing.T) {
+	pw := `a "b'; touch /pwned`
+	argv := dumpCmd(model.KindRedis, pw)
+	if len(argv) != 6 || argv[0] != "sh" || argv[1] != "-c" {
+		t.Fatalf("redis 转储命令应为 sh -c <脚本> <占位> <口令> <暂存文件>，实得 %q", argv)
+	}
+	if argv[4] != pw {
+		t.Fatalf("口令应是独立 argv 元素，实得 %q", argv[4])
+	}
+	if strings.Contains(argv[2], pw) {
+		t.Fatalf("口令不得出现在脚本文本里: %q", argv[2])
+	}
+	if got := dumpCmd(model.KindRedis, ""); !strings.Contains(got[2], `if [ -n "$1" ]`) || got[4] != "" {
+		t.Fatalf("空密码分支应由脚本内判断兜住，实得 %q", got)
+	}
+	if dumpExt(model.KindRedis) != ".rdb" || dumpExt(model.KindMySQL) != ".sql" {
+		t.Fatal("转储产物后缀按种类区分")
 	}
 }
 
@@ -333,7 +510,7 @@ func TestBackup_Restore_ArchiveWithoutSQLiteSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	noDB := filepath.Join(env.BackupRoot, "backup-no-db.tar.gz")
-	if _, err := archive.Create(noDB, []archive.Source{{ArcPrefix: "php", HostPath: filepath.Join(staging, "php")}}); err != nil {
+	if _, _, err := archive.Create(noDB, []archive.Source{{ArcPrefix: "php", HostPath: filepath.Join(staging, "php")}}); err != nil {
 		t.Fatal(err)
 	}
 

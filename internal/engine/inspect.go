@@ -2,11 +2,15 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"sort"
 	"strconv"
+	"strings"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/errdefs"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // ContainerExists 按名称判断容器是否存在
@@ -15,7 +19,9 @@ func (c *Client) ContainerExists(ctx context.Context, name string) bool {
 	return err == nil
 }
 
-// ContainerRunning 按名称判断容器是否在运行；不存在返回 (false, nil)
+// ContainerRunning 按名称判断容器是否在运行；不存在返回 (false, nil)。
+// 只够回答「此刻布尔值」；要判「起来又崩了」必须用 ContainerStatus 看状态字符串
+// （restarting/exited 时 Running 为 false，光看布尔会把崩溃循环读成「没在跑」）。
 func (c *Client) ContainerRunning(ctx context.Context, name string) (bool, error) {
 	insp, err := c.cli.ContainerInspect(ctx, name)
 	if err != nil {
@@ -25,6 +31,57 @@ func (c *Client) ContainerRunning(ctx context.Context, name string) (bool, error
 		return false, err
 	}
 	return insp.State != nil && insp.State.Running, nil
+}
+
+// ContainerStatus 读容器状态字符串（created/running/restarting/exited/paused/dead）与最近退出码；
+// 容器不存在返回 ("", 0, nil)。
+func (c *Client) ContainerStatus(ctx context.Context, name string) (string, int, error) {
+	insp, err := c.cli.ContainerInspect(ctx, name)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return "", 0, nil
+		}
+		return "", 0, err
+	}
+	if insp.State == nil {
+		return "", 0, nil
+	}
+	return insp.State.Status, insp.State.ExitCode, nil
+}
+
+// LogTail 取容器最近 maxLines 行日志（stdout+stderr 合并成单行），供启动失败时把真因带进任务日志。
+// 取证是尽力而为：读不到就返回空串，不因此改写调用方已判定的失败原因。
+func (c *Client) LogTail(ctx context.Context, name string, maxLines int) string {
+	id, err := c.containerID(ctx, name)
+	if err != nil {
+		return ""
+	}
+	rc, err := c.cli.ContainerLogs(ctx, id, container.LogsOptions{
+		ShowStdout: true, ShowStderr: true, Tail: strconv.Itoa(maxLines),
+	})
+	if err != nil {
+		return ""
+	}
+	defer rc.Close()
+	var buf bytes.Buffer
+	if _, err := stdcopy.StdCopy(&buf, &buf, rc); err != nil { // 非 tty 流带 8 字节帧头，须去帧
+		return ""
+	}
+	return oneLineTail(buf.String(), maxLines)
+}
+
+// oneLineTail 取末尾 maxLines 行非空内容并压成单行——多行会打断抽屉的逐行日志格式
+func oneLineTail(s string, maxLines int) string {
+	var lines []string
+	for _, l := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			lines = append(lines, t)
+		}
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, " / ")
 }
 
 // PublishedPorts 读某容器当前已发布到宿主的端口（升序）；容器不存在返回空集。

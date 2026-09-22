@@ -1,9 +1,11 @@
 // T602 · 备份 / 恢复 / 删除备份：把 PHPO_HOME 配置/数据、WWW 站点、离线缓存与 SQLite 快照打成 tar.gz，
+// 并在暂停数据服务之前先从在跑实例里做逻辑导出（宿主数据目录里的文件多由容器内 uid 拥有，冷拷贝读不动）。
 // 并支持异机恢复（解包并验货 → 清空 phpo 命名空间 → 落盘 → 应用内逻辑重放 SQLite → 重建容器，§5.13.11）。
 // 全程三段式（硬红线 5）+ 后端权威广播（硬红线 4）；不含 Docker 镜像（原型 restore warn4）；config.yaml/密码原样随 SQLite 快照打包（用户裁决）。
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,6 +22,7 @@ import (
 	"phpo/internal/model"
 	"phpo/internal/task"
 	"phpo/pkg/archive"
+	"phpo/pkg/dockerutil"
 )
 
 // BackupStore 备份所需持久子集（*store.Store 满足）：快照导出 / 读取 / 全量逻辑重放
@@ -41,11 +44,12 @@ type BackupImages interface {
 	EnsureImage(ctx context.Context, kind, version, ref string) error
 }
 
-// BackupDocker 枚举并停删全部托管容器（*engine.Client 满足）
+// BackupDocker 枚举并停删全部托管容器 + 在跑容器内执行命令（*engine.Client 满足）
 type BackupDocker interface {
 	ManagedContainers(ctx context.Context) ([]engine.ActualState, error)
 	StopContainer(ctx context.Context, name string) error
 	RemoveContainer(ctx context.Context, name string) error
+	ExecStream(ctx context.Context, name string, cmd []string, stdout, stderr io.Writer) error
 }
 
 // SnapshotReader 只读打开的归档库快照（*store.Store 满足）
@@ -57,10 +61,11 @@ type SnapshotReader interface {
 // SnapshotOpener 打开归档内 db/phpo.db 为只读快照（DI 注入 store.Open；单测注入假件）
 type SnapshotOpener func(path string) (SnapshotReader, error)
 
-// BackupConfig 配置权威门面子集（*config.ConfigStore 满足）：取 config.yaml 路径 + 落盘后热重载内存态
+// BackupConfig 配置权威门面子集（*config.ConfigStore 满足）：取 config.yaml 路径 + 落盘后热重载内存态 + 读明文密码
 type BackupConfig interface {
 	Path() string
 	Reload() error
+	GetPassword(kind, version string) (string, bool, error)
 }
 
 // BackupService 备份门面；写操作一律经 task.Manager 三段式
@@ -83,6 +88,11 @@ func NewBackupService(store BackupStore, lc BackupLifecycle, imgs BackupImages, 
 
 // dbKinds 备份前需暂停以保证宿主数据目录一致的服务种类
 var dbKinds = []model.ServiceKind{model.KindMySQL, model.KindPgsql, model.KindRedis}
+
+// dumpKinds 需要逻辑导出的数据服务。宿主数据目录里的文件由容器内 uid 拥有且常为 0700/0600
+// （真机取证：mysql 的 ibdata1、pgsql 的整个 data/、redis 的 dump.rdb 与 appendonlydir 宿主全读不动）
+// ——冷拷贝既读不动也不一致，只有从在跑的实例 dump 才拿得到真实内容。
+var dumpKinds = []model.ServiceKind{model.KindMySQL, model.KindPgsql, model.KindRedis}
 
 // ---- 读接口 ----
 
@@ -154,7 +164,7 @@ func (s *BackupService) SaveAs(file, dst string) error {
 
 // ---- 写接口（三段式）----
 
-// Create 备份：暂停数据服务 → 导出 SQLite 快照 → 打 tar.gz → 重启数据服务
+// Create 备份：逻辑导出数据服务 → 暂停数据服务 → 导出 SQLite 快照 → 打 tar.gz → 重启数据服务
 func (s *BackupService) Create(ctx context.Context) (model.BackupFile, error) {
 	ts := time.Now()
 	name := fmt.Sprintf("backup-%s.tar.gz", ts.Format("20060102-150405"))
@@ -164,6 +174,7 @@ func (s *BackupService) Create(ctx context.Context) (model.BackupFile, error) {
 		return model.BackupFile{}, err
 	}
 	dbSnap := filepath.Join(tmpDir, "phpo.db")
+	dumpDir := filepath.Join(tmpDir, "dump")
 
 	var items int
 	var paused []engine.ContainerRef
@@ -172,17 +183,19 @@ func (s *BackupService) Create(ctx context.Context) (model.BackupFile, error) {
 		Label: "创建备份 " + name,
 		Meta:  model.TaskMeta{Type: "backup"},
 		Steps: []task.Step{
+			s.dumpStep(dumpDir),
 			s.pauseStep(&paused),
 			&task.FuncStep{StepName: "导出 SQLite 快照", Exec: func(context.Context, task.StepLog) error {
 				return s.store.BackupTo(dbSnap)
 			}, Clean: func() { _ = os.RemoveAll(tmpDir) }},
 			&task.FuncStep{StepName: "打包归档", Exec: func(_ context.Context, log task.StepLog) error {
-				tops, err := archive.Create(archivePath, backupSources(s.env, s.cfg.Path(), dbSnap))
+				tops, skipped, err := archive.Create(archivePath, backupSources(s.env, s.cfg.Path(), dbSnap, dumpDir))
 				if err != nil {
 					return err
 				}
 				items = len(tops)
 				log.Log(string(model.LogOk), "归档顶层: "+strings.Join(tops, ", "))
+				logSkips(log, skipped)
 				return nil
 			}, RB: func(context.Context) error {
 				if e := os.Remove(archivePath); e != nil && !os.IsNotExist(e) {
@@ -240,8 +253,17 @@ func (s *BackupService) Restore(ctx context.Context, file string) error {
 			&task.FuncStep{StepName: "清空 phpo 容器命名空间", Exec: func(ctx context.Context, _ task.StepLog) error {
 				return s.clearNamespace(ctx)
 			}},
-			&task.FuncStep{StepName: "落盘配置/数据/站点/缓存", Exec: func(_ context.Context, _ task.StepLog) error {
-				return s.materialize(staging)
+			&task.FuncStep{StepName: "落盘配置/数据/站点/缓存", Exec: func(_ context.Context, log task.StepLog) error {
+				if err := s.materialize(staging); err != nil {
+					return err
+				}
+				// dump/ 随包携带但不重放：恢复的数据目录未被覆盖，同机仍是完整的那一份。
+				// 异机（数据目录为空）时这一份转储是唯一的数据来源，但重放需要容器就绪门控与
+				// 中途失败语义，尚未落地——此处必须点名，不得让用户以为库已经灌回去了。
+				if files, _ := filepath.Glob(filepath.Join(staging, "dump", "*")); len(files) > 0 {
+					log.Log(string(model.LogDim), fmt.Sprintf("归档内的 %d 份逻辑转储（dump/）本次未重放进数据库：同机恢复无需重放，异机恢复该数据目录尚未导入", len(files)))
+				}
+				return nil
 			}},
 			&task.FuncStep{StepName: "逻辑重放 SQLite 快照", Exec: func(context.Context, task.StepLog) error {
 				r, err := s.open(filepath.Join(staging, "db", "phpo.db"))
@@ -291,6 +313,143 @@ func (s *BackupService) Delete(ctx context.Context, file string) error {
 }
 
 // ---- 内部编排助手 ----
+
+// dumpStep 把在跑的数据服务逻辑导出到 dumpDir（归档内的 dump/ 前缀）。必须排在暂停之前——服务停了就 dump 不动。
+// 单个库导出失败只点名、不判死整包：冷拷贝里可读的配置与站点仍是有效备份，但用户必须知道本次缺了哪一份数据。
+func (s *BackupService) dumpStep(dumpDir string) *task.FuncStep {
+	return &task.FuncStep{StepName: "逻辑导出数据服务", Exec: func(ctx context.Context, log task.StepLog) error {
+		snap, err := s.store.BuildSnapshot()
+		if err != nil {
+			return err
+		}
+		for _, k := range dumpKinds {
+			kk := string(k)
+			running := map[string]bool{}
+			for _, v := range snap.Running[kk] {
+				running[v] = true
+			}
+			for _, v := range snap.Running[kk] {
+				name := dockerutil.ContainerName(kk, v)
+				argv := dumpCmd(k, s.password(k, v))
+				file := kk + "-" + v + dumpExt(k)
+				log.Log(string(model.LogCmd), name+" $ "+strings.Join(argv, " "))
+				if err := s.dumpOne(ctx, name, argv, filepath.Join(dumpDir, file), log); err != nil {
+					log.Log(string(model.LogErr), fmt.Sprintf("%s %s 逻辑导出失败：%v —— 本次归档不含该库数据", k, v, err))
+					continue
+				}
+				log.Log(string(model.LogOk), "已导出到 dump/"+file)
+			}
+			for _, v := range snap.Installed[kk] {
+				if running[v] {
+					continue
+				}
+				log.Log(string(model.LogDim), fmt.Sprintf("%s %s 未运行，跳过逻辑导出（其数据目录按冷拷贝打包，读不动的部分不在归档内）", k, v))
+			}
+		}
+		return nil
+	}}
+}
+
+// dumpOne 转储单个服务到 dst；dumpDir 只在真要导出时才建（空目录不会进归档，也就不会凭空多出 dump/ 顶层）
+func (s *BackupService) dumpOne(ctx context.Context, name string, argv []string, dst string, log task.StepLog) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	// stderr 不进转储文件（否则帧头/告警会把 SQL 污染成不可重放的文本），只留作报错原因
+	var errBuf bytes.Buffer
+	if err := s.dock.ExecStream(ctx, name, argv, f, &errBuf); err != nil {
+		_ = os.Remove(dst) // 半途而废的转储文件留着比没有更危险
+		return fmt.Errorf("%w：%s", err, strings.TrimSpace(errBuf.String()))
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	log.Log(string(model.LogDim), filepath.Base(dst)+" 体积 "+humanSize(info.Size()))
+	if info.Size() == 0 {
+		_ = os.Remove(dst)
+		return errors.New("转储结果为空")
+	}
+	return nil
+}
+
+// dumpCmd 构造容器内转储命令。mysql 用 root 与明文密码（空密码即原生无密码，§1.5）；
+// pgsql 走 pg_hba 的 local trust，无需密码；redis 的 RDB 只能写进可 seek 的文件，需一段容器内脚本。
+// 口令一律作 argv 元素或位置参数传给容器内的 sh，不拼进命令行文本，特殊字符无需转义也不会被二次展开。
+func dumpCmd(kind model.ServiceKind, password string) []string {
+	switch kind {
+	case model.KindMySQL:
+		argv := []string{"mysqldump", "-u", "root"}
+		if password != "" {
+			argv = append(argv, "--password="+password)
+		}
+		return append(argv, "--single-transaction", "--routines", "--triggers", "--events", "--all-databases")
+	case model.KindPgsql:
+		return []string{"pg_dumpall", "-U", "postgres"}
+	case model.KindRedis:
+		// redis-cli --rdb 会 ftruncate 目标文件，吐 /dev/stdout 即报 Invalid argument（真机取证），
+		// 只能先在容器内落暂存文件再 cat 流回；rc 先行捕获，否则 rm 的退出码会盖掉 cat 的。
+		return []string{"sh", "-c",
+			`f=$2; if [ -n "$1" ]; then redis-cli --no-auth-warning -a "$1" --rdb "$f"; else redis-cli --rdb "$f"; fi; rc=$?; ` +
+				`[ $rc -eq 0 ] || { rm -f "$f"; exit $rc; }; cat "$f"; rc=$?; rm -f "$f"; exit $rc`,
+			"phpo", password, redisStagePath}
+	}
+	return nil
+}
+
+// redisStagePath redis 转储在容器内的暂存文件（流回宿主后立即删除，不留残留）
+const redisStagePath = "/tmp/phpo-backup.rdb"
+
+// dumpExt 归档内的转储产物后缀
+func dumpExt(kind model.ServiceKind) string {
+	if kind == model.KindRedis {
+		return ".rdb"
+	}
+	return ".sql"
+}
+
+// password 取该服务版本的明文密码；未设置或读失败回落默认值（与容器实际生效值同口径）
+func (s *BackupService) password(kind model.ServiceKind, version string) string {
+	v, exists, err := s.cfg.GetPassword(string(kind), version)
+	if err != nil || !exists {
+		return config.DefaultPassword
+	}
+	return v
+}
+
+// logSkips 把未能入档的条目报进抽屉日志：按所在目录聚合——真实数据目录动辄上百个不可读文件，
+// 一行一条会淹掉日志，但「缺了什么」必须看得见，不得静默。
+func logSkips(log task.StepLog, skipped []archive.Skip) {
+	if len(skipped) == 0 {
+		return
+	}
+	byDir := map[string][]string{}
+	var dirs []string
+	for _, sk := range skipped {
+		d := filepath.Dir(sk.Path)
+		if _, ok := byDir[d]; !ok {
+			dirs = append(dirs, d)
+		}
+		byDir[d] = append(byDir[d], filepath.Base(sk.Path)+"（"+sk.Reason+"）")
+	}
+	sort.Strings(dirs)
+	const maxShown = 5
+	for _, d := range dirs {
+		list := byDir[d]
+		more := ""
+		if len(list) > maxShown {
+			more = fmt.Sprintf(" 等 %d 项", len(list))
+			list = list[:maxShown]
+		}
+		log.Log(string(model.LogErr), "未入档 "+d+"："+strings.Join(list, "、")+more)
+	}
+	log.Log(string(model.LogErr), fmt.Sprintf("本次备份共跳过 %d 个读不动的条目；数据库内容已由 dump/ 逻辑导出兜住，其余缺失项请自行核对", len(skipped)))
+}
 
 // pauseStep 暂停运行中的数据服务以保证宿主数据一致；被暂停的容器记入 paused，供后续重启与 RB 复用
 func (s *BackupService) pauseStep(paused *[]engine.ContainerRef) *task.FuncStep {
@@ -437,9 +596,10 @@ func snapshotPayload(st BackupStore) map[string]any {
 	return map[string]any{"snapshot": snap}
 }
 
-// backupSources 归档内容清单：PHPO_HOME 五服务目录 + 离线缓存 + WWW 站点 + SQLite 快照 + 明文 config.yaml；不含 Docker 镜像。
+// backupSources 归档内容清单：PHPO_HOME 五服务目录 + 离线缓存 + WWW 站点 + SQLite 快照 + 数据库逻辑导出 + 明文 config.yaml；不含 Docker 镜像。
 // 用户裁决：config.yaml 与密码原样打包（明文策略，§1.5），恢复时一并落回。
-func backupSources(env config.Env, cfgPath, dbSnap string) []archive.Source {
+// dumpDir 是暂停之前从在跑实例里导出的 SQL——冷拷贝拿不到的数据全靠它兜住。
+func backupSources(env config.Env, cfgPath, dbSnap, dumpDir string) []archive.Source {
 	return []archive.Source{
 		{ArcPrefix: "php", HostPath: env.PHPRoot},
 		{ArcPrefix: "nginx", HostPath: env.NginxRoot},
@@ -449,6 +609,7 @@ func backupSources(env config.Env, cfgPath, dbSnap string) []archive.Source {
 		{ArcPrefix: "offline", HostPath: env.OfflineRoot},
 		{ArcPrefix: "www", HostPath: env.WWWRoot},
 		{ArcPrefix: "db/phpo.db", HostPath: dbSnap},
+		{ArcPrefix: "dump", HostPath: dumpDir},
 		{ArcPrefix: "config/config.yaml", HostPath: cfgPath},
 	}
 }
