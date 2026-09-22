@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 安装弹窗：忠实迁移原型 openInstallModal（2878–2940）
-// ★ FIX #2：密码默认 123456、无长度校验；端口建议随版本变化；实时 cmd-preview
+// ★ FIX #2：密码默认 123456、无长度校验；端口建议随版本变化；挂载表实时回显
+// §1.4（总纲 v2.9.11）：不展示「将执行 $ phpo …」伪命令行——表单各字段本身即确认信息。
 import { computed, ref } from 'vue'
 import { Dialogs } from '@wailsio/runtime'
 import ModalShell from '@/components/common/ModalShell.vue'
@@ -59,19 +60,6 @@ async function browseDataDir(): Promise<void> {
   })
   const abs = String(picked || '').replace(/\/+$/, '')
   if (abs) dataDir.value = abs
-}
-
-function previewText(): string {
-  const v = version.value.trim() || '<version>'
-  const lines = [`phpo ${props.kind} install ${v}`]
-  if (needPort.value) lines.push(`--port ${port.value.trim() || '<port>'}`)
-  if (needPw.value) {
-    const p = password.value
-    lines.push(`--password ${p ? '****' + p.slice(-4) : '""'}`)
-  }
-  if (needDataDir.value && dataDir.value.trim()) lines.push(`--data-dir ${dataDir.value.trim()}`)
-  if (needExt.value && extensions.value.length) lines.push(`--ext ${extensions.value.join(',')}`)
-  return lines.length > 1 ? lines.join(' \\\n  ') : lines[0]
 }
 
 function onOk(): void {
@@ -174,10 +162,6 @@ function onOk(): void {
       <div class="field">
         <label>{{ t('install.mounts') }}</label>
         <div class="cmd-preview"><MountList :kind="kind" :version="version || meta.suggested[0]" /></div>
-      </div>
-      <div class="field">
-        <label>{{ t('install.preview') }}</label>
-        <div class="cmd-preview"><span class="prompt">$ </span>{{ previewText() }}</div>
       </div>
     </template>
     <template #foot>

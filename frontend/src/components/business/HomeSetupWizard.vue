@@ -152,14 +152,13 @@ function prev(): void {
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
-const promptSeg = (h: string, w: string): Seg => ({ c: 'prompt', x: `$ phpo home ensure ${h} --www ${w}` })
 
 // runDemoVerify 无宿主回退：复刻原型逐行动画，纯展示不落库
+// §1.4（总纲 v2.9.11）：原型首行的 `$ phpo home ensure …` 伪命令行不再产出——验证日志逐行说人话。
 async function runDemoVerify(h: string, w: string): Promise<void> {
   verifyLog.value = []
   const push = (s: Seg) => { verifyLog.value = [...verifyLog.value, s] }
   const d0 = HOME_SUBDIRS.filter((s) => s.depth === 0).length
-  push(promptSeg(h, w))
   await wait(200)
   push({ c: 'ok', x: `${t('wiz.s3.homeReady')}：${h}` })
   await wait(200)
@@ -186,14 +185,14 @@ async function doVerify(): Promise<void> {
   try {
     const r = await homeVerify(h, w)
     if (r === null) { await runDemoVerify(h, w); return }
-    const segs: Seg[] = [promptSeg(h, w)]
+    const segs: Seg[] = []
     for (const ln of r.lines) segs.push({ c: ln.startsWith('⚠') ? 'warn' : 'ok', x: ln })
     for (const e of r.errors) segs.push({ c: 'err', x: e })
     verifyLog.value = segs
     verified.value = r.ok
     if (!r.ok && r.errors[0]) toast(r.errors[0], 'err')
   } catch (e) {
-    verifyLog.value = [promptSeg(h, w), { c: 'err', x: String((e as Error)?.message ?? e) }]
+    verifyLog.value = [{ c: 'err', x: String((e as Error)?.message ?? e) }]
     verified.value = false
   } finally {
     verifying.value = false

@@ -84,7 +84,6 @@ export function useModals() {
         { text: t('danger.uninstall.warn4'), keep: true },
       ],
       checkbox: { label: t('danger.uninstall.check', { kind, version }) },
-      cliPreview: `phpo ${kind} uninstall ${version}`,
       confirmLabel: t('danger.uninstall.confirm'),
       onConfirm: () => {
         const check = preflight('uninstall', { kind, version })
@@ -137,7 +136,6 @@ export function useModals() {
         { text: t('svc.rebuild.warn1', { kind, version }) },
         { text: t('svc.rebuild.warn2', { kind, version }), keep: true },
       ],
-      cliPreview: `phpo ${kind} reinstall ${version}`,
       confirmLabel: t('svc.rebuild'),
       onConfirm: () => {
         // 复用 update-config 裁决，但**不带 field**：重建不改端口，只该裁「服务在不在/装没装」。
@@ -162,7 +160,6 @@ export function useModals() {
         { text: t('danger.siteRemove.warn4'), keep: true },
       ],
       checkbox: { label: t('danger.siteRemove.check') },
-      cliPreview: `phpo site remove ${domain}`,
       confirmLabel: t('danger.siteRemove.confirm'),
       onConfirm: () => {
         const check = preflight('site-remove', { domain })
@@ -194,7 +191,6 @@ export function useModals() {
         { text: t('danger.backupDel.warn3'), keep: true },
       ],
       checkbox: { label: t('danger.backupDel.check') },
-      cliPreview: `rm ${app.env.BACKUP_ROOT}/${file}`,
       confirmLabel: t('danger.backupDel.confirm'),
       onConfirm: () => {
         const check = preflight('backup-delete', { file })
@@ -225,7 +221,6 @@ export function useModals() {
         { text: t('danger.restore.warn4'), keep: true },
       ],
       checkbox: { label: t('danger.restore.check') },
-      cliPreview: `phpo restore ${app.env.BACKUP_ROOT}/${file}`,
       confirmLabel: t('danger.restore.confirm'),
       onConfirm: () => {
         const check = preflight('restore', { file })

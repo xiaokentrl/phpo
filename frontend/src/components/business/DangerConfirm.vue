@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 危险确认模态：1:1 迁移 openDangerConfirm（1550–1573）；被 5 类删除/危险操作复用
+// §1.4（总纲 v2.9.11）：界面不展示 `phpo …` 伪命令行——确认信息由标题、说明与 warnings 的人话文本承载。
 import { computed, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import ModalShell from '@/components/common/ModalShell.vue'
@@ -15,7 +16,6 @@ const props = defineProps<{
   title: string
   description?: string
   warnings?: Warning[]
-  cliPreview?: string
   confirmLabel: string
   checkbox?: Checkbox
   onConfirm?: () => void
@@ -56,10 +56,6 @@ function confirm() {
         <input type="checkbox" :checked="checked" @change="onCheck" />
         <span class="check-label">{{ checkbox.label }}</span>
       </label>
-      <div v-if="cliPreview" class="field">
-        <label>{{ t('install.preview') }}</label>
-        <div class="cmd-preview"><span class="prompt">$ </span>{{ cliPreview }}</div>
-      </div>
     </template>
     <template #foot>
       <button class="btn" @click="emit('close')">{{ t('common.cancel') }}</button>

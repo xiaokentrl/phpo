@@ -70,11 +70,12 @@ function sitesRootOf(env: Env): string {
 }
 
 // buildScript：逐字迁移原型 buildScript（2152–2335），产出 5 类型日志行。
+// 原型首行的 `$ phpo …` 伪命令行不再产出（§1.4 / 总纲 v2.9.11：本产品仅 GUI，界面不暗示命令行入口）。
 // 适配前端签名：verRoot(env,kind,ver) / resolveMounts(env,kind,ver) / hostToContainer(env,p) / getDefaultFiles(kind,ver)。
 function buildScript(args: string[], meta: TaskMeta): TaskLine[] {
   const app = useAppState()
   const env = app.env
-  const lines: TaskLine[] = [{ t: 'cmd', s: `$ phpo ${args.join(' ')}` }]
+  const lines: TaskLine[] = []
   const kind = meta?.kind as ServiceKind | undefined
   const version = meta?.version as string | undefined
 
@@ -297,7 +298,7 @@ export const useTaskStore = defineStore('task', () => {
   // sysLines：系统日志通道（需求 3／6）——无任务归属的事件（cache:* / docker:* / update:*）流水，
   // 左栏在无选中任务时显示它
   const sysLines = ref<TaskLine[]>([])
-  // 等效命令是前端展示信息、不进后端队列载荷：label 为队列去重键（与任务 1:1），据此关联弹窗提交的 args
+  // 参数登记（不外显，§1.4）：不进后端队列载荷；label 为队列去重键（与任务 1:1），据此关联弹窗提交的 args
   const cmdByLabel = new Map<string, string[]>()
   let followedId = '' // 已自动跟随过的运行中任务 ID
   let demoSeq = 0
@@ -590,7 +591,7 @@ export const useTaskStore = defineStore('task', () => {
   }
 
   // start：写操作的前端入口（runTask 委托到此）。
-  // 真实宿主：任务由后端三段式执行并经事件回流，此处只登记等效命令 + 展开抽屉，绝不伪造日志。
+  // 真实宿主：任务由后端三段式执行并经事件回流，此处只登记本次参数 + 展开抽屉，绝不伪造日志。
   // 无宿主：按原型 buildScript 造日志行本地回放，仅用于演示。
   function start(args: string[], label?: string, meta: TaskMeta = { type: args[0] || 'task' }): boolean {
     const lbl = label || args.join(' ')

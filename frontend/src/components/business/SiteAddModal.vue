@@ -49,11 +49,6 @@ function vhostPath(): string {
   const d = domain.value.trim().toLowerCase() || '<domain>'
   return `${app.env.NGINX_SITES_ROOT.replace(/\/+$/, '')}/${d}.conf`
 }
-function previewText(): string {
-  const d = domain.value.trim() || '<domain>'
-  const p = port.value.trim() || '80'
-  return `phpo site add ${d} --port ${p} --php ${php.value} --rewrite ${rewrite.value} --root ${fullPath()}`
-}
 function onDomain(): void {
   if (!rootTouched) rootSub.value = domain.value.trim()
 }
@@ -161,10 +156,6 @@ function onOk(): void {
           <option v-for="[k, p] in rwOptions" :key="k" :value="k">{{ p.icon }} {{ t(p.nameKey) }}</option>
         </select>
         <div class="hint">{{ t('siteAdd.framework.hint') }}</div>
-      </div>
-      <div class="field">
-        <label>{{ t('siteAdd.preview') }}</label>
-        <div class="cmd-preview"><span class="prompt">$ </span>{{ previewText() }}</div>
       </div>
     </template>
     <template #foot>

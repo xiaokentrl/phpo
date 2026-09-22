@@ -30,14 +30,10 @@ const progress = computed(() => store.progress)
 // errorText：失败原因（终态 failed 时由 err 日志收口；成功/取消不显示）
 const errorText = computed(() => (task.value?.status === 'failed' ? task.value.error || '' : ''))
 
-// 需求 5：抽屉头部左侧标签固定为「服务」，不再随选中任务变化——任务名在右栏队列每行给出，
-// 头部只作区块标题，避免日志/队列切换时标题跳动。
-// cmdText：等效命令仅在「本次会话由前端提交、且后端任务标签与提交标签一致」时可得；
-// 后端自发起的任务（如校准、重发布 nginx）没有等效命令，留空而不是渲染一个孤零零的 "phpo"。
-const cmdText = computed(() => {
-  const args = task.value?.args ?? []
-  return args.length ? 'phpo ' + args.join(' ') : ''
-})
+// 需求 5（§5.6.1 头部三区口径）：头部左侧只有状态点 + 固定标签「服务」——标签取 t('nav.services')，
+// 不随选中任务变化（任务名在右栏队列每行给出，头部只作区块标题，避免日志/队列切换时标题跳动）。
+// §1.4（v2.9.11）：等效命令不再在界面上任何位置展示——本产品不提供 CLI，把 `phpo …` 形态的文本
+// 摆在界面上等于暗示存在命令行；任务参数仍记在 taskStore（demo 回放与日志正文要用），只是不外显。
 
 // dotClass / statusText：一律由显示态派生（§5.6.1），不再看记录内部 status 字段
 const dotClass = computed(() => 'drawer-dot ' + display.value)
@@ -129,10 +125,8 @@ async function copyLog(): Promise<void> {
   toast(ok ? t('task.copyLog') : t('common.copyFailed'), ok ? 'ok' : 'err', 1600)
 }
 
-// §1.4：等效命令仅展示，点击复制给出「本产品不提供 CLI」
-function onCmdClick(): void {
-  toast(t('drawer.noCli'), 'info', 1600)
-}
+// §1.4（v2.9.11）：等效命令的展示与复制入口一并移除（界面不再出现 `phpo …` 文本），
+// 故此处不再需要「本产品不提供 CLI」的复制提示。
 
 function onCancel(): void {
   store.cancel()
@@ -155,15 +149,6 @@ async function onWithdraw(id: string): Promise<void> {
       <div class="drawer-left">
         <span :class="dotClass"></span>
         <span class="drawer-label">{{ t('nav.services') }}</span>
-        <span
-          v-if="cmdText"
-          class="drawer-cmd"
-          :title="`${t('drawer.cmd')} · ${t('drawer.cmdOnly')}`"
-          style="cursor: pointer"
-          @click="onCmdClick"
-          >{{ cmdText }}</span
-        >
-        <span v-if="cmdText" class="chip" style="font-size: 10px; padding: 1px 6px" :title="t('drawer.cmdOnly')">{{ t('drawer.cmdOnly') }}</span>
       </div>
       <div class="drawer-services">
         <span v-for="g in svcGroups" :key="g.kind" class="dsvc">
