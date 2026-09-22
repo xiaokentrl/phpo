@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.11
+> **文档版本**：v2.9.12
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -94,6 +94,7 @@
 26. **禁止「容器内命令的输出攒成一段」**（v2.9.9 新增，见 §5.16.3）：容器内 exec（扩展编译、逻辑导出）的 stdout / stderr 必须**去帧后逐行**实时进 `task:log`；失败必须**点名**到具体扩展 / 具体服务，不得只报「命令失败」。Docker exec attach 流带 8 字节帧头，直读原始流即把二进制垃圾打进日志。
 27. **禁止备份归档被单个读不动的条目判死**（v2.9.9 新增，见 §5.17）：宿主数据目录由容器内 uid 拥有，逐文件读权限不可保证——读不动的条目**跳过 + 逐目录聚合告警**，整包照常产出；数据靠**逻辑导出**（`mysqldump` / `pg_dumpall` / `redis-cli --rdb`）补齐，不得静默缺项。
 28. **禁止服务容器往宿主 bind 挂载目录写日志文件**（v2.9.9 新增，见 §5.18）：该目录由宿主用户创建（0755），容器内进程是另一个 uid，建文件即 `Permission denied` → 进程 FATAL → `unless-stopped` 无限重启，服务永远启不来。日志一律走 stderr 由 Docker 收集；启动必须等**稳定 running**，失败报错必须带容器日志尾部。
+29. **禁止「事件到了界面却因单个字段缺席而不动」**（v2.9.12 新增，见 §5.6.3）：`state:changed` 的落地是一条链（`applySnapshot` → `applyTaskBoard` → `taskStore.syncBoard`），链上任一处抛错即**整链中断**——事件收到了、界面却一动不动，用户只能靠刷新页面才看到正确状态。为此：后端快照出口的**可空集合必须序列化为 `[]` / `{}`**（零站点、无排队项即为 `null`，落点是 `internal/store/snapshot.go` 的 `normalizeCollections`），前端**逐字段兜空**（`?? []` / `?? {}`，仍只认快照值，不是乐观更新）。抽屉右栏每一行的标签必须是快照 `TaskBrief.Label` 的人话文本（如「启动 phpo-php-8.0」），**不得**以任务 ID（`start-2` / `stop-1`）示人、**不得**要求用户刷新。
 
 ### 0.3 数字权威表（Agent 引用禁止出错）
 
@@ -115,6 +116,8 @@
 | 抽屉两栏默认占比 | **70% ／ 30%**（可左右拖拽，夹取区间 40–80%；双击中缝复位） | `frontend/src/components/business/TaskDrawer.vue`（`.drawer-splitter`）+ `constants/layout.ts` 的 `LAYOUT_LIMITS.split` + `--drawer-split`（§5.6.1） |
 | 抽屉系统日志上限 | **200 行**（滚动裁尾） | `frontend/src/stores/taskStore.ts` 的 `SYS_MAX` |
 | 任务队列载体 | **`Snapshot.Tasks`（`TaskBoard`）** | 随 `state:changed` 推送，不新增事件名 |
+| 队列行标签来源 | **`TaskBrief.Label`（人话文本，如「启动 phpo-php-8.0」）** | 在任务开始那一帧实时落地；**不得**显示任务 ID、**不得**靠刷新（§5.6.1 · §5.6.3） |
+| 快照可空集合的线上形态 | **`[]` ／ `{}`**（不得为 `null`） | `internal/store/snapshot.go` 的 `normalizeCollections`（唯一快照出口）+ 前端 `appState.applySnapshot` 逐字段兜空；用例 `TestBuildSnapshot_NoNullCollections`（§5.6.3） |
 | 任务账本日志保留 | **尾部 500 行** | `internal/task/ledger.go`（`maxLedgerLines`）；写回 `operations` 表（迁移 0008 加 `task_id/label/logs`） |
 | SQLite 迁移数 | **8** | `internal/store/migrate/0001–0008.sql` |
 | VHosts 方法数 | **9** | `VHosts` 对象方法 |
@@ -880,7 +883,7 @@ phpo/
 │       ├── m5_redis_live_test.go  m5_wordpress_live_test.go
 │       ├── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
 │       └── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
-│       # 单元测试与包同目录（78 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       # 单元测试与包同目录（80 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -1056,6 +1059,8 @@ phpo/
 
 **即时同步**：任务一经入队即出现在列表，不等它取得执行权。后端 `SetQueueWatcher`（`internal/app/di.go`）在**入队 / 移交 / 撤回**时重发权威快照，前端 `syncBoard` 为 `Running` **和每一个 `Pending` 项**都建立/更新记录（排队项无日志，左栏给空态提示）。撤回成功后该行随下一次快照消失；若被撤回项正被选中，选中项在同一次快照里回落到运行中任务，**不留「状态未知」的幽灵详情**。全程**不做本地乐观插入、不推断终态**（硬红线 4）。
 
+**每一行的标签在人话层面也必须即时可见**（v2.9.12 新增）：队列行显示的文本**唯一来源**是权威快照里的 `TaskBrief.Label`（「启动 phpo-php-8.0」/「删除站点 demo.test」这类人话），且必须在**任务开始的那一帧** `state:changed` 就落地——不得显示任务 ID（`start-2` / `stop-1`），不得等用户手动刷新页面才变对。为此两条同时成立：① 后端在 `SetQueueWatcher` 里推的快照必须**带上**该标签（`internal/app/queue_events_test.go` 锁死）；② 该快照必须**能被前端走完**（`internal/store/snapshot.go` 的 `normalizeCollections` + `appState.applySnapshot` 逐字段兜空，见 §5.6.3）。`task:log` 早于快照到达时可以 ID 暂占该行（跨事件顺序不保证），但**同一帧快照落地即必须覆盖成人话标签**，不得停留。
+
 #### 5.6.2 全局实时同步落地表（v2.9.8 新增，需求 6）
 
 「实时同步」在本项目是**可核对的清单**，不是口号。§5.6 的 17 个事件名逐个给出唯一落地处；新增事件而无落地处即违反 §0.2 规则 25。前端唯一分发点是 `useStateSync.ts`：先 `landEvent`（改 store / 快照），再 `eventNote`（进抽屉日志）。
@@ -1090,6 +1095,32 @@ phpo/
 | 目录选择/根路径变更 | `root-set` 落 `config.yaml` → 装配层 `Rebind` → `GetState` → `state:changed`；界面路径条回显来自快照 `env`，**不回填本地输入框**（§5.15） |
 | 失败路径 | 任务失败同样要回流：终态 + 失败原因行 + 账本，不得静默（§5.13.9 每任务后校准） |
 
+#### 5.6.3 快照形状契约：一条落地链不得被单个字段打断（v2.9.12 新增）
+
+`state:changed` 到界面不是一次赋值，而是**一条链**：
+
+```
+后端 SetQueueWatcher / commit / emit → store.BuildSnapshot（唯一快照出口）
+  → Emitter.Emit("state:changed", { snapshot })
+  → 前端 useStateSync.landEvent → appState.applySnapshot → applyTaskBoard → taskStore.syncBoard → 抽屉右栏
+```
+
+**链上任一处抛错即整链中断**：事件确实收到了，界面却一动不动——而且中断点在一个「与本条数据显示无关」的字段上时，缺陷会伪装成「后端没推」。本项目为此立三条：
+
+| # | 契约 | 落点 |
+|---|------|------|
+| 1 | **可空集合必须序列化为 `[]` / `{}`**，不得把 `null` 交给前端。零站点时 `ListSites` 返回 nil、无排队项时 `TaskBoard.Pending` 为 nil，两条都会命中 | `internal/store/snapshot.go` 的 `normalizeCollections`（在 `BuildSnapshot` 的两个 return 前各调一次）；用例 `TestBuildSnapshot_NoNullCollections` 反射遍历快照的切片/映射字段（含嵌套的 `tasks.pending`）断言 JSON 不为 `null` |
+| 2 | **前端逐字段兜空**（`?? []` / `?? {}`）：落地链不得因某个字段缺席而吃掉后面的队列详情。兜空**不是**乐观更新——值仍只来自快照（硬红线 4） | `frontend/src/stores/appState.ts` 的 `applySnapshot`（`sites` / `phpExtensions`）与 `applyTaskBoard`（`running` / `pending`）、`taskStore.syncBoard` |
+| 3 | **一次抛错不得静默**：不得在落地链入口包一层 try/catch 吞异常——修契约而不是把错误藏起来（本条为「不得」而非「必须包一层」） | `frontend/src/composables/useStateSync.ts` 的 `landEvent` |
+
+**真机因果（这条为什么值得冻结）**：PHP「启用/停用」时抽屉右栏显示 `start-2` / `stop-1`，且**必须手动刷新页面**才看到「启动 phpo-php-8.0 已完成」。取证链是：零站点库里 `snap.Sites` 为 nil → JSON `"sites":null` → `applySnapshot` 展开 `s.sites` 抛 `TypeError: s.sites is not iterable` → 同函数末尾的 `applyTaskBoard` 与 `taskStore.syncBoard` **永不执行**，队列详情（含人话标签）因此永不落地；而 `task:log` 早到一步以 ID 建了占位行，界面就停在 ID 上。刷新后能看到正确标签，是因为走了另一条路（`loadHistory()` 从任务账本读 `op.label`）——恰好证明**实时链路是断的**，只有事后链路活着。同一抛错还让 `syncState()` 失败，影响面不止队列。
+
+**明确禁止**：
+
+- ❌ 快照出口把任何切片/映射字段发成 `null`（新增字段时同样适用——在 `model.NewSnapshot()` 里给空集合，或在 `normalizeCollections` 里补）。
+- ❌ 在前端「包一层 try/catch 让它别抛」来代替修契约：吞掉异常等于把「事件发了界面却不动」永久化。
+- ❌ 用「刷新页面后就正常了」当作验收通过——本产品的实时同步要求是**不刷新也对**（§1.8）。
+- ❌ 在抽屉队列行里显示任务 ID 当标签（`TaskBrief.Label` 是唯一标签来源，§5.6.1）。
 
 ### 5.7 doctor 环境诊断
 
@@ -2012,6 +2043,7 @@ logging_collector = off
 | **R95** | **单个读不动的文件判死整包备份** | **`archive.Create` 跳过并记 `Skip`，`logSkips` 按目录聚合告警（§5.17.1）**（v2.9.9） |
 | **R96** | **冷拷贝缺库内数据，恢复后用户以为数据完整** | **暂停服务前先逻辑导出入 `dump/`；恢复侧明示「dump 未重放」（§5.17.2 / §5.17.3）**（v2.9.9） |
 | **R97** | **容器内往宿主 bind 挂载目录写日志 → FATAL 崩溃循环，且旧装机的坏配置永不更新** | **pgsql 日志改走 stderr（模板 + `check-templates.go` golden 注明唯一生产偏离）；「启用」路径 `healPgLogging` 原地截断修复；`waitRunning` 复验 + 失败消息带退出码与容器日志尾部；`test/integration/g4_pgsql_heal_live_test.go` 真机两头取证（旧配置裸启动必失败 → 经 `Start` 自愈后就绪）（§5.18）**（v2.9.9） |
+| **R98** | **`state:changed` 落地链被单个缺席字段打断：事件到了、界面却不动，只能靠刷新页面回正** | **快照出口 `normalizeCollections` 把可空集合发成 `[]`/`{}`（`TestBuildSnapshot_NoNullCollections` 反射遍历锁死）；前端 `applySnapshot`/`applyTaskBoard`/`syncBoard` 逐字段兜空；`internal/app/queue_events_test.go` 锁死「任务开始那一帧就带人话标签」；§0.2 规则 29 + §5.6.3**（v2.9.12） |
 
 ---
 
@@ -2072,7 +2104,7 @@ logging_collector = off
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（78 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **10** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（80 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **10** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -2150,6 +2182,9 @@ logging_collector = off
 - [ ] 抽屉两栏是否默认 70%／30% 且**可左右拖拽**（40–80%、双击中缝复位、写 `localStorage`）？头部是否**只有左区**受约束（状态点 + 标签恒为「服务」二字），中／右区是否未被改动？
 - [ ] 界面上是否**没有任何** `phpo …` 形态的伪命令行（§1.4）？逐项核对：抽屉头部、`InstallModal` / `SiteAddModal` / `DangerConfirm` 的「将执行」预览、向导验证日志首行、demo 回放日志首行——都不得出现，也不得改成人话再显示一遍；`.cmd-preview` **只**用于承载真实数据（挂载表、vhost 规则预览）。
 - [ ] 所有写操作是否 `await` 后端 + 触发快照回流？非快照数据（缓存列表、审计）写后是否主动重拉？
+- [ ] **快照形状契约（§5.6.3）**：`BuildSnapshot` 的每个切片/映射字段（含嵌套的 `tasks.pending`）是否都序列化为 `[]` / `{}` 而**非** `null`？新增快照字段时是否在 `model.NewSnapshot()` 或 `normalizeCollections` 里给空集合？`TestBuildSnapshot_NoNullCollections` 是否绿？
+- [ ] **落地链不被单字段打断（§5.6.3）**：前端 `applySnapshot` / `applyTaskBoard` / `syncBoard` 是否逐字段兜空（`?? []` / `?? {}`）？是否**没有**用 try/catch 吞掉抛错来「掩盖」不落地？
+- [ ] **队列行标签（§5.6.1）**：任务开始那一帧，抽屉右栏显示的是 `TaskBrief.Label` 的人话文本（「启动 phpo-php-8.0」）还是任务 ID（`start-2`）？终态后是否**不刷新**即回到「已完成」？
 
 ### 12.9 PHP 扩展目录 · 备份容错 · 数据服务运行态检查（v2.9.9 新增，§5.16–§5.18）
 
@@ -2195,8 +2230,37 @@ logging_collector = off
 
 ---
 
-**phpo 项目总纲 v2.9.11**
+**phpo 项目总纲 v2.9.12**
 
+> **v2.9.12 变更（新增 §5.6.3「快照形状契约：一条落地链不得被单个字段打断」，把「队列行要实时显示人话标签」写成冻结条款）**：
+> 现象是用户报的一条缺陷：点 PHP 的「启用/停用」后，抽屉右栏那两行显示 `start-2` / `stop-1`，**不实时**，必须手动刷新页面
+> 才看到「启动 phpo-php-8.0 已完成 / 停止 phpo-php-8.0 已完成」——用户要求「这个需求必须写进总纲」。取证先把「后端没推」
+> 排除掉：`internal/app/queue_events_test.go` 证明任务一进入运行态，`SetQueueWatcher` 就推出带 `TaskBrief.Label` 的
+> `state:changed`（载荷约 909–1090 字节，走 inline 路径，不是 Wails 大载荷引用投递）。真正的断点在**前端落地链**：
+> `store.BuildSnapshot` 里 `snap.Sites, err = s.ListSites()` 在零站点库上返回 nil → JSON `"sites":null` → `applySnapshot`
+> 展开 `s.sites` 抛 `TypeError: s.sites is not iterable` → 同函数末尾的 `applyTaskBoard` 与 `taskStore.syncBoard` **永不执行**，
+> 队列详情连同人话标签一起丢；而早一步到达的 `task:log` 已用任务 ID 建了占位行，界面就停在 ID 上。刷新后之所以正常，
+> 是因为走了另一条路（`loadHistory()` 读账本 `op.label`）——这恰好证明实时链路是断的。同一抛错还让 `syncState()` 失败。
+> 现冻结三条：① **可空集合必须序列化为 `[]` / `{}`**（落点 `internal/store/snapshot.go` 的 `normalizeCollections`，在
+> `BuildSnapshot` 两个 return 前各调一次；`tasks.pending` 在无排队项时同为 nil，一并收口）；② **前端逐字段兜空**
+> （`appState.applySnapshot` 的 `sites` / `phpExtensions`，`applyTaskBoard` 与 `taskStore.syncBoard` 已有的 `?? []` 保持）——
+> 兜空不是乐观更新，值仍只来自快照（硬红线 4）；③ **不得用 try/catch 吞抛错来代替修契约**（藏起异常等于把「事件发了
+> 界面却不动」永久化）。同步落点：§0.2 规则 **29**（故意不重编号，既有规则按号引用不变）、§0.3 两行（队列行标签来源／
+> 快照可空集合的线上形态）、§5.6.1 一段（标签在人话层面也必须即时可见；`task:log` 早到可暂占 ID，但同一帧快照落地即须覆盖）、
+> **§5.6.3 新节**（落地链全链路图 + 三条契约表 + 真机因果 + 四条禁止项，含「不得把『刷新后就正常』当验收通过」）、
+> §9 风险 **R98**、§12.8 三项自查；并把 §4.1／§11.3 与 `docs/目录规范.md` 的 `*_test.go` 计数按仓库实测校正为 **80**（全仓 90 = 80 + `test/integration/` 10；本轮新增 `internal/store/snapshot_test.go`、`internal/app/queue_events_test.go`）。用例 `TestBuildSnapshot_NoNullCollections` 反射递归遍历快照的切片/映射字段（含嵌套
+> `tasks.pending`）断言不为 `null`，并断言运行中任务的标签进快照；改前为红（报出 `sites`、`tasks.pending` 两处），改后为绿。
+> **验真**：`gofmt -l .` 无输出、`go vet ./...`、`go build ./...`、`go test ./... -count=1` 全绿；五项门禁全过（i18n 各 **603**
+> ——本轮无新增文案键／模板 golden 空 diff／Docker 命名／缓存清单／扩展 **73** 项分类对账）；`vue-tsc --noEmit` EXIT=0、
+> `pnpm build` 绿，并在构建产物里正向取到 `sites??[]` 与 `phpExtensions??{}` 两处兜空；前端链用 Node 复现台以真载荷驱动
+> 验证：`sites=null` 场景在 `state:changed` 那一帧即得 `{"id":"start-2","label":"启动 phpo-php-8.0","display":"running"}`，
+> 终态快照（`running` 清空）后**不刷新**即回到 `display":"done"`／「已完成」，`sites=[…]` 场景同结论。临时取证文件
+> `internal/app/size_probe_test.go` 已删除，`frontend/dist` 已按规约还原。**真宿主 GUI 未走查**（原生窗口的点击级验收待用户实机确认）。
+> **明确未改**：8 条硬红线原文、三段式写操作、17 个事件名（未新增）、后端任务状态 4 个、preflight **19** action 与
+> NEEDS_HOME **17**、`pkg/errs` **28** 码、§0.3 其余数字、i18n 键集（603）、抽屉 70%／30% 默认占比与 40–80 拖拽区间、
+> 系统日志通道 200 行上限、§5.15 三根互斥唯一、§5.16/§5.17/§5.18 全部口径、密码／版本／域名／端口策略、
+> 命令面板 `CMD_ITEMS` **20** 条、冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）。
+>
 > **v2.9.11 变更（§1.4 反转为「全界面不展示等效命令」，§5.6.1 头部改写为左／中／右三区口径）**：
 > 抽屉头部此前常驻一行 `phpo site remove demo.test` 加「仅展示」徽标。这行文本是 §1.4 旧口径要求的——而该旧口径
 > 与本文件自己的立场冲突：本产品**仅 GUI、不提供 CLI**（§2.1、§0.2 规则 4），却在唯一常驻的日志出口里摆一条

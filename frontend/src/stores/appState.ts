@@ -128,11 +128,13 @@ export const useAppState = defineStore('appState', () => {
       const running = new Set(s.running[kind] ?? [])
       stopped[kind].splice(0, stopped[kind].length, ...installed[kind].filter((v) => !running.has(v)))
     }
-    sites.splice(0, sites.length, ...s.sites)
+    // 集合字段逐处兜空：本函数是 state:changed 落地链的第一环，此处抛错即整链中断——
+    // 后面的 applyTaskBoard 永不执行，队列只能退化成任务 ID（后端 BuildSnapshot 同守此契约）。
+    sites.splice(0, sites.length, ...(s.sites ?? []))
     for (const k of Object.keys(env)) delete env[k]
     Object.assign(env, s.env)
     for (const k of Object.keys(phpExtensions)) delete phpExtensions[k]
-    for (const [k, v] of Object.entries(s.phpExtensions)) phpExtensions[k] = [...v]
+    for (const [k, v] of Object.entries(s.phpExtensions ?? {})) phpExtensions[k] = [...v]
     Object.assign(dirReady, s.dirReady)
     applyTaskBoard(s.tasks)
   }

@@ -22,6 +22,7 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 		snap.DirReady = map[string]bool{"PHPO_HOME": home, "WWW_ROOT": www}
 	}
 	if !s.mayOpen() {
+		normalizeCollections(snap)
 		return snap, nil // 工作目录未设置：运行态定义为空，且不得建库（首启不在用户数据目录留文件）
 	}
 	db, err := s.ensure()
@@ -63,7 +64,21 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 		}
 		snap.PHPExtensions[v] = append(snap.PHPExtensions[v], e)
 	}
+	normalizeCollections(snap)
 	return snap, nil
+}
+
+// normalizeCollections 是快照的形状契约：可空集合一律给空集合，不得把 null 交给前端。
+// 前端 applySnapshot 是直接展开这些字段的，null 即抛错，抛出即整条 state:changed 落地链中断——
+// 队列详情（TaskBrief.Label）永不落地，抽屉右栏只能退化成任务 ID（§5.6.2「事件发了界面却不动」）。
+// 零站点时 ListSites 返回 nil、无排队项时队列 Pending 为 nil，两条都会命中这里。
+func normalizeCollections(snap *model.Snapshot) {
+	if snap.Sites == nil {
+		snap.Sites = []model.Site{}
+	}
+	if snap.Tasks.Pending == nil {
+		snap.Tasks.Pending = []model.TaskBrief{}
+	}
 }
 
 // env / dirReady 已迁出：配置真相与就绪判定唯一来自 ConfigStore（internal/config，YAML）；SQLite 不再持有 env 表与 dir_ready 表。
