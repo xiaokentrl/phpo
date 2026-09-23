@@ -242,7 +242,7 @@ export interface StateSnapshot {
 // DockerStatus 与后端 model.DockerStatus（internal/model/dto.go）JSON 逐字对齐；
 // 只读探测结果（首启/轮询门禁，硬红线 7 判定源），非可持久 Snapshot 字段、不走事件。
 export interface DockerStatus {
-  status: 'ok' | 'not_installed' | 'not_running' | 'old_version' | 'unknown'
+  status: 'ok' | 'not_installed' | 'not_running' | 'no_permission' | 'old_version' | 'unknown'
   version?: string
   canStart: boolean
   warning: boolean

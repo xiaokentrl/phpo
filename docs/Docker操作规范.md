@@ -15,7 +15,15 @@
 
 ## 2. 功能依赖前置（硬红线 7）
 
-Docker 未安装/未运行 → 不能启动任何服务。`engine/client.go` 建客户端前探测可用性；不可用报人话提示（「Docker 未运行。请启动 Docker Desktop。」），经 doctor/preflight 阻断（[最小限制原则](./最小限制原则.md) 例外之一）。
+Docker 未安装/未运行/无权限 → 不能启动任何服务。`engine/client.go` 在构造客户端时一次性选定端点（显式 `DOCKER_HOST` 优先；否则按 `/var/run/docker.sock` → `/run/docker.sock` → `$XDG_RUNTIME_DIR/docker.sock` → `/run/user/<uid>/docker.sock` → `$HOME/.docker/run/docker.sock` 取第一个盘上确实是 unix socket 的候选），探测与后续所有 SDK 调用走同一份。不可用报**带原始原因、按平台分岔**的人话提示，三态不得合并（§5.7 三条冻结口径）：
+
+| 状态 | 判据 | 提示（Linux） | 提示（Windows / macOS） |
+|------|------|--------------|----------------------|
+| `not_installed` | 候选 socket 全不在盘上 | 「Docker 未安装。（{原因}）请安装 Docker 引擎：`sudo apt install docker.io`…」 | 「请下载 Docker Desktop：[链接]」 |
+| `not_running` | socket 在但连不上 | 「Docker 未运行。（{原因}）请启动 Docker 服务：`sudo systemctl start docker`…」 | 「请启动 Docker Desktop。」 |
+| `no_permission` | `permission denied` | 「当前用户无权访问 Docker。（{原因}）请把用户加入 docker 组：`sudo usermod -aG docker $USER`，然后重新登录…」 | 「请重新启动 Docker Desktop；仍不行时以管理员身份运行本应用。」 |
+
+`apt docker.io` 会建 `docker` 组但**不会**把当前用户加进去，因此 Linux 最常见的第一次失败是 `no_permission`——把它报成「未运行」等于把用户指向一个本来就在跑的 daemon。经 doctor/preflight 阻断（[最小限制原则](./最小限制原则.md) 例外之一）。
 
 ## 3. 资源命名规范（§5.13.2，隔离性）
 

@@ -410,7 +410,7 @@
        → 完成
 ```
 
-**安装 PHP 8.4 的 redis 扩展（pecl）**：
+**安装 PHP 8.4 的 redis 包括任何扩展（apk/pecl）(包括任何扩展，按扩展类型分类不同的文件夹)**：
 
 ```
 1. 检查 ./offline/php/8.4/pecl/redis-6.0.2.tgz
@@ -424,6 +424,8 @@
        → 编译安装
        ├─ 成功
        │   → mv ./php/8.4/ext/pecl/redis-6.0.2.tgz ./offline/php/8.4/pecl/
+       │   → mv ./php/8.4/ext/apk/bzip2-dev-1.0.8-r6.apk ./offline/php/8.4/apk/
+       │   → mv 例如：其他类型扩展/更多扩展……，使用不同的文件夹 ./php/8.4/ext/{apk,pecl……，……}/
        │   → 更新 ./offline/php/8.4/manifest.json
        │   → **清空 ./php/8.4/ext/**（防污染下次使用）
        │   → 发射 cache:miss + cache:promote 事件
@@ -1219,8 +1221,9 @@ phpo/
 
 | 检查项 | 失败时的建议 |
 |-------|-----------|
-| Docker 已安装 | 「请下载 Docker Desktop：[链接]」 |
-| Docker 正在运行 | 「Docker 未运行。请启动 Docker Desktop。」 |
+| Docker 已安装 | 「Docker 未安装。（{原因}）」+ Linux：「请安装 Docker 引擎：`sudo apt install docker.io`，或按 docs.docker.com 的官方文档安装 docker-ce。」/ win·mac：「请下载 Docker Desktop：[链接]」 |
+| Docker 正在运行 | 「Docker 未运行。（{原因}）」+ Linux：「请启动 Docker 服务：`sudo systemctl start docker`（可用 `systemctl status docker` 查看）。」/ win·mac：「请启动 Docker Desktop。」 |
+| Docker 可访问（权限） | 「当前用户无权访问 Docker。（{原因}）」+ Linux：「请把用户加入 docker 组：`sudo usermod -aG docker $USER`，然后重新登录使组生效。」/ win·mac：「请重新启动 Docker Desktop；仍不行时以管理员身份运行本应用。」 |
 | Docker 版本 | 「版本较旧（< 20.10），部分功能可能不可用。是否继续？」（警告） |
 | 80 端口可用 | 「80 端口已被占用。新建站点会以降级态创建（暂不发布端口、暂不写 vhost），或改用其他端口。」 |
 | 磁盘空间 | 「磁盘剩余 < 10GB。容器可能无法启动。」（警告） |
@@ -1234,6 +1237,12 @@ phpo/
 | 离线缓存完整性 | 「N 个缓存条目，M 个校验失败，点击查看」 |
 | 离线缓存占用 | 「缓存占用 X GB，点击清理」 |
 | 临时目录残留 | 「检测到临时目录残留，点击清空」 |
+
+**Docker 可用性探测的三条冻结口径**（`internal/engine/client.go` + `internal/engine/health.go`）：
+
+1. **端点在构造客户端时一次性选定**，探测与后续所有 SDK 调用走同一份（`Client.DockerHost()`）：`DOCKER_HOST` 已由用户显式设置则原样尊重；否则按 `/var/run/docker.sock` → `/run/docker.sock` → `$XDG_RUNTIME_DIR/docker.sock` → `/run/user/<uid>/docker.sock` → `$HOME/.docker/run/docker.sock` 取第一个**盘上确实是 unix socket** 的候选，全都不在即回落 `/var/run/docker.sock`。**必须覆盖后三条**：从 `.desktop` 启动的进程拿不到用户 shell 里 `export` 的 `DOCKER_HOST`，rootless 与 Docker Desktop on Linux 因此会被误判成「未装/未运行」。
+2. **三态不得合并**：`not_installed`（socket 不在盘上）／`not_running`（socket 在但连不上）／`no_permission`（`permission denied`——apt 装 `docker.io` 会建 `docker` 组但不会把用户加进去，这是 Ubuntu 最常见的一种失败）三态各一，`no_permission` **不得**报成「未运行」，也不得报成「已安装 + 跑不动」。判定只认 SDK 原始错误的实测形状。
+3. **消息必须自带原因**：一行 `main（{原始连接错误}）`（`withReason`），并且**面向用户的建议按平台分岔**——Linux 上「Docker Desktop」这个产品并不存在（§8），把它指向不存在的东西等于没有建议。
 
 ### 5.8 站点端口策略
 
@@ -1449,7 +1458,7 @@ CI 无人值守支持。
 
 **唯一优先级：离线缓存 > 本机 Docker 镜像库 > 网络**（第二级为 v2.9.6 补入：缓存被误删/换机后，只要镜像还在本机 Docker 里，就能**零网络**把缓存重建出来；探不到才允许联网）。
 
-**安装服务（Docker 镜像）**：
+**安装服务或重新构建（Docker 镜像）**：
 
 ```
 1. 检查 ./offline/{kind}/{version}/image.tar
@@ -1470,6 +1479,7 @@ CI 无人值守支持。
                     → docker save -o {tmp}/image.tar
        → 校验
        → mv {tmp}/image.tar ./offline/{kind}/{version}/image.tar
+       → mv {tmp}/image.tar ./offline/{kind}/{version}/{apk,pecl}/
        → 更新 ./offline/{kind}/{version}/manifest.json
        → 清空 {tmp}
        → 发射 cache:promote + cache:tempdir-cleared 事件
@@ -1478,7 +1488,7 @@ CI 无人值守支持。
 
 > **两条未命中路径共用后续步骤**：无论镜像来自本机还是网络，都走「save → 校验 → 提升 → 清临时」，提升后下次装机即命中缓存（零网络）。**扩展（apk/pecl）不适用第二级**——`.so` 编译产物随镜像 commit 走，本机没有独立文件可探，仍是「未命中 → 联网下载 → 编译 → 提升」。
 
-**安装 PHP 扩展（apk/pecl）**：
+**安装 PHP 扩展或重新构建（apk/pecl）**：
 
 ```
 1. 判断扩展类型（apk / pecl）
@@ -2283,6 +2293,8 @@ const (
 | 差异维度 | Windows | macOS | Linux |
 |---------|---------|-------|-------|
 | Docker 运行时 | Docker Desktop（WSL2） | Docker Desktop | 原生 Docker Engine |
+| Docker 端点探测 | `$HOME/.docker/run/docker.sock`（Docker Desktop on Linux 同此） | 同左 | `/var/run/docker.sock` → `/run/docker.sock` → `$XDG_RUNTIME_DIR` → `/run/user/<uid>`（rootless）；显式 `DOCKER_HOST` 优先 |
+| Docker 无权限的典型成因 | 以管理员身份运行本应用 | 同左 | `docker.io` 建了 `docker` 组但没把当前用户加进去 → `usermod -aG docker` 后重新登录 |
 | 挂载性能 | ⚠️ VM 转发，慢 | ⚠️ VM 转发，慢 | ✅ 原生 |
 | 端口 80 | ✅ 无需特权 | ⚠️ 需 root/setcap | ⚠️ 需 root/CAP |
 | hosts 提权 | UAC | osascript admin | polkit |
@@ -2603,7 +2615,7 @@ const (
 > **4** 条 bullet；派生文档按 §13 第 4 步同步。
 >
 > **验真**：`gofmt -l .` 无输出、`go vet ./...`、`go build ./...`、`go test ./... -count=1` 全绿；五门禁全过（i18n zh-CN /
-> en-US 各 **610** 键、集合相等；模板 golden 空 diff；Docker 命名；缓存清单字段含 `extensions_image`；扩展 **73** 项分类对账）；
+> en-US 各 **611** 键、集合相等；模板 golden 空 diff；Docker 命名；缓存清单字段含 `extensions_image`；扩展 **73** 项分类对账）；
 > `vue-tsc --noEmit` EXIT=0。新增用例：`internal/cache/extimage_test.go`（两槽位互不覆盖）、`internal/service/lifecycle_service_test.go`
 > （轻量/全量分档 + `sameGaps` 静默 + 探针上抛）、`internal/preflight/preflight_test.go`（卸载降级为警告）、
 > `internal/config/password_test.go`（`config.yaml` 落盘即 0777）、`internal/util/fs_test.go`（umask 削位下显式归一）。
@@ -2615,6 +2627,20 @@ const (
 > **81**（与包同目录；全仓 92 = 81 + `test/integration/` 11）。
 > **真宿主 GUI 未走查**（live 用例覆盖后端语义与落盘事实，不替代点击级验收：缺失态 pill、抽屉 gaps 逐行、扩展弹窗提交即关仍需实机）；
 > `pnpm build` 与产物走查在下一轮，`frontend/dist` 届时按规约还原。
+>
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· Docker 可用性探测兼容性修复**：Ubuntu 26.04 真机报「`sudo apt install
+> docker.io` 装的 Docker，`docker info` 正常，phpo 却一直说『Docker 未运行。请启动 Docker Desktop。』，判定『检测不到 docker =
+> 代码兼容性太差』」。核查结论**不是** Docker 29 的 API 不兼容（本机 SDK 对 29.8.1 探测 `ok`），而是三处真实缺陷：① `apt docker.io`
+> 建 `docker` 组却不加当前用户，socket 是 `srw-rw---- root docker`，SDK 原始错误为 `permission denied …`，旧分类只认
+> `no such file or directory`（在 SDK 文本下是死码）于是塌进「未运行」；② 端点只认 `/var/run/docker.sock`，而从 `.desktop`
+> 启动的进程拿不到 shell `export` 的 `DOCKER_HOST`，rootless 与 Docker Desktop on Linux 恒被误判；③ `Health.Check` 丢弃底层
+> 错误，且 Linux 文案指向一个该平台上并不存在的产品（§8 既定：Linux = 原生 Docker Engine）。现按 §5.7 的**三条冻结口径**收口：
+> 端点在 `New()` 一次选定并全链路共用、`not_installed`／`not_running`／`no_permission` **三态不得合并**、消息一行
+> `结论（原始原因）`且建议按 `runtime.GOOS` 分岔。落点 `internal/engine/{client,health}.go` +
+> `internal/service/doctor_service.go`（无权限报 `DoctorErr` 而非「已安装 + 未运行」）+ `model/dto.go` 与
+> `types/index.ts` 的 `no_permission` + i18n `docker.no_permission`（键数 610 → **611**，两侧仍相等）。用例
+> `internal/engine/client_test.go`（含实测错误串）、`health_test.go`（`TestFailureMessagesCarryReason`／`TestHintsMatchPlatform`）。
+> 同步落点：§5.7 表首三行 + 三条口径、§8 矩阵两行、`docs/{Docker操作规范,跨平台差异,用户手册,CHANGELOG}.md`。
 >
 > **明确未改**：8 条硬红线原文、三段式写操作、**17 个事件名（未新增，仅补 `docker:state-drift` 载荷字段）**、后端任务状态
 > **4** 个、显示态映射与 `displayOf` 单一出口、preflight **19** action 与 NEEDS_HOME **17**（`uninstall` 仍是同一 action，

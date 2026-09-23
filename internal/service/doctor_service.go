@@ -159,6 +159,10 @@ func (s *DoctorService) checkDockerRunning(h engine.Health) model.DoctorCheck {
 		c.Status, c.Detail, c.Hint = model.DoctorErr, "Docker 未安装，无法运行", h.Hint
 	case engine.StatusNotRunning:
 		c.Status, c.Detail, c.Hint = model.DoctorErr, h.Message, h.Hint
+	case engine.StatusNoPermission:
+		// socket 在盘上、daemon 也可能在跑，只是当前用户拨不动——这不是「未运行」，
+		// 报「已安装」+「跑不动」才是可自查的口径。
+		c.Status, c.Detail, c.Hint = model.DoctorErr, h.Message, h.Hint
 	default:
 		c.Status, c.Detail = model.DoctorOK, "Docker 引擎在线"
 	}

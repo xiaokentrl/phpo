@@ -17,7 +17,7 @@ type HomeVerifyResult struct {
 }
 
 // DockerStatus 首启/轮询的 Docker 可用性探测结果（只读绑定，非可持久 Snapshot 字段）
-// status: ok / not_installed / not_running / old_version；CanStart=false 时不得启动任何容器（硬红线 7）
+// status: ok / not_installed / not_running / no_permission / old_version；CanStart=false 时不得启动任何容器（硬红线 7）
 type DockerStatus struct {
 	Status   string `json:"status"`
 	Version  string `json:"version,omitempty"`

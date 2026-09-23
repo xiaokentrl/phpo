@@ -14,7 +14,7 @@ func TestLiveProbeWhenDockerAvailable(t *testing.T) {
 	defer c.Close()
 
 	h := Check(context.Background(), c)
-	if h.Status == StatusNotInstalled || h.Status == StatusNotRunning {
+	if h.Status == StatusNotInstalled || h.Status == StatusNotRunning || h.Status == StatusNoPermission {
 		t.Skipf("本机 Docker 不可用（%s），跳过真实探测", h.Status)
 	}
 	if !h.CanStart {

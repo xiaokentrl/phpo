@@ -4,6 +4,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,7 @@ func TestCheckDockerStatusBranches(t *testing.T) {
 		{"正常", fakeProbe{ver: "28.3.2"}, StatusOK, true, false},
 		{"未安装", fakeProbe{err: ErrDockerNotInstalled}, StatusNotInstalled, false, false},
 		{"未运行", fakeProbe{err: ErrDockerNotRunning}, StatusNotRunning, false, false},
+		{"socket 无权限", fakeProbe{err: ErrDockerNoPermission}, StatusNoPermission, false, false},
 		{"其他连接错误归为未运行", fakeProbe{err: errors.New("connection refused")}, StatusNotRunning, false, false},
 		{"版本过旧仍可用但警告", fakeProbe{ver: "19.03.5"}, StatusOldVersion, true, true},
 		{"临界 20.10.0 通过", fakeProbe{ver: "20.10.0"}, StatusOK, true, false},
@@ -94,5 +96,70 @@ func TestErrBrief(t *testing.T) {
 	}
 	if !strings.HasSuffix(brief, "…") {
 		t.Errorf("截断须以省略号收尾: %q", brief[len(brief)-6:])
+	}
+}
+
+// TestFailureMessagesCarryReason 真机缺陷：Ubuntu 上 daemon 明明在跑（docker info 正常），
+// 界面却只说「Docker 未运行。请启动 Docker Desktop。」——底层原文被哨兵吞掉，用户无从自查、
+// 我们也无从判断是权限、路径还是版本问题。三条失败分支的 Message 都必须自带原因。
+func TestFailureMessagesCarryReason(t *testing.T) {
+	raw := errors.New("permission denied while trying to connect to the Docker daemon socket at " +
+		"unix:///var/run/docker.sock: connect: permission denied")
+	cases := []struct {
+		name   string
+		sentin error
+		want   Status
+	}{
+		{"无权限", ErrDockerNoPermission, StatusNoPermission},
+		{"未运行", ErrDockerNotRunning, StatusNotRunning},
+		{"未安装", ErrDockerNotInstalled, StatusNotInstalled},
+	}
+	for _, c := range cases {
+		got := Check(context.Background(), fakeProbe{err: errors.Join(c.sentin, raw)})
+		if got.Status != c.want {
+			t.Fatalf("%s: Status=%q 期望 %q", c.name, got.Status, c.want)
+		}
+		if !strings.Contains(got.Message, "permission denied") {
+			t.Errorf("%s: Message 应带底层原因，got=%q", c.name, got.Message)
+		}
+		if strings.ContainsAny(got.Message, "\n\r\t") {
+			t.Errorf("%s: Message 不得含换行：%q", c.name, got.Message)
+		}
+		// 哨兵自身的中文文案不得重复出现在主句之后（「Docker 未运行：docker 未运行」是同义反复）
+		if strings.Contains(strings.TrimPrefix(got.Message, "Docker"), string(c.sentin.Error())) {
+			t.Errorf("%s: Message 重复了哨兵文案：%q", c.name, got.Message)
+		}
+	}
+}
+
+// TestHintsMatchPlatform 硬口径（AGENTS.md §8）：Linux 的 Docker 是系统服务（apt 装的 docker.io /
+// docker-ce），让用户「启动 Docker Desktop」指向一个本机不存在的产品；macOS/Windows 才说 Desktop。
+func TestHintsMatchPlatform(t *testing.T) {
+	linuxOnly := runtime.GOOS == "linux"
+	branches := []struct {
+		name  string
+		probe fakeProbe
+	}{
+		{"未运行", fakeProbe{err: ErrDockerNotRunning}},
+		{"未安装", fakeProbe{err: ErrDockerNotInstalled}},
+		{"无权限", fakeProbe{err: ErrDockerNoPermission}},
+	}
+	for _, b := range branches {
+		h := Check(context.Background(), b.probe)
+		if h.Hint == "" {
+			t.Errorf("%s: 失败分支必须给可操作建议", b.name)
+		}
+		if linuxOnly && strings.Contains(h.Hint, "Docker Desktop") {
+			t.Errorf("%s: Linux 的建议不应指向 Docker Desktop：%q", b.name, h.Hint)
+		}
+		if !linuxOnly && !strings.Contains(h.Hint, "Docker Desktop") {
+			t.Errorf("%s: %s 应建议 Docker Desktop：%q", b.name, runtime.GOOS, h.Hint)
+		}
+	}
+	if linuxOnly {
+		perm := Check(context.Background(), fakeProbe{err: ErrDockerNoPermission})
+		if !strings.Contains(perm.Hint, "docker") {
+			t.Errorf("Linux 无权限应给出可执行的组/服务修复动作，got=%q", perm.Hint)
+		}
 	}
 }

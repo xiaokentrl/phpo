@@ -216,6 +216,7 @@ func TestAppService_DockerStatus(t *testing.T) {
 		{"可用", versionProbe{ver: "28.3.2"}, "ok", true, false},
 		{"未安装", versionProbe{err: engine.ErrDockerNotInstalled}, "not_installed", false, false},
 		{"未运行", versionProbe{err: engine.ErrDockerNotRunning}, "not_running", false, false},
+		{"socket 无权限", versionProbe{err: engine.ErrDockerNoPermission}, "no_permission", false, false},
 		{"连接失败", versionProbe{err: context.DeadlineExceeded}, "not_running", false, false},
 		{"版本过旧", versionProbe{ver: "20.9.0"}, "old_version", true, true},
 	}
