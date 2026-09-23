@@ -10,6 +10,7 @@ type Snapshot struct {
 	PHPExtensions map[string][]string `json:"phpExtensions"` // php version → 启用的扩展
 	DirReady      map[string]bool     `json:"dirReady"`      // PHPO_HOME / WWW_ROOT 初始化标记
 	Tasks         TaskBoard           `json:"tasks"`         // 任务队列详情（运行中 + 排队中，实时推送）
+	Gaps          []ServiceGap        `json:"gaps"`          // 已被外部删除的容器/镜像点名项（§5.19；不落库，由同步状态现取）
 }
 
 func NewSnapshot() *Snapshot {
@@ -21,6 +22,7 @@ func NewSnapshot() *Snapshot {
 		PHPExtensions: map[string][]string{},
 		DirReady:      map[string]bool{},
 		Tasks:         TaskBoard{Pending: []TaskBrief{}},
+		Gaps:          []ServiceGap{},
 	}
 }
 

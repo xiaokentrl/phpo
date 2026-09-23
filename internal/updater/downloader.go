@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"phpo/internal/util"
 )
 
 // ProgressFunc 下载进度回调：done/total 均为已下载/总字节数；total<=0 表示长度未知
@@ -46,11 +48,11 @@ func (d HTTPDownloader) Download(ctx context.Context, url, dst string, onProgres
 		return fmt.Errorf("updater: 下载返回 %d", resp.StatusCode)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(dst)); err != nil {
 		return err
 	}
 	part := dst + ".part"
-	f, err := os.Create(part)
+	f, err := util.Create(part)
 	if err != nil {
 		return err
 	}

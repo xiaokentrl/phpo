@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"phpo/internal/model"
+	"phpo/internal/util"
 )
 
 // Updater 组合注入依赖；exePath/cpFile 可在单测替换以脱离真实二进制
@@ -145,7 +146,7 @@ func (u *Updater) backupCurrent() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(u.backups, 0o755); err != nil {
+	if err := util.MkdirAll(u.backups); err != nil {
 		return "", err
 	}
 	dst := filepath.Join(u.backups, filepath.Base(exe)+"-"+u.current)
@@ -177,10 +178,11 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, util.FilePerm)
 	if err != nil {
 		return err
 	}
+	_ = out.Chmod(util.FilePerm) // 已存在的旧文件不受 OpenFile 权限位影响，显式归一
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
 		return err

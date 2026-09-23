@@ -7,10 +7,11 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
+
+	"phpo/internal/util"
 )
 
 // Open 立即打开（或创建）phpo.db 并完成迁移
@@ -28,7 +29,7 @@ func Open(path string) (*Store, error) {
 
 // openDB 建父目录 → 打开连接：modernc 驱动下串行写入避免 WAL 竞争
 func openDB(path string) (*sql.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}
 	dsn := "file:" + url.PathEscape(filepath.ToSlash(path)) +

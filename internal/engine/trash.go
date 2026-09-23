@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"phpo/internal/util"
 )
 
 // Trash 绑定一个回收站根目录
@@ -22,7 +24,7 @@ func (t *Trash) Move(origPath string) (string, error) {
 	if t.Root == "" {
 		return "", fmt.Errorf("回收站根目录未配置")
 	}
-	if err := os.MkdirAll(t.Root, 0o755); err != nil {
+	if err := util.MkdirAll(t.Root); err != nil {
 		return "", fmt.Errorf("创建回收站失败: %w", err)
 	}
 	dest := filepath.Join(t.Root, filepath.Base(origPath))
@@ -46,7 +48,7 @@ func (t *Trash) Restore(trashPath, origPath string) error {
 	if _, err := os.Stat(origPath); err == nil {
 		return nil // 已在原位
 	}
-	if err := os.MkdirAll(filepath.Dir(origPath), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(origPath)); err != nil {
 		return err
 	}
 	if err := os.Rename(trashPath, origPath); err != nil {

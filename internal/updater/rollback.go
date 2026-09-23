@@ -7,6 +7,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"phpo/internal/util"
 )
 
 // PendingUpdate 一次进行中的升级标记；随恢复语义使用
@@ -26,14 +28,14 @@ func (r *Rollback) markerPath() string { return filepath.Join(r.dir, "pending-up
 
 // Begin 写/覆盖 pending 标记（安装前调用；幂等）
 func (r *Rollback) Begin(p PendingUpdate) error {
-	if err := os.MkdirAll(r.dir, 0o755); err != nil {
+	if err := util.MkdirAll(r.dir); err != nil {
 		return err
 	}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(r.markerPath(), b, 0o600)
+	return util.WriteFile(r.markerPath(), b)
 }
 
 // Load 读取当前标记；无标记返回 (nil,false,nil)

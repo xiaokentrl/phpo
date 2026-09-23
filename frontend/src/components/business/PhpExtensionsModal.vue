@@ -60,15 +60,18 @@ async function apply(): Promise<void> {
     return
   }
 
-  // 真实链路：后端编译→固化→重建→重载；勿本地乐观更新，扩展列表写后拉权威快照归位
-  try {
-    await applyExtensions(props.version, finalExts)
-    await syncState()
-    emit('close')
-    toast(t('ext.applied', { version: props.version }), 'ok', 2600)
-  } catch (e) {
-    toast(String(e), 'err', 4600)
-  }
+  // 真实链路：编译→固化→重建→重载是数十秒级的后台任务，弹窗提交即关闭，
+  // 进度与失败由抽屉日志/队列承载（§5.6.4）；完成后后端广播 state:changed 把扩展列表归位。
+  // 失败不做「留着弹窗改一项重试」——重开弹窗的默认勾选即上次成功应用的权威集。
+  emit('close')
+  applyExtensions(props.version, finalExts)
+    .then(async () => {
+      await syncState()
+      toast(t('ext.applied', { version: props.version }), 'ok', 2600)
+    })
+    .catch((e: unknown) => {
+      toast(String(e), 'err', 4600)
+    })
 }
 </script>
 

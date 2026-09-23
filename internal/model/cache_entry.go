@@ -10,6 +10,7 @@ type CacheManifest struct {
 	CreatedAt     time.Time         `json:"created_at"`
 	UpdatedAt     time.Time         `json:"updated_at"`
 	Image         *ManifestImage    `json:"image,omitempty"`
+	ExtImage      *ManifestImage    `json:"extensions_image,omitempty"` // 扩展固化镜像 phpo/php:{version}，与基座各一条（§5.14.2）
 	Apk           []ManifestPackage `json:"apk,omitempty"`
 	Pecl          []ManifestPackage `json:"pecl,omitempty"`
 }

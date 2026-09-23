@@ -19,6 +19,7 @@ import (
 	"phpo/internal/engine"
 	"phpo/internal/model"
 	"phpo/internal/task"
+	"phpo/internal/util"
 	"phpo/pkg/dockerutil"
 )
 
@@ -36,7 +37,7 @@ type ExtRuntime interface {
 type ExtImageCache interface {
 	EnsureImage(ctx context.Context, kind, version, ref string) error
 	CachedImageRef(kind, version string) (string, bool)
-	PromoteImage(kind, version, ref, tmpTar string) error
+	PromoteExtImage(version, ref, tmpTar string) error
 	EnsureTempDir(kind, version string) (string, error)
 	ClearTempDir(ctx context.Context, kind, version, reason string) error
 }
@@ -171,7 +172,7 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 			return s.writeEnv(envPath, enabled)
 		}, RB: func(context.Context) error {
 			if hadEnv {
-				return os.WriteFile(envPath, prevEnv, 0o644)
+				return util.WriteFile(envPath, prevEnv)
 			}
 			if e := os.Remove(envPath); e != nil && !os.IsNotExist(e) {
 				return e
@@ -249,9 +250,26 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 				log.Log(string(model.LogDim), "未接入 nginx，跳过重载")
 				return nil
 			}
+			name, ok := s.nginxContainerName()
+			if !ok {
+				log.Log(string(model.LogDim), "nginx 未安装，跳过重载")
+				return nil
+			}
+			running, err := s.rt.ContainerRunning(ctx, name)
+			if err != nil {
+				log.Log(string(model.LogDim), "nginx 容器 "+name+" 运行态未知，跳过重载: "+err.Error())
+				return nil
+			}
+			if !running {
+				log.Log(string(model.LogDim), "nginx 容器 "+name+" 未运行，跳过重载")
+				return nil
+			}
 			log.Log(string(model.LogCmd), "nginx -s reload")
 			if err := s.reload.Reload(ctx); err != nil {
-				return err
+				// 此刻扩展已固化、容器已在扩展镜像上运行，而本次一步都没改过 vhost：
+				// 把 nginx 自身的问题判死整单会撤回做对了的扩展工作（§0.2 规则 16）。点名即可。
+				log.Log(string(model.LogErr), "Nginx 重载失败（扩展已生效，站点若 502 请检查 nginx 配置）: "+err.Error())
+				return nil
 			}
 			log.Log(string(model.LogOk), "Nginx 已重载，上游指向 "+name)
 			return nil
@@ -378,14 +396,16 @@ func (s *ExtensionService) promoteCommitted(ctx context.Context, version, commit
 	reason := configReasonFailed
 	defer func() { _ = s.cache.ClearTempDir(ctx, string(model.KindPHP), version, reason) }()
 	tmpTar := filepath.Join(tmpDir, "image.tar")
-	log.Log(string(model.LogCmd), "导出扩展镜像到离线缓存: "+tmpTar)
+	extTar := s.env.OfflineExtImageTar(string(model.KindPHP), version)
+	log.Log(string(model.LogCmd), "导出扩展镜像到临时目录: "+tmpTar)
 	if err := s.rt.ImageSave(ctx, committedRef, tmpTar); err != nil {
 		return err
 	}
-	if err := s.cache.PromoteImage(string(model.KindPHP), version, committedRef, tmpTar); err != nil {
+	if err := s.cache.PromoteExtImage(version, committedRef, tmpTar); err != nil {
 		return err
 	}
-	log.Log(string(model.LogOk), "已提升到离线缓存: "+committedRef)
+	// 提升落点必须点名到缓存槽位：与基座 image.tar 各占一份，用户据此核对「扩展装进缓存了没有」
+	log.Log(string(model.LogOk), "已提升到离线缓存: "+committedRef+" → "+extTar)
 	reason = configReasonOK
 	return nil
 }
@@ -409,8 +429,23 @@ func (s *ExtensionService) envPath(version string) string {
 	return filepath.Join(s.env.RootFor(string(model.KindPHP), version), "conf", "extensions.env")
 }
 
+// nginxContainerName 现取 nginx 单例容器名；未安装 nginx 即 ok=false。
+// 判据必须在权威快照里现取，不能只看装配期注入的 Reloader —— 生产恒注入非 nil，
+// 「未接入 nginx」那一支在真机上永不成立，于是没装 nginx 的机器每次应用扩展都被判死并整单回滚。
+func (s *ExtensionService) nginxContainerName() (string, bool) {
+	snap, err := s.store.BuildSnapshot()
+	if err != nil || snap == nil {
+		return "", false
+	}
+	vers := snap.Installed[string(model.KindNginx)]
+	if len(vers) == 0 {
+		return "", false
+	}
+	return dockerutil.ContainerName(string(model.KindNginx), vers[0]), true
+}
+
 func (s *ExtensionService) writeEnv(path string, enabled []string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(path)); err != nil {
 		return err
 	}
 	var b strings.Builder
@@ -418,7 +453,7 @@ func (s *ExtensionService) writeEnv(path string, enabled []string) error {
 	for _, e := range enabled {
 		b.WriteString(e + "\n")
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return util.WriteFile(path, []byte(b.String()))
 }
 
 func (s *ExtensionService) newID(op string) string {

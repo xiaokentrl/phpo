@@ -14,6 +14,7 @@ import (
 	"phpo/internal/config"
 	"phpo/internal/engine"
 	"phpo/internal/model"
+	"phpo/internal/util"
 	"phpo/internal/vhost/hosts"
 	"phpo/pkg/disk"
 	"phpo/pkg/port"
@@ -364,11 +365,11 @@ func fileWritable(path string) bool {
 // dirWritable 目录不存在则逐级创建后试写临时文件；任一步失败判不可写。
 // **写侧探测：只允许装机向导 HomeEnsure 的 ensureTree 调用**——诊断等只读场景一律用 dirProbeWritable。
 func dirWritable(path string) bool {
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	if err := util.MkdirAll(path); err != nil {
 		return false
 	}
 	probe := filepath.Join(path, ".phpo-writetest")
-	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(probe, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, util.FilePerm)
 	if err != nil {
 		return false
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"phpo/internal/model"
+	"phpo/internal/util"
 )
 
 // 四类必清原因（对齐 §5.14.4）
@@ -22,7 +23,7 @@ const (
 // EnsureTempDir 建好临时目录（下载前调用）
 func (m *Manager) EnsureTempDir(kind, version string) (string, error) {
 	d := m.env.TempExtDir(kind, version)
-	if err := os.MkdirAll(d, 0o755); err != nil {
+	if err := util.MkdirAll(d); err != nil {
 		return "", err
 	}
 	return d, nil
@@ -31,7 +32,7 @@ func (m *Manager) EnsureTempDir(kind, version string) (string, error) {
 // EnsureTypeDir 建好临时目录内类型分区 ext/{apk|pecl}
 func (m *Manager) EnsureTypeDir(kind, version, extType string) (string, error) {
 	d := m.env.TempExtTypeDir(kind, version, extType)
-	if err := os.MkdirAll(d, 0o755); err != nil {
+	if err := util.MkdirAll(d); err != nil {
 		return "", err
 	}
 	return d, nil

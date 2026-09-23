@@ -3,7 +3,7 @@
 // T102 10 路由；T103 i18n；T104 主题应用+持久化；T110 事件订阅启动
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from '@/composables/useI18n'
-import { startStateSync, stopStateSync, syncState } from '@/composables/useStateSync'
+import { runSync, startStateSync, stopStateSync, syncState } from '@/composables/useStateSync'
 import { subscribeUpdater, unsubscribeUpdater } from '@/composables/useUpdater'
 import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
 import { startDockerPreflight, stopDockerPreflight } from '@/composables/useDockerPreflight'
@@ -73,9 +73,10 @@ const sections: { titleKey: string; items: { id: string; labelKey: string; icon:
   },
 ]
 
-// resync：手动同步权威快照（复用公共 syncState 入口；硬红线 4：后端唯一权威，非本地乐观更新）
+// resync：手动「同步状态」= 全量口径（§5.19）——容器 / 基座镜像 / 扩展固化镜像三类缺失一次核清，
+// 缺失逐行进抽屉日志并随快照 gaps 回流；复用公共 runSync 入口（硬红线 4：值只来自后端）
 async function resync(): Promise<void> {
-  await syncState()
+  await runSync()
   toast(t('common.refresh'), 'ok', 1400)
 }
 </script>

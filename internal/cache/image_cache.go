@@ -70,3 +70,33 @@ func (m *Manager) EnsureImage(ctx context.Context, kind, version, ref string) er
 	m.emitPromote(kind, version, nil)
 	return nil
 }
+
+// LoadExtImage 把缓存里的扩展固化镜像零网络载入本机 Docker，返回它的 ref（§5.14.3 第一优先级）。
+// 缓存缺席返回 ("", false, nil)——由调用方回落基座；损坏先告警再按缺席处理（校验失败不得当作命中）。
+func (m *Manager) LoadExtImage(ctx context.Context, version string) (string, bool, error) {
+	if m.db == nil {
+		return "", false, errNoBackend
+	}
+	lk, err := m.LookupExtImage(version)
+	if err != nil {
+		return "", false, err
+	}
+	if lk.Corrupted {
+		m.emitCorrupted("php", version, model.ManifestPackage{Name: filepath.Base(lk.Path)})
+	}
+	if !lk.Hit {
+		return "", false, nil
+	}
+	mf, err := m.LoadManifest("php", version)
+	if err != nil {
+		return "", false, err
+	}
+	if mf == nil || mf.ExtImage == nil || mf.ExtImage.Name == "" {
+		return "", false, nil
+	}
+	if err := m.db.LoadImage(ctx, lk.Path); err != nil {
+		return "", false, err
+	}
+	m.emitHit("php", version, "offline", lk.Size)
+	return mf.ExtImage.Name, true, nil
+}

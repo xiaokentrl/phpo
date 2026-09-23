@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"phpo/internal/model"
+	"phpo/internal/util"
 )
 
 // Audit 绑定一个 operations.log 路径
@@ -37,13 +38,14 @@ func (a *Audit) Log(op model.Operation) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(a.Path), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(a.Path)); err != nil {
 		return fmt.Errorf("创建审计日志目录失败: %w", err)
 	}
-	f, err := os.OpenFile(a.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(a.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, util.FilePerm)
 	if err != nil {
 		return fmt.Errorf("打开审计日志失败: %w", err)
 	}
+	_ = f.Chmod(util.FilePerm) // 旧装机的 0644 审计日志在下次写入时归一
 	defer f.Close()
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("写审计日志失败: %w", err)

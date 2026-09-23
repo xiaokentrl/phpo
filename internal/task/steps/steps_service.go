@@ -14,6 +14,7 @@ import (
 	"phpo/internal/engine"
 	"phpo/internal/model"
 	"phpo/internal/task"
+	"phpo/internal/util"
 )
 
 // dockerBackend 把 engine.Client 适配到 cache.DockerBackend（层间桥接，置于 task/steps 以避免 engine→cache 反向依赖）
@@ -51,7 +52,7 @@ func (d dockerBackend) Download(ctx context.Context, url, dstPath string) error 
 		return fmt.Errorf("下载失败 %s: HTTP %d", url, resp.StatusCode)
 	}
 	tmp := dstPath + ".tmp"
-	f, err := os.Create(tmp)
+	f, err := util.Create(tmp)
 	if err != nil {
 		return err
 	}

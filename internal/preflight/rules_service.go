@@ -56,16 +56,15 @@ func (r *run) uninstall() {
 		return
 	}
 	if c.Kind == "php" {
-		used := r.sitesUsingPHP(c.Version)
-		if len(used) > 0 {
-			r.errf("%s: PHP %s ← %s", errs.HasDependents, c.Version, strings.Join(used, ", "))
-		}
-		if len(r.w.Snap.Installed["php"]) <= 1 {
-			r.errf("%s", errs.LastPhp)
+		// 依赖站点与「最后一个版本」都只告警、不阻止（§0.2 规则 16 / §1.11 最小限制）：
+		// 卸空 PHP 是合法诉求，把后果说清楚即可，拦下点击才是替程序员做决定。
+		if used := r.sitesUsingPHP(c.Version); len(used) > 0 {
+			r.warnf("以下站点正在使用 PHP %s：%s —— 卸载后这些站点的 vhost 上游失效", c.Version, strings.Join(used, ", "))
 		}
 	}
 	if c.Kind == "nginx" && len(r.w.Snap.Sites) > 0 {
-		r.errf("%s: %d 个站点依赖 Nginx", errs.HasDependents, len(r.w.Snap.Sites))
+		// 与 PHP 同口径降级为警告（§1.11）：vhost 仍在盘上，重装 nginx 即恢复，不是不可逆后果
+		r.warnf("%d 个站点依赖 Nginx，卸载后这些站点无法访问", len(r.w.Snap.Sites))
 	}
 }
 

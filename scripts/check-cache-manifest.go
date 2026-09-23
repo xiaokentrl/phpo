@@ -21,7 +21,7 @@ import (
 
 // 权威键集（AGENTS.md §5.14.2 manifest.json 结构，逐字冻结）
 var frozen = map[string][]string{
-	"CacheManifest":   {"schema_version", "kind", "version", "created_at", "updated_at", "image", "apk", "pecl"},
+	"CacheManifest":   {"schema_version", "kind", "version", "created_at", "updated_at", "image", "extensions_image", "apk", "pecl"},
 	"ManifestImage":   {"name", "digest", "size", "sha256", "cached_at"},
 	"ManifestPackage": {"name", "sha256", "size", "cached_at"},
 }

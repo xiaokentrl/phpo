@@ -21,6 +21,8 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 		home, www := s.env.RootsReady()
 		snap.DirReady = map[string]bool{"PHPO_HOME": home, "WWW_ROOT": www}
 	}
+	// 缺失态在运行态库之前给出：外部删掉容器/镜像后，即便库里读不到东西也要让界面标出来
+	snap.Gaps = s.Gaps()
 	if !s.mayOpen() {
 		normalizeCollections(snap)
 		return snap, nil // 工作目录未设置：运行态定义为空，且不得建库（首启不在用户数据目录留文件）
@@ -78,6 +80,9 @@ func normalizeCollections(snap *model.Snapshot) {
 	}
 	if snap.Tasks.Pending == nil {
 		snap.Tasks.Pending = []model.TaskBrief{}
+	}
+	if snap.Gaps == nil {
+		snap.Gaps = []model.ServiceGap{}
 	}
 }
 

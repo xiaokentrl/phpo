@@ -9,7 +9,7 @@
 import { reactive, readonly, type DeepReadonly } from 'vue'
 import { useAppState } from '@/stores/appState'
 import { useTaskStore, type LineType, type TaskStatus } from '@/stores/taskStore'
-import { getState } from '@/api/state'
+import { getState, syncAll } from '@/api/state'
 import {
   ALL_EVENTS, EVENT, onEvent, type EventName,
   type TaskLogPayload, type TaskProgressPayload, type TaskDonePayload,
@@ -20,6 +20,7 @@ import {
 } from '@/api/events'
 import { humanSize } from '@/composables/useCleanup'
 import { t } from '@/composables/useI18n'
+import { GAP_REASON_KEYS } from '@/constants/service'
 import type { ServiceKind } from '@/types'
 
 export interface ReceivedRecord {
@@ -93,8 +94,17 @@ function eventNote(event: EventName, payload: unknown): void {
     }
     case EVENT.DockerStateDrift: {
       const e = payload as DockerStateDriftPayload
-      const detail = e.expected || e.actual ? `${String(e.expected ?? '?')} → ${String(e.actual ?? '?')}` : String(e.error ?? '')
-      task.eventLine('meta', t('task.dockerDrift', { detail }))
+      // 全量同步点名的缺失项逐行铺开（§5.19）：一行说清「哪一样不在了」，比 expected→actual 那串比对值可读。
+      // 有缺失项时不再补那行汇总——同一次漂移说两遍，等于把抽屉日志当重复输出通道。
+      const gaps = e.gaps ?? []
+      for (const g of gaps) {
+        const reason = GAP_REASON_KEYS[g.reason] ? t(GAP_REASON_KEYS[g.reason]) : g.reason
+        task.eventLine('meta', t('task.dockerGap', { kind: g.kind, version: g.version, reason, ref: g.ref }))
+      }
+      if (!gaps.length) {
+        const detail = e.expected || e.actual ? `${String(e.expected ?? '?')} → ${String(e.actual ?? '?')}` : String(e.error ?? '')
+        task.eventLine('meta', t('task.dockerDrift', { detail }))
+      }
       // 漂移即「Docker 实际状态 ≢ 库里状态」：随即重取权威快照，让界面跟着校准结果走（硬红线 4）
       void syncState()
       return
@@ -171,6 +181,14 @@ export async function syncState(): Promise<boolean> {
   if (!snap) return false
   landEvent(EVENT.StateChanged, { snapshot: snap })
   return true
+}
+
+// runSync：手动「同步状态」的唯一入口（侧栏按钮与 ⌘R 同源）。
+// 先让后端跑一次全量校准（容器 + 基座镜像 + 扩展固化镜像，§5.19），缺失项随 docker:state-drift 逐行进抽屉；
+// 校准无变化时不发事件，故其后仍拉一次权威快照——点了同步就一定看到一次落地（值只来自后端，硬红线 4）。
+export async function runSync(): Promise<boolean> {
+  await syncAll().catch(() => false)
+  return syncState()
 }
 
 // stopStateSync：反订阅（测试/热更新用）。

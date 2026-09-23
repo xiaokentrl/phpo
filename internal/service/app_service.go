@@ -99,9 +99,11 @@ func (s *AppService) Cancel() { s.tasks.Cancel() }
 // CancelQueued 撤回排队中的任务（尚未执行，无需回滚）；返回是否命中
 func (s *AppService) CancelQueued(id string) bool { return s.tasks.CancelQueued(id) }
 
-// Calibrate 手动校准（§5.13.9 三处触发之一：启动 / 每任务后 / 手动）
+// Calibrate 手动「同步状态」= 全量口径（§5.19）：容器之外还核镜像与 php 扩展固化镜像，
+// 把「用户已用第三方工具删掉的东西」逐条点名成缺失态。门面方法名沿用（bindings 已生成），
+// 语义从 §5.13.9 的「三处触发之一」收窄为「手动这一处」——启动/每任务后仍走轻量 Calibrate。
 func (s *AppService) Calibrate(ctx context.Context) error {
-	_, err := s.lifecycle.Calibrate(ctx)
+	_, err := s.lifecycle.SyncAll(ctx)
 	return err
 }
 

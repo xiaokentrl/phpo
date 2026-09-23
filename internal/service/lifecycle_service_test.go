@@ -24,6 +24,7 @@ type fakeDocker struct {
 	lastSpec    map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
 	published   map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
 	createCalls int                             // 建容器次数（「未变即不重建」的判据）
+	imageChecks int                             // ImageExists 次数（轻量校准不得拨镜像探针的判据）
 	createErr   error                           // 非空则 CreateServiceContainer 失败（模拟端口绑不上等建容器错误）
 	imageErr    error                           // 非空则 ImageExists 失败（模拟镜像库探针本身不可用）
 }
@@ -34,6 +35,7 @@ func newFakeDocker() *fakeDocker {
 
 // ImageExists 探本机镜像库：固化扩展镜像 phpo/php:{version} 是否就绪
 func (f *fakeDocker) ImageExists(_ context.Context, ref string) (bool, error) {
+	f.imageChecks++
 	if f.imageErr != nil {
 		return false, f.imageErr
 	}
@@ -165,6 +167,9 @@ func (s *fakeStore) SetRunning(kind, version string, running bool) error {
 	return nil
 }
 
+// SetGaps 缺失态是内存派生态：写回假快照，与 store.Store 同构
+func (s *fakeStore) SetGaps(gaps []model.ServiceGap) { s.snap.Gaps = gaps }
+
 // EnvReader 子集：密码恒回落默认；端口读 setPort 预置值（未设时回落注册表默认）
 func (s *fakeStore) GetPassword(_, _ string) (string, bool, error) { return "", false, nil }
 func (s *fakeStore) GetServicePort(kind, version string) (int, bool, error) {
@@ -183,6 +188,7 @@ type fakeEmitter struct {
 	events []string
 	logs   []string // 捕获 task:log 文本，用于断言步骤日志真的可见
 	levels []string // 与 logs 同序的日志级别，用于断言失败行是 err 级
+	drifts []model.StateDrift
 }
 
 func (e *fakeEmitter) Emit(event string, payload any) {
@@ -190,6 +196,9 @@ func (e *fakeEmitter) Emit(event string, payload any) {
 	if l, ok := payload.(model.TaskLogEvent); ok {
 		e.logs = append(e.logs, l.Text)
 		e.levels = append(e.levels, string(l.Level))
+	}
+	if d, ok := payload.(model.StateDrift); ok {
+		e.drifts = append(e.drifts, d)
 	}
 }
 func (e *fakeEmitter) has(name string) bool { return contains(e.events, name) }
@@ -295,6 +304,165 @@ func TestCalibrate_Consistent_Silent(t *testing.T) {
 	}
 	if len(em.events) != 0 {
 		t.Fatalf("一致时不应发事件，实得 %v", em.events)
+	}
+}
+
+// ---- 需求①④：手动「同步状态」的全量口径（§5.19） ----
+
+// 容器被第三方工具删掉：全量同步点名缺失态并随快照回流，但 installed 一字不动（卸载必须是用户显式操作）
+func TestSyncAll_ExternallyRemoved_ReportsGapAndKeepsInstalled(t *testing.T) {
+	l, d, s, em := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	_ = s.SetRunning("php", "8.4", true)
+	d.localImages["php:8.4-fpm"] = true // 镜像还在，只剩容器被删
+
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.snap.Gaps) != 1 || s.snap.Gaps[0].Reason != model.GapContainer || s.snap.Gaps[0].Ref != "phpo-php-8.4" {
+		t.Fatalf("应点名一条容器缺失，实得 %+v", s.snap.Gaps)
+	}
+	if !contains(s.snap.Installed["php"], "8.4") {
+		t.Fatal("外部删容器不得被当成卸载（数据卷与重建入口要留着）")
+	}
+	if contains(s.snap.Running["php"], "8.4") {
+		t.Fatal("运行态仍要拉齐到停止")
+	}
+	if len(em.drifts) != 1 || len(em.drifts[0].Gaps) != 1 {
+		t.Fatalf("漂移事件应带缺失项供日志逐行点名，实得 %+v", em.drifts)
+	}
+	if !em.has("state:changed") {
+		t.Fatalf("缺失态须随快照回流界面，实得 %v", em.events)
+	}
+}
+
+// 连镜像也被删（docker rmi / Docker Desktop 重置）：容器在、库里也没记运行，运行态无修正，
+// 但全量同步仍要说得出「重建会失败」——这一格正是轻量校准覆盖不到的
+func TestSyncAll_MissingImage_ReportsImageGap(t *testing.T) {
+	l, d, s, em := newSvc()
+	_ = s.SetInstalled("mysql", "8.4", true)
+	d.containers["phpo-mysql-8.4"] = false // 在、已停止；localImages 为空即镜像不在本机
+
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.snap.Gaps) != 1 || s.snap.Gaps[0].Reason != model.GapImage || s.snap.Gaps[0].Ref != "mysql:8.4" {
+		t.Fatalf("应点名一条镜像缺失，实得 %+v", s.snap.Gaps)
+	}
+	if len(em.drifts) != 1 {
+		t.Fatalf("有缺失即须发漂移事件，实得 %v", em.events)
+	}
+}
+
+// php 库里记着启用过扩展、固化镜像却不在本机：容器只能退回基座，那几项其实没在跑（§5.16.2）
+func TestSyncAll_MissingExtensionImage(t *testing.T) {
+	l, d, s, _ := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	s.snap.PHPExtensions["8.4"] = []string{"redis"}
+	d.containers["phpo-php-8.4"] = true
+	d.localImages["php:8.4-fpm"] = true // 基座在，固化镜像不在
+
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.snap.Gaps) != 1 || s.snap.Gaps[0].Reason != model.GapExtImage || s.snap.Gaps[0].Ref != "phpo/php:8.4" {
+		t.Fatalf("应点名一条扩展固化镜像缺失，实得 %+v", s.snap.Gaps)
+	}
+}
+
+// 固化镜像在本机时以它为准，不重复报基座镜像缺失（php 一个版本只有一条「所需镜像」）
+func TestSyncAll_CommittedImageCountsAsSatisfied(t *testing.T) {
+	l, d, s, _ := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	s.snap.PHPExtensions["8.4"] = []string{"redis"}
+	d.containers["phpo-php-8.4"] = true
+	d.localImages["phpo/php:8.4"] = true // 固化镜像在；基座反而不在（正常：容器跑固化镜像）
+
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.snap.Gaps) != 0 {
+		t.Fatalf("运行所需镜像在本机即无缺失，实得 %+v", s.snap.Gaps)
+	}
+}
+
+// 缺失项与上次一致即整体静默：重复点「同步状态」不得往抽屉刷同样的行
+func TestSyncAll_Idempotent_SilentOnSecondRun(t *testing.T) {
+	l, _, s, em := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	_ = s.SetRunning("php", "8.4", true)
+
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := len(em.events)
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(em.events) != before {
+		t.Fatalf("第二次同步应静默，实得新增 %v", em.events[before:])
+	}
+}
+
+// 用户把容器建回来（或重装）后缺失态必须清零，不是永久烙印
+func TestSyncAll_GapClearsAfterRestore(t *testing.T) {
+	l, d, s, em := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	d.localImages["php:8.4-fpm"] = true
+
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.snap.Gaps) != 1 {
+		t.Fatalf("前提：容器缺席应点名一条，实得 %+v", s.snap.Gaps)
+	}
+	d.containers["phpo-php-8.4"] = false
+	em.events, em.drifts = nil, nil
+
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.snap.Gaps) != 0 {
+		t.Fatalf("容器回来后缺失态应清零，实得 %+v", s.snap.Gaps)
+	}
+	if len(em.drifts) != 1 || len(em.drifts[0].Gaps) != 0 {
+		t.Fatalf("清零也要回流一次，且漂移事件不带缺失项，实得 %+v", em.drifts)
+	}
+}
+
+// 镜像探针本身报错不得当作「镜像不在本机」：一次 Docker 抖动不能说成缺失（§5.14.12 禁止静默）
+func TestSyncAll_ImageProbeError_Propagates(t *testing.T) {
+	l, d, s, em := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	d.containers["phpo-php-8.4"] = true
+	d.imageErr = errors.New("docker daemon unavailable")
+
+	if _, err := l.SyncAll(context.Background()); err == nil {
+		t.Fatal("探针报错应上抛")
+	}
+	if len(em.events) != 0 {
+		t.Fatalf("报错时不得发任何事件，实得 %v", em.events)
+	}
+	if len(s.snap.Gaps) != 0 {
+		t.Fatalf("报错时不得落缺失态，实得 %+v", s.snap.Gaps)
+	}
+}
+
+// 分档：轻量校准（启动 / 每任务后）只判容器存在性，不拨镜像探针
+func TestCalibrate_LightweightSkipsImageAudit(t *testing.T) {
+	l, d, s, _ := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	_ = s.SetRunning("php", "8.4", true)
+	d.containers["phpo-php-8.4"] = false // 容器在、已停止；镜像不在本机
+
+	if _, err := l.Calibrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.imageChecks != 0 {
+		t.Fatalf("轻量校准不得逐个探镜像，实得 %d 次", d.imageChecks)
+	}
+	if len(s.snap.Gaps) != 0 {
+		t.Fatalf("容器在即无缺失，实得 %+v", s.snap.Gaps)
 	}
 }
 
@@ -477,6 +645,62 @@ func TestReinstall_PhpUsesCommittedExtImage(t *testing.T) {
 	}
 	if got := d.lastSpec["phpo-php-8.4"].Image; got != "phpo/php:8.4" {
 		t.Fatalf("已固化扩展的 php 重建应用 phpo/php:8.4，实得 %q", got)
+	}
+}
+
+// fakeExtImageLoader 假离线缓存：本机没有固化镜像时能否从缓存 tar 零网络载入
+type fakeExtImageLoader struct {
+	ref     string
+	ok      bool
+	err     error
+	calls   int
+	version string
+}
+
+func (c *fakeExtImageLoader) LoadExtImage(_ context.Context, version string) (string, bool, error) {
+	c.calls++
+	c.version = version
+	return c.ref, c.ok, c.err
+}
+
+// TestReinstall_PhpLoadsExtImageFromCache 固化镜像被外部删掉（docker rmi / 换机）时，
+// 重建必须先试离线缓存的 image-extensions.tar 零网络载入——退回基座即抹掉已启用扩展（§5.14.3 第一优先级）。
+func TestReinstall_PhpLoadsExtImageFromCache(t *testing.T) {
+	l, d, _, _ := newSvc()
+	ld := &fakeExtImageLoader{ref: "phpo/php:8.4", ok: true}
+	l.SetExtImageLoader(ld)
+	ctx := context.Background()
+	if err := l.Install(ctx, model.KindPHP, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.lastSpec["phpo-php-8.4"].Image; got != "phpo/php:8.4" {
+		t.Fatalf("缓存有固化镜像时应用它建容器，实得 %q", got)
+	}
+	if ld.calls == 0 || ld.version != "8.4" {
+		t.Fatalf("本机无固化镜像必须查离线缓存，实得 calls=%d version=%q", ld.calls, ld.version)
+	}
+}
+
+// TestReinstall_ExtImageCacheMissFallsBackToBase 缓存也没有固化镜像才退回基座（首装无扩展是正常路径）
+func TestReinstall_ExtImageCacheMissFallsBackToBase(t *testing.T) {
+	l, d, _, _ := newSvc()
+	l.SetExtImageLoader(&fakeExtImageLoader{})
+	ctx := context.Background()
+	if err := l.Install(ctx, model.KindPHP, "8.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.lastSpec["phpo-php-8.4"].Image; got != "php:8.4-fpm" {
+		t.Fatalf("缓存缺席时应装基座，实得 %q", got)
+	}
+}
+
+// TestReinstall_ExtImageLoadFailureIsNotSilent 缓存载入报错不得静默退回基座：
+// 那会把「扩展没了」伪装成一次正常重建（§5.14.12 禁止静默）
+func TestReinstall_ExtImageLoadFailureIsNotSilent(t *testing.T) {
+	l, _, _, _ := newSvc()
+	l.SetExtImageLoader(&fakeExtImageLoader{err: errors.New("缓存 tar 校验失败")})
+	if err := l.Install(context.Background(), model.KindPHP, "8.4"); err == nil {
+		t.Fatal("载入固化镜像失败应上抛，不得退回基座")
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+
+	"phpo/internal/util"
 )
 
 // Result 一次加/删的结果；Warning 非空表示未落盘但调用方应继续（仅提示）
@@ -121,7 +123,7 @@ func (m *Manager) read() (string, error) {
 
 // writeDirect 以普通权限直写整份内容；被拒（权限）由 mutate 决定是否提权或降级警告
 func (m *Manager) writeDirect(content string) error {
-	return os.WriteFile(m.path, []byte(content), 0o644)
+	return util.WriteFile(m.path, []byte(content))
 }
 
 func isPermission(err error) bool {

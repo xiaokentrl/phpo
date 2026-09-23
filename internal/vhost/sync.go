@@ -12,7 +12,7 @@ import (
 	"phpo/internal/util"
 )
 
-// Save 落盘站点 conf（0644），并按校验器类型执行硬红线 2：
+// Save 落盘站点 conf（权限归一到 util.FilePerm），并按校验器类型执行硬红线 2：
 //   - FileValidator：需 conf 在磁盘才能核验 → 先写盘再校验，失败回滚为原内容或删除新文件
 //   - 其余 Validator：内容级校验先过再写盘；失败不触碰磁盘
 func (m *Manager) Save(ctx context.Context, v Validator, domain, content string) error {

@@ -76,3 +76,25 @@ func TestBuildSnapshot_NoNullCollections(t *testing.T) {
 		t.Errorf("运行中任务的人话标签未进快照，队列只能显示任务 ID：%s", raw)
 	}
 }
+
+// TestSnapshot_GapsRideEverySnapshot 缺失态是内存派生态（不落库）但必须随每一帧快照出去：
+// 用户用第三方工具删了容器/镜像后，服务卡片要能标出「已被外部删除」，而不是等下一次校准。
+func TestSnapshot_GapsRideEverySnapshot(t *testing.T) {
+	s := openStore(t)
+	s.SetGaps([]model.ServiceGap{{Kind: "php", Version: "8.4", Reason: model.GapImage, Ref: "php:8.4-fpm"}})
+	snap, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Gaps) != 1 || snap.Gaps[0].Reason != model.GapImage {
+		t.Fatalf("缺失态未进快照: %+v", snap.Gaps)
+	}
+	s.SetGaps(nil)
+	fresh, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Gaps == nil || len(fresh.Gaps) != 0 {
+		t.Fatalf("清零后必须是空集合而非 null（前端直接展开）: %+v", fresh.Gaps)
+	}
+}

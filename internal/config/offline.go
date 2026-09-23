@@ -8,6 +8,13 @@ func (e Env) OfflineImageTar(kind, version string) string {
 	return filepath.ToSlash(e.OfflineRoot + "/" + kind + "/" + version + "/image.tar")
 }
 
+// OfflineExtImageTar 扩展固化镜像（phpo/php:{version}）的缓存 tar：
+// ./offline/{kind}/{version}/image-extensions.tar——与基座镜像各占一份文件。
+// 两者共用 image.tar 会让「应用扩展」把基座缓存整份覆盖掉，下次装 php 基座即 load 到扩展镜像。
+func (e Env) OfflineExtImageTar(kind, version string) string {
+	return filepath.ToSlash(e.OfflineRoot + "/" + kind + "/" + version + "/image-extensions.tar")
+}
+
 // OfflineManifestFile 每版本一份缓存清单
 func (e Env) OfflineManifestFile(kind, version string) string {
 	return filepath.ToSlash(e.OfflineRoot + "/" + kind + "/" + version + "/manifest.json")

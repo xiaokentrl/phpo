@@ -46,8 +46,26 @@ func (r OrphanReport) All() []DockerResource {
 	return out
 }
 
+// 缺失态类别：库里记为已安装、但宿主上已经不在了的那一样东西
+const (
+	GapContainer = "container"        // 同名容器不存在（被 docker rm / 第三方工具删掉）
+	GapImage     = "image"            // 该版本应运行的镜像不存在（被 docker rmi 删掉）
+	GapExtImage  = "extensions_image" // php：库里记着已启用扩展，固化镜像 phpo/php:{version} 却不在本机
+)
+
+// ServiceGap 一条「已被外部删除」点名项。
+// 只上报、不自动改 installed：外部删容器不等于用户要卸载，数据卷与重建入口都必须留着（§5.13.1 不破坏用户数据）。
+// 界面据此把服务卡片标成缺失态，抽屉日志逐行点名（§5.19）。
+type ServiceGap struct {
+	Kind    string `json:"kind"`
+	Version string `json:"version"`
+	Reason  string `json:"reason"`
+	Ref     string `json:"ref"` // 缺席对象的具体名字：容器名 / 镜像引用
+}
+
 // docker:state-drift 事件载荷（期望态 ≡ 实际态 被破坏时发射）
 type StateDrift struct {
-	Expected any `json:"expected"`
-	Actual   any `json:"actual"`
+	Expected any          `json:"expected"`
+	Actual   any          `json:"actual"`
+	Gaps     []ServiceGap `json:"gaps,omitempty"` // 全量同步点名的缺失项；无缺失即不发（前端不铺空行）
 }

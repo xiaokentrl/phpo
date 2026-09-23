@@ -39,8 +39,8 @@ func TestConfigStoreHostilePasswordsRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Errorf("config.yaml 权限应为 600, got %v %v", fi.Mode(), err)
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o777 {
+		t.Errorf("config.yaml 权限应为 777（phpo 产出物一律 0777，见总纲「文件权限策略」）, got %v %v", fi.Mode(), err)
 	}
 	// 重新从磁盘载入，逐项核对明文原样往返
 	reloaded, err := LoadFromPath(path)

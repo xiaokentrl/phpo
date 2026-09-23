@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.13
+> **文档版本**：v2.9.14
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -16,6 +16,11 @@
 > **PHP 扩展**（v2.9.9 新增，见 §5.16）：每个 PHP 版本一份**全量扩展目录**（73 项 · 8 分组），安装弹窗与「管理扩展」弹窗共用同一份；常用 11 项在安装时**默认勾选**，勾选/取消即本次的**目标扩展集**；容器内编译输出**逐行实时**进抽屉日志，某一项失败必须**点名该扩展**并中止本单（不静默、不吞）；**固化镜像不在本机即容器退回基座重建时，待编译集换成完整目标集**（基座不含原启用集，只装增量会让库里「已启用」而容器里没有，§5.16.2）
 > **备份归档**（v2.9.9 新增，见 §5.17）：打包时读不动的条目**跳过并逐目录聚合告警**，不判死整包；mysql / pgsql / redis 在暂停服务**之前**先做**逻辑导出**（`mysqldump` / `pg_dumpall` / `redis-cli --rdb`），产物入归档 `dump/` 前缀——冷拷贝缺的那部分由 dump 补回
 > **容器日志出口**（v2.9.9 新增，见 §5.18）：服务容器内进程**不得往宿主 bind 挂载目录写日志文件**（容器 uid 对该目录无写权限即 FATAL 崩溃循环，服务永远启不来）；日志一律走 stderr → 由 Docker 收集；启停必须等**稳定 running**，失败报错带容器日志尾部
+> **同步状态全量口径**（v2.9.14 新增，见 §5.19）：用户用 Docker Desktop / `docker rm` / `docker rmi` 等第三方工具把容器或镜像停掉、删掉之后，**手动「同步状态」必须把每一项都对上**——逐个已安装版本核**容器、基座镜像、php 扩展固化镜像**三样，缺席的逐项**点名**（服务卡片缺失态 + 抽屉逐行日志）；但**绝不自动改写 `installed`**（外部删容器不等于用户要卸载），也不自动删任何资源，恢复入口留给用户点「启用」（幂等重建）
+> **文件权限**（v2.9.14 新增，见 §5.20）：**phpo 自己的产出物**（目录与文件——`config.yaml`、`phpo.db`、审计日志、缓存 tar、渲染出的配置、回收站、备份归档、升级工作区…）**权限一律 0777**，本产品面向程序员，不替用户限制访问；权限位**不得只写在 `MkdirAll`/`WriteFile` 的入参上**（会被进程 umask 削成 0755/0644），必须走 `internal/util` 的 `MkdirAll`/`WriteFile`/`Create`/`AtomicWrite` 显式 `chmod` 归一，旧装机留下的坏权限在下次写入时自愈。**容器内进程写出来的文件不在本条范围**（那是另一个 uid，改它等于越界改用户环境）
+> **卸载不设保留门禁**（v2.9.14 新增，见 §1.11）：**禁止**「至少保留一个 PHP 版本」这类门禁（`errs` 表已删除该码）；卸载有站点依赖的 PHP、卸载最后一个版本，一律**警告说清后果后照常卸载**
+> **扩展固化镜像独立缓存槽位**（v2.9.14 新增，见 §5.14.2/§5.16.3）：`phpo/php:{version}` 提升到缓存根的 **`image-extensions.tar`**（清单记 `manifest.extensions_image`），**与基座的 `image.tar` / `manifest.image` 各占一份**——共用槽位等于每次「应用扩展」把基座缓存整份覆盖掉，下次装基座即 load 到扩展镜像；固化镜像不在本机时由 `LoadExtImage` 从该槽位**零网络 `docker load` 恢复**
+> **扩展弹窗生命周期**（v2.9.14 新增，见 §5.16.2/§5.16.3）：「应用并重建」是数十秒级的后台链路，管理扩展弹窗**提交即关闭**——等待期的步骤、进度与失败全部由抽屉日志与右栏队列承载，不得让弹窗 `await` 到任务结束；重开弹窗的默认勾选**就是**上次成功应用的权威集。后置环节不得判死已做对的工作：**nginx 缺席/未运行 → `dim` 跳过行，nginx 重载失败 → 一行 `err` 后继续**，不撤回本次已编译生效的扩展
 > **路径记法**：本文件的 **`./` 一律指 PHPO_HOME 根**（即 `config.yaml` 的 `phpo_home`，由装机向导指向任意目录；`~/phpo` 只是默认值，**打包安装后不得假定工作目录在用户主目录**）。`<用户数据目录>` 仍是各平台 XDG 的 `os.UserConfigDir()/phpo`（`config.yaml` / `phpo.db` / `logs` / `trash` / `updates`），与 PHPO_HOME **不同源**；`~/www/` 是 WWW_ROOT 的默认值（同样可改）。同一记法**同等约束 `docs/` 全部文档、任务工单、代码注释与面向用户的文案（前端 locales）**——只有带「默认」字样的默认值/预填值可写字面量。详见 §0.1.1
 > **状态同步**：后端唯一权威；前端只订阅事件、不做乐观更新；**一切操作/日志/队列/请求/响应必须实时同步界面 UI 与抽屉日志**——§5.6 的 17 个事件名逐一有前端落地处（见 §5.6.2，无任务归属的事件走抽屉左栏的「系统日志通道」）
 > **密码策略**：明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看
@@ -96,6 +101,11 @@
 28. **禁止服务容器往宿主 bind 挂载目录写日志文件**（v2.9.9 新增，见 §5.18）：该目录由宿主用户创建（0755），容器内进程是另一个 uid，建文件即 `Permission denied` → 进程 FATAL → `unless-stopped` 无限重启，服务永远启不来。日志一律走 stderr 由 Docker 收集；启动必须等**稳定 running**，失败报错必须带容器日志尾部。
 29. **禁止「事件到了界面却因单个字段缺席而不动」**（v2.9.12 新增，见 §5.6.3）：`state:changed` 的落地是一条链（`applySnapshot` → `applyTaskBoard` → `taskStore.syncBoard`），链上任一处抛错即**整链中断**——事件收到了、界面却一动不动，用户只能靠刷新页面才看到正确状态。为此：后端快照出口的**可空集合必须序列化为 `[]` / `{}`**（零站点、无排队项即为 `null`，落点是 `internal/store/snapshot.go` 的 `normalizeCollections`），前端**逐字段兜空**（`?? []` / `?? {}`，仍只认快照值，不是乐观更新）。抽屉右栏每一行的标签必须是快照 `TaskBrief.Label` 的人话文本（如「启动 phpo-php-8.0」），**不得**以任务 ID（`start-2` / `stop-1`）示人、**不得**要求用户刷新。
 30. **禁止「操作跑了但界面说不出在跑什么、按钮还亮着」**（v2.9.13 新增，见 §5.6.4）：任何需要等待的写操作，① 该操作的**直观名字**必须在**用户点开抽屉的第一眼**出现在左栏日志之上（`.drawer-task-title` 标题条，文本唯一来源仍是快照 `TaskBrief.Label`）；② 等待期间**被点的那一颗按钮保持禁用**，直到本次操作收口**且权威快照回流之后**才复能。禁用**只限那一颗**——同卡片/同页面的其他按钮照常可点（FIFO 排队是合法路径，见 §5.6），不得做成全局串行、不得拦整个视图、不得禁掉与本次操作无关的控件。
+31. **禁止「Docker 被第三方工具改过，界面却只说已安装」**（v2.9.14 新增，见 §5.19）：手动「同步状态」是**全量口径**——逐个已安装版本核容器 / 基座镜像 / 扩展固化镜像三样，缺席项以快照 `gaps`（`ServiceGap{kind,version,reason,ref}`）点名并随 `docker:state-drift` 广播（**不新增事件名**）；服务卡片显示缺失态、抽屉逐行说明缺的是哪一样、怎么回来。但**不得自动改写 `installed`**、不得自动删资源——外部删除是**派生态**而非卸载指令，恢复由用户点「启用」走幂等重建。
+32. **禁止 phpo 自己的产出物留非 0777 权限**（v2.9.14 新增，见 §5.20）：目录与文件一律 `0777`，且**必须显式 `chmod` 归一**——只把 `0o777` 写进 `os.MkdirAll`/`os.WriteFile` 入参不算合规（进程 umask 会削位，`022` 下实际得到 `0755`/`0644`）；旧装机留下的 `0755`/`0644` 要在下一次写入时修好。**容器内进程写的文件不适用本条**，不得为此去 `chown`/`chmod` 用户环境里的他人文件。
+33. **禁止「至少保留一个」这类保留门禁**（v2.9.14 新增，见 §1.11）：卸载时「存在依赖该版本的站点」「这是最后一个 PHP 版本」一律**降级为警告并照常卸载**（PHP 与 Nginx 同口径）；`pkg/errs` 已删除 `LastPhp` 码（28 → **27**），卸载分支只保留 `SvcMissing` 与 `NotInstalled` 两条 `errf`。把可警告的事做成阻止，等于替程序员做决定（§0.2 规则 15/16）。
+34. **禁止让瞬时弹窗替后台任务守门**（v2.9.14 新增，见 §5.16.2 / §5.16.3）：扩展管理弹窗的 `apply()` **不得 `await`** 数十秒的编译链路——**提交即 `emit('close')`**，进度与失败由抽屉日志 / 右栏队列承载（§5.6.4 同一路子）。同理，任务里**已经做对的那部分**不得被后置环节的失败判死：nginx 缺席/未运行给 `dim` 跳过行、重载失败给一行 `err` 后 `return nil`，**不撤回已编译生效的扩展**。
+35. **禁止把扩展固化镜像与基座镜像写进同一个缓存槽位**（v2.9.14 新增，见 §5.14.2 / §5.16.3）：每个 php 版本**两份** image 缓存（`image.tar` 与 `image-extensions.tar`，清单 `image` / `extensions_image` 各一条）；提升固化镜像后必须**一行 `ok` 点名落点全路径**（`{committedRef} → {extTar}`），只说「已提升」等于没回答需求 ③ 的「有没有提升到 offline 对应的扩展目录内」。
 
 ### 0.3 数字权威表（Agent 引用禁止出错）
 
@@ -103,7 +113,7 @@
 |----|-------|------|
 | preflight action 数 | **19**（原型 17 + 生产新增 `root-set` / `cache-import`） | `internal/preflight/preflight.go` 的 `Run` switch-case 与 `AllActions`（`ActionCount`） |
 | NEEDS_HOME 动作数 | **17** | 同文件 `needsHome` map（`NeedsHomeCount`）；对账测试 `TestActionAndNeedsHomeCounts` |
-| PF 校验错误码数 | **28** | `pkg/errs/codes.go`（`CodeCount`；原型 27 + 生产新增 `FileMissing`） |
+| PF 校验错误码数 | **27**（原型 26 + 生产新增 `FileMissing`；原 `LastPhp`「至少保留一个 PHP 版本」已按 §0.2 规则 33 删除） | `pkg/errs/codes.go`（`CodeCount`） |
 | §5.6 事件名数 | **17** | 事件协议表（冻结，不新增） |
 | 事件前端落地覆盖率 | **17/17**（`update:progress` 由升级弹窗进度条承载，不进日志） | `frontend/src/composables/useStateSync.ts` 的 `landEvent` + `eventNote`（§5.6.2） |
 | 可自定义根面数 | **3**（缓存根 · 备份根 · 每服务版本数据目录） | `config.yaml` 的 `offline_root` / `backup_root` / `services.{kind}.{ver}.data_dir`（§5.15） |
@@ -121,6 +131,10 @@
 | 抽屉当前操作标题 | **`.drawer-task-title`（左栏日志之上，文本 = `TaskBrief.Label`）** | `frontend/src/components/business/TaskDrawer.vue`；无选中任务（系统日志通道）时不渲染；头部三区不受影响（§5.6.4） |
 | 等待期按钮禁用判据 | **`taskStore.isBusy(meta)`，key = `type:kind:version:domain:file` 拼接** | `stores/taskStore.ts`（`busyKeyOf` / `isBusy` / `beginSubmit` / `endSubmit`）+ `composables/useTask.ts#submitWrite`（提交即 begin → `await syncState()` → end）；**只禁被点的那一颗**（§5.6.4） |
 | 快照可空集合的线上形态 | **`[]` ／ `{}`**（不得为 `null`） | `internal/store/snapshot.go` 的 `normalizeCollections`（唯一快照出口）+ 前端 `appState.applySnapshot` 逐字段兜空；用例 `TestBuildSnapshot_NoNullCollections`（§5.6.3） |
+| 镜像缓存槽位数 | **2**（基座 `image.tar` ／ 扩展固化 `image-extensions.tar`，各一条清单记录） | `internal/config/offline.go` 的 `OfflineImageTar` / `OfflineExtImageTar` + `manifest.image` / `manifest.extensions_image`（§5.14.2） |
+| 缺失态类别数 | **3**（`container` ／ `image` ／ `extensions_image`） | `internal/model/resource.go` 的 `GapContainer` / `GapImage` / `GapExtImage`（§5.19）；不落库，随快照 `Gaps` 派生广播 |
+| 「同步状态」口径分档 | **2**（每任务后与启动＝轻量，只判容器存在性；手动「同步状态」＝全量，再核基座镜像与扩展固化镜像） | `internal/service/lifecycle_service.go` 的 `Calibrate` / `SyncAll` → `calibrate(ctx, auditImages)`（§5.19） |
+| phpo 产出物权限 | **0777**（目录与文件一律；显式 `chmod` 归一，不靠 `MkdirAll`/`WriteFile` 入参） | `internal/util/fs.go` 的 `DirPerm` / `FilePerm`（§5.20）；`internal/config/password_test.go` 锁死 `config.yaml` 为 0777 |
 | 任务账本日志保留 | **尾部 500 行** | `internal/task/ledger.go`（`maxLedgerLines`）；写回 `operations` 表（迁移 0008 加 `task_id/label/logs`） |
 | SQLite 迁移数 | **8** | `internal/store/migrate/0001–0008.sql` |
 | VHosts 方法数 | **9** | `VHosts` 对象方法 |
@@ -244,6 +258,10 @@
 | PHP 扩展目录 | **每版本一份全量目录（73 项 · 8 分组）**，安装弹窗与「管理扩展」弹窗共用；常用 **11** 项默认勾选，勾选/取消即目标扩展集；编译输出逐行进抽屉日志，失败点名扩展并中止（见 §5.16） |
 | 备份归档 | 读不动的条目**跳过 + 逐目录聚合告警**，不判死整包；mysql／pgsql／redis 暂停**之前**先**逻辑导出**入归档 `dump/`；恢复侧明示「dump 不自动重放」（见 §5.17） |
 | 数据服务运行态 | 容器内进程**不往宿主 bind 目录写日志**（pgsql 走 stderr → Docker 收集）；旧装机的坏配置就地自愈；启停等稳定 running，失败带容器日志尾部（见 §5.18） |
+| 同步状态（手动） | **全量口径**：逐个已安装版本核**容器 / 基座镜像 / 扩展固化镜像**三样，缺失逐项点名；每任务后与启动只跑轻量档（仅容器存在性），不放大成每次操作都拨多次 Docker（见 §5.19） |
+| 外部删除的处置 | 第三方工具（Docker Desktop / `docker rm` / `docker rmi`）删掉的东西 → **派生缺失态**（服务卡片「容器缺失／基座镜像缺失／扩展固化镜像缺失」+ 抽屉逐行点名 + `gaps` 随快照广播），**不自动改 `installed`、不自动删资源**；用户点「启用」按当前配置幂等重建（缓存优先、零网络可恢复）回来（见 §5.19） |
+| 文件权限 | **phpo 自己的产出物（目录与文件）一律 0777**，显式 `chmod` 归一（不靠 `MkdirAll`/`WriteFile` 入参——会被 umask 削）；含 `config.yaml`，不提供开关；容器内进程写的文件不适用（见 §5.20） |
+| 卸载限制 | **无「至少保留一个 PHP 版本」门禁**（`errs` 已删该码，28 → 27）；站点依赖、最后一个版本一律**警告后照常卸载**（见 §1.11） |
 | 端口策略 | 站点端口默认 80、用户可指定任意端口；新建站点占用只告警 + 降级（不改用户所填端口、不阻断建站）；改站点端口占用才顺延；服务端口占用报错 |
 | 限制策略 | 最小限制；仅 8 条硬红线；警告代替阻止 |
 | Docker 清洁策略 | 所有操作幂等、原子、可回滚、可清理 |
@@ -336,6 +354,16 @@
 
 **核心原则**：除 8 条硬红线外，所有限制放开或降级为警告。
 
+**卸载不设保留门禁**（v2.9.14 新增，需求 ⑤，落点 `internal/preflight/rules_service.go` 的 `uninstall()`）：
+
+| 情形 | 旧口径 | 现口径 |
+|------|--------|--------|
+| 站点仍在使用该 PHP 版本 | `errf` 阻止 | **`warnf` 照常卸载**——「卸载后这些站点的 vhost 上游失效」 |
+| 这是最后一个 PHP 版本 | `errs.LastPhp` 阻止 | **不设该门禁**：`pkg/errs` 已删除此码（28 → **27**） |
+| 站点仍依赖 Nginx | `errs.HasDependents` 阻止 | **`warnf` 照常卸载**——vhost 仍在盘上，重装 nginx 即恢复，不是不可逆后果 |
+
+**卸载分支只保留两条 `errf`**：`SvcMissing`（未指定 kind）与 `NotInstalled`（该版本本就没装）。理由：**「卸空了怎么建站」由 `site-add` 的 `PhpNeeded` 把住**，那是另一条规则的岗位，不是卸载的下限；把可警告的事做成阻止，等于替程序员做决定（§0.2 规则 15/16）。用例 `TestUninstallDependentSitesWarnNotBlocks`、`TestUninstallLastPhpAllowed`、`TestUninstallNginxDependentSitesWarnNotBlocks` 锁死。
+
 ### 1.12 关于 Docker 操作清洁性
 
 **核心原则**：phpo 对 Docker 的任何操作都必须干净，不会影响后续操作。
@@ -411,10 +439,11 @@
 ./offline/                       # 缓存根目录（持久）
 ├── php/
 │   └── 8.4/
-│       ├── image.tar                 # 镜像缓存
+│       ├── image.tar                 # 基座镜像缓存（php:8.4-fpm，docker save 产物）
+│       ├── image-extensions.tar      # 扩展固化镜像缓存（phpo/php:8.4，docker commit 产物）—— 独立槽位，不覆盖基座
 │       ├── apk/                      # apk 依赖缓存
 │       ├── pecl/                     # pecl 扩展缓存
-│       └── manifest.json             # 清单（含 SHA256）
+│       └── manifest.json             # 清单（含 SHA256；image 与 extensions_image 各一条）
 ├── mysql/8.4/{image.tar, manifest.json}
 ├── pgsql/17/{image.tar, manifest.json}
 ├── redis/8/{image.tar, manifest.json}
@@ -799,7 +828,7 @@ phpo/
 │   │   └── window.go  tray.go  menu.go
 │   │
 │   └── util/
-│       └── fs.go
+│       └── fs.go                    # 落盘唯一助手：目录/文件一律 0777 + 写后显式 chmod 归一（§5.20）
 │           # 注：文案 i18n 在前端 locales（无 internal/i18n/）
 │
 ├── pkg/
@@ -886,7 +915,7 @@ phpo/
 │       ├── m5_redis_live_test.go  m5_wordpress_live_test.go
 │       ├── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
 │       └── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
-│       # 单元测试与包同目录（80 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       # 单元测试与包同目录（81 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -907,7 +936,7 @@ phpo/
 ```
 <用户数据目录>/                         # = os.UserConfigDir()/phpo（见 internal/config/userdata.go）；不受装机向导影响
 │                                       # Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
-├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + offline_root? + backup_root? + services.{kind}.{version}.{password,port,data_dir?}；0600
+├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + offline_root? + backup_root? + services.{kind}.{version}.{password,port,data_dir?}；0777（§5.20）
 ├── phpo.db                           # SQLite，仅存运行态（installed / running / sites / php_extensions / trash / operations（含任务账本 task_id/label/logs） / offline / cache_manifest）；**延迟建库**：装机向导把两根目录写入 config.yaml 后才创建
 ├── logs/
 │   └── operations.log                # 操作审计（JSON Lines，§5.13.10）
@@ -932,7 +961,8 @@ phpo/
 └── offline/                          # 离线缓存根目录（持久；默认位置，config.yaml 的 offline_root 可改，见 §5.15）
     ├── php/
     │   └── 8.4/
-    │       ├── image.tar
+    │       ├── image.tar                 # 基座镜像
+    │       ├── image-extensions.tar      # 扩展固化镜像 phpo/php:8.4（独立槽位，§5.14.2）
     │       ├── apk/
     │       ├── pecl/
     │       └── manifest.json
@@ -954,6 +984,8 @@ phpo/
 # 卷：phpo-{kind}-{version}-{purpose}
 ```
 
+> **权限**：本节两处目录树里 **phpo 自己创建的**目录与文件一律 `0777`（§5.20）；`./{kind}/{ver}/data`、`./{kind}/{ver}/logs` 里由**容器内进程**写出的文件不在本条范围（那是另一个 uid，见 §5.17.1）。
+
 > **首启零落盘**：装机向导把两根目录写入 `config.yaml` 之前，用户数据目录内不得出现任何文件——`config.yaml` 与 `phpo.db` 均在首次写入时才创建（运行态存储延迟打开）。`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」逐根派生：目录被删即自动回落 `false` 重新拦截写操作，但库内已装状态照常可读、不回退。
 
 ---
@@ -968,7 +1000,7 @@ phpo/
 
 **五项规则**：明文存储 + 默认 `123456` + 可修改 + 可为空 + 长度不校验 + UI 可查看。
 
-**存储位置**：`config.yaml` 的 `services.{kind}.{version}.password`（各平台 XDG 用户配置目录内的 `phpo` 子目录）；文件权限 `0600`。不再有 `./.env`，SQLite 不再持有 `env` 表与 `dir_ready` 表；前端 `app.env.*` 契约经快照 `env` 扁平键合成保持不变。
+**存储位置**：`config.yaml` 的 `services.{kind}.{version}.password`（各平台 XDG 用户配置目录内的 `phpo` 子目录）；文件权限 `0777`（§5.20——明文密码因此**世界可读**，这是「面向程序员、不替用户限制访问」的既定代价；§0.2 规则 5/6 禁止引入任何加密、keyring 或长度校验，也不提供开关）。不再有 `./.env`，SQLite 不再持有 `env` 表与 `dir_ready` 表；前端 `app.env.*` 契约经快照 `env` 扁平键合成保持不变。
 
 ### 5.3 templates 目录
 
@@ -1002,7 +1034,7 @@ phpo/
 | `update:done` | `{ status, version }`；启动期回滚探测失败时为 `{ status:"failed", error }` | 升级完成 |
 | `docker:cleanup` | `{ stage, resource, action }` | 清理进度 |
 | `docker:orphan-found` | `{ resources: []Resource }` | 发现孤儿资源 |
-| `docker:state-drift` | `{ expected, actual }`；启动校准取不到比对值时退化为 `{ error }` | 状态漂移 |
+| `docker:state-drift` | `{ expected, actual, gaps }`（`gaps` 为 `[]ServiceGap`，v2.9.14 补入；启动校准取不到比对值时退化为 `{ error }`） | 状态漂移 |
 | `cache:hit` | `{ kind, version, source, size }` | 命中缓存 |
 | `cache:miss` | `{ kind, version, action }`（`action`：镜像 `local`=用本机已有镜像重建缓存（零网络）/ `pull`=联网拉取；扩展 `download`） | 未命中缓存 |
 | `cache:promote` | `{ kind, version, entries }` | 提升到缓存 |
@@ -1080,7 +1112,7 @@ phpo/
 | `update:done` | `updaterStore` | ✅ `ok`／`err`／`dim` 行 | 按 `status` 选 level；`error` 或缺席的 `version` 作为 detail 兜底 |
 | `docker:cleanup` | — | ✅ `dim` 行 | `stage · resource · action` |
 | `docker:orphan-found` | — | ✅ `meta` 行 | 只落**计数**；不触发 rescan、不回填 `cleanupStore`（载荷是 `unknown[]`，无法无损映射成 `OrphanReport`） |
-| `docker:state-drift` | ✅ **额外 `syncState()`** | ✅ `meta` 行 | 比对值缺席时退化为 `error` 文本 |
+| `docker:state-drift` | ✅ **额外 `syncState()`** | ✅ `meta` 行 | **有 `gaps` 时逐条点名铺开、不再补汇总行**（一次漂移说两遍等于把抽屉当日志复读机，§5.19.5）；`gaps` 为空时落 `expected → actual` 一行，比对值缺席则退化为 `error` 文本 |
 | `cache:hit` | `cacheStore`（经 `useCache` 重拉） | ✅ | 命中零网络的证据 |
 | `cache:miss` | 同上 | ✅ | `action=local` 显示「本机重建」，`pull`/`download` 显示「走网络」 |
 | `cache:promote` | 同上 | ✅ | 手工导入（§5.14.9a）同样发此事件 |
@@ -1326,14 +1358,15 @@ CI 无人值守支持。
 ./offline/                       # 缓存根目录（持久）
 ├── php/
 │   └── {version}/
-│       ├── image.tar                # Docker 镜像（docker save 产物）
+│       ├── image.tar                # 基座镜像（docker save 产物，如 php:8.4-fpm）
+│       ├── image-extensions.tar     # 扩展固化镜像（docker commit 产物 phpo/php:{version}）—— 仅 php 有这一份
 │       ├── apk/                     # apk 依赖包
 │       │   ├── {package}-{ver}.apk
 │       │   └── ...
 │       ├── pecl/                    # pecl 扩展包
 │       │   ├── {extension}-{ver}.tgz
 │       │   └── ...
-│       └── manifest.json            # 缓存清单
+│       └── manifest.json            # 缓存清单（image 与 extensions_image 各一条记录）
 ├── mysql/
 │   └── {version}/
 │       ├── image.tar
@@ -1358,6 +1391,15 @@ CI 无人值守支持。
     └── {下载中}.tgz
 ```
 
+**每个版本有两个镜像缓存槽位**（v2.9.14 新增，需求 ③；仅 `php` 用满两个）：
+
+| 槽位 | 文件 | 清单字段 | 内容 | 写入方 |
+|------|------|---------|------|--------|
+| 基座 | `image.tar` | `manifest.image` | 官方镜像 `{image}:{ver}-fpm` | 装服务时的 `docker save`（§5.14.3） |
+| 扩展固化 | `image-extensions.tar` | `manifest.extensions_image` | `phpo/php:{version}`（容器内编译完扩展后 `docker commit`） | `cache.PromoteExtImage`（§5.16.3） |
+
+**为什么必须分两份**：共用一个槽位等于每次「应用扩展」把基座缓存整份覆盖掉——下次装基座即 load 到扩展镜像（镜像名与内容不符），而「固化镜像不在本机 → 退回基座重建」那条恢复路径（§5.16.2）也再无零网络来源。分槽后 `LookupExtImage` 命中即 `LoadExtImage` **零网络 `docker load`** 恢复，与基座互不干扰。
+
 **manifest.json 结构**：
 
 ```json
@@ -1373,6 +1415,13 @@ CI 无人值守支持。
     "size": 450000000,
     "sha256": "def456...",
     "cached_at": "2026-09-18T12:00:00Z"
+  },
+  "extensions_image": {
+    "name": "phpo/php:8.4",
+    "digest": "sha256:789abc...",
+    "size": 520000000,
+    "sha256": "ghi789...",
+    "cached_at": "2026-09-18T14:30:00Z"
   },
   "apk": [
     {
@@ -1392,6 +1441,8 @@ CI 无人值守支持。
   ]
 }
 ```
+
+> `extensions_image` **缺席即「本版本未固化过扩展」**（`omitempty`），非缺失值；`CacheEntry.HasExtImage` 供离线缓存页显示这一份是否在。字段名由第 4 项门禁 `scripts/check-cache-manifest.go` 的 frozen 键集锁死。
 
 #### 5.14.3 缓存命中优先级（核心逻辑）
 
@@ -1559,6 +1610,8 @@ type OfflineService interface {
 }
 ```
 
+> **扩展固化镜像的三个能力不在 `OfflineService` 门面上**（v2.9.14）：`cache.Manager` 的 `LookupExtImage(version)`（查槽位 + SHA256）、`LoadExtImage(ctx, version)`（命中即零网络 `docker load`，损坏先发 `cache:corrupted` 再按缺席处理）、`PromoteExtImage(version, ref, tmpTar)`（commit 产物提升到 `image-extensions.tar`）。理由是它们**不是用户触发的运维动作**，而是安装/恢复链路内部的步骤（§5.16.2 / §5.16.3），因此不经门面暴露给前端。同理，全量校准在 `LifecycleService.SyncAll`（§5.19.2），门面方法是已生成绑定的 `App.Calibrate`。
+
 #### 5.14.11 缓存事件（前端订阅）
 
 | 事件 | 载荷 | 说明 |
@@ -1590,6 +1643,8 @@ type OfflineService interface {
 - ❌ 把缓存路径写死成 `./offline/`（必须经当前生效缓存根派生，用户可自定义，见 §5.15）。
 - ❌ 用户已自定义缓存根，安装链路却仍去读默认的 `./offline/`（或反之）——同一类路径**只允许一个生效根**（§0.2 规则 24）。
 - ❌ 手工导入时移动/删除用户的源文件（导入是**复制**，原件保留；只有自动提升才搬走临时目录里的文件）。
+- ❌ 把扩展固化镜像 `phpo/php:{version}` 提升到基座槽位 `image.tar`（或反之）——两个槽位各一条清单记录（`image` / `extensions_image`），共用即每次「应用扩展」覆盖基座、下次装基座 load 到内容不符的镜像（§5.14.2）。
+- ❌ `LoadExtImage` 命中后不发 `cache:hit`、损坏后不发 `cache:corrupted`（零网络恢复路径也要留下证据行）。
 
 #### 5.14.13 与 Docker 清洁机制的协同
 
@@ -1680,13 +1735,20 @@ type OfflineService interface {
 | 入口 | 位置 | 默认勾选 | 提交后 |
 |------|------|---------|--------|
 | 安装期选扩展 | `InstallModal.vue`（仅 `kind === 'php'` 显示扩展区，弹窗转 `lg`） | `commonExts(version)`；**一项都不选即只装基座镜像** | 安装任务之后**串第二个任务**跑 `applyExtensions`（扩展是「容器内编译 → 固化镜像 → 重建」另一条链路） |
-| 管理扩展 | `PhpExtensionsModal.vue`（PHP 列表页「管理扩展」） | 本版本**当前已应用的扩展**（= 安装时勾选的 + 之后改过的） | `preflight('extensions')` → `applyExtensions` → `syncState()`；扩展列表写后**拉权威快照归位**，不做本地乐观更新 |
+| 管理扩展 | `PhpExtensionsModal.vue`（PHP 列表页「管理扩展」） | 本版本**当前已应用的扩展**（= 安装时勾选的 + 之后改过的），取自**权威快照** `appState.phpExtensions[version]`（v2.9.14 需求 ⑥：不得是空清单） | `preflight('extensions')` → **提交即 `emit('close')`** → `applyExtensions` → `.then` 里 `await syncState()` → toast；扩展列表写后**拉权威快照归位**，不做本地乐观更新 |
 
 **目标扩展集语义**：弹窗提交的始终是**完整集合**（不是增量），后端 `diffExts(prev, next)` 自算 `added` / `removed`；两者皆空即**不产生任务、不重建容器**（幂等，§5.13.4）。`removed` 不等于删数据——只是不再启用。
 
 **基座退回支：待编译集换成完整目标集**（v2.9.10）：`prevRef` 按本机实际态现取——库里启用过扩展但固化镜像 `phpo/php:{ver}` **不在本机**（手工删镜像、换机没带过来）时，容器只能退回基座 `php:{ver}-fpm` 重建，而**基座不含任何 `prev` 扩展**。此时若仍只编译 `diffExts` 的 `added`，`prev` 里那几项既没被装进容器、又会在任务结尾被原样写进 `php_extensions` 并随快照广播，界面从此显示「已启用」而 `php -m` 里没有——违反 §5.13.1 一致性（Docker 实际状态 ≡ 库里状态）。故该分支把待编译集换成**完整目标集**（`added = 去重排序后的 enabled`），且 `removed` **置空**（基座本就不含那几项，无需再删 ini）。口径变了必须**写进日志**：一行 `dim`「固化镜像 {ref} 不在本机，容器上无原扩展集，目标扩展集全量重编译」，不得静默（§5.16.3）。用例 `TestExtension_Apply_BaseFallbackRecompilesFullSet` 锁死命令序列 + 落库集合 + 该日志行。
 
-**失败口径**：任一扩展编译失败 → 整个目标扩展集**不应用**（`Apply` 报错、`step.Rollback()` 用未变动的原镜像重建干净容器、撤回本次固化镜像、清空临时目录），弹窗**不关闭**并把短消息原样 toast 给用户（`submitWrite` 直出后端 error 原文），用户改一项重试即可。
+**失败口径**：任一扩展编译失败 → 整个目标扩展集**不应用**（`Apply` 报错、`step.Rollback()` 用未变动的原镜像重建干净容器、撤回本次固化镜像、清空临时目录），短消息原样 toast 给用户（`submitWrite` 直出后端 error 原文），用户改一项重试即可。
+
+**弹窗生命周期（v2.9.14 需求 ⑥，覆盖 v2.9.9 的「弹窗不关闭」口径）**：`App.ExtApply` → `ExtensionService.Apply` → `tasks.Run` 是**同步执行**的数十秒级链路，因此管理扩展弹窗**提交即 `emit('close')`**，等待期的进度、步骤与失败全部由**抽屉日志 / 右栏队列**承载（§5.6.4 的「操作名 + 被点按钮禁用」同一路子），`.then` 里 `await syncState()` 后 toast 成功、`.catch` 里 toast 后端原文。
+
+- 原口径「失败弹窗**不关闭**、留着改一项再重试」在真机上不成立：它是 `apply()` 内 `await applyExtensions(...)` 才写的，于是**成功也不关**——用户看到的正是「点击应用并重建，弹框一直处于打开状态没有自动关闭」。
+- **不做「失败后留着弹窗让用户改一项」**：重开管理弹窗的默认勾选**就是**上次成功应用的权威集（§5.16.2 上表），改一项重试这条恢复路并未因此变长；而「必须靠弹窗活着才改得对」等于把一次后台任务绑在一个瞬时的视图实例上。
+- 安装弹窗（`InstallModal`）同理在 `submitWrite` **之前**即关闭（§5.6.4 边界 ①），不属本条新增改动。
+
 
 #### 5.16.3 执行期日志契约（这条是需求 ③ 的硬约束）
 
@@ -1697,9 +1759,9 @@ type OfflineService interface {
 | 写扩展清单 `extensions.env` | `cmd` 行：路径 → 目标扩展集全文 |
 | 准备基座镜像（缓存优先） | `cmd` 行 + `cache:hit`／`cache:miss` 的既有徽标链路 |
 | 容器内编译扩展 | `meta` 行「待启用 N 项 / 待停用 N 项」→ 基座退回支另起一行 `dim`（§5.16.2）→ 每条命令一行 `cmd`（含 argv 全文）→ **命令的 stdout/stderr 逐行**（stdout 为 `meta`、stderr 为 `dim`）→ 每项成功一行 `ok` |
-| 固化镜像 `phpo/php:{version}` | `docker commit →` 与「已固化镜像」`cmd` 行；导出到离线缓存、提升成功各一行 |
+| 固化镜像 `phpo/php:{version}` | `docker commit →` 与「已固化镜像」`cmd`／`ok` 行；`导出扩展镜像到临时目录 {tmp}` `cmd` 行；**提升成功一行 `ok` 必须点名缓存槽位**（`已提升到离线缓存: {committedRef} → {extTar}`，`extTar` 即 `env.OfflineExtImageTar` 派生的 `image-extensions.tar` 全路径）——需求 ③ 的核对落点，只说「已提升」等于没答「提升到哪儿了」（§5.14.2 两槽位） |
 | 从扩展镜像重建容器 | `cmd` 行「以扩展镜像重建容器 ← ref」+ `ok` 行「容器已运行于固化镜像」 |
-| 重载 Nginx | `nginx -s reload` + `ok` 行；未接入 nginx 时 `dim` 行「跳过重载」，**不得静默** |
+| 重载 Nginx | `nginx -s reload` `cmd` 行 + `ok` 行「Nginx 已重载，上游指向 {name}」。**缺席/未运行不判死**：`reload` 为 nil → `dim`「未接入 nginx，跳过重载」；未装 nginx → `dim`「nginx 未安装，跳过重载」；运行态探针报错 → `dim`「运行态未知，跳过重载: {原因}」；未运行 → `dim`「{容器} 未运行，跳过重载」。**重载本身失败 → 一行 `err`「Nginx 重载失败（扩展已生效，站点若 502 请检查 nginx 配置）: {原因}」后 `return nil`**——扩展已经做对了，把 nginx 自身的问题判死整单会撤回本次工作（§0.2 规则 16）。四类 `dim` 与 `err` 一律**不得静默** |
 
 **去帧是硬要求**：Docker exec attach 流每帧带 **8 字节二进制帧头**，直读原始流即把垃圾打进日志。唯一出口是 `engine.ExecStream(ctx, name, argv, stdout, stderr io.Writer)`（内部 `stdcopy.StdCopy` 去帧并分流 stdout/stderr）；写日志侧用逐行 writer 适配 `task.StepLog`，**无换行的超长进度条按 4 KiB 强制断行**——攒成整串等于让用户盯着一段时长未知的「执行中」。同一出口供备份逻辑导出复用（转储写文件、stderr 只留作报错原因）。
 
@@ -1726,6 +1788,10 @@ rm -f /usr/local/etc/php/conf.d/docker-php-ext-<name>.ini
 - ❌ 用 shell 字符串拼接扩展名进容器执行（必须 argv；扩展名过 `ValidateExt` 格式校验）。
 - ❌ 目标扩展集无变化仍重建容器；编译失败不清临时目录或不回滚。
 - ❌ 容器退回基座重建时仍只编译 `added`（等于把未装的扩展写进权威库），或对该口径静默不写日志行（§5.16.2）。
+- ❌ 管理扩展弹窗 `await` 后台任务后才关闭弹窗（需求 ⑥ 的原始现象：数十秒等待期弹窗一直挂着）。等待期由抽屉承载（§5.6.4）。
+- ❌ 管理扩展弹窗的默认勾选取自本地状态、上次会话残留或空清单——只认权威快照 `phpExtensions[version]`。
+- ❌ 因 nginx 未接入/未安装/未运行而判死扩展整单，或重载失败后 `return err` 把已编译生效的扩展工作整单回滚（§5.16.3）。
+- ❌ 提升固化镜像后日志不点名缓存槽位（只说「已提升」，用户无法核对是否写进了 `image-extensions.tar`）。
 
 ### 5.17 备份归档：读不动即跳过并告警 + 数据服务逻辑导出（v2.9.9 新增，需求 ④）
 
@@ -1834,6 +1900,124 @@ logging_collector = off
 
 ---
 
+### 5.19 同步状态的全量口径与缺失态（v2.9.14 新增，需求 ①/④）
+
+**一句话**：**「同步状态」必须把库里记着的一切拿去和宿主比对——容器、基座镜像、PHP 扩展固化镜像；第三方工具删掉的东西要逐条点名，但绝不自动改写 `installed`。**
+
+#### 5.19.1 为什么需要这一节
+
+用户用 Docker Desktop / `docker rm` / `docker rmi` 把容器和镜像全清了，phpo 的服务列表照旧显示「已安装」，看不出少了吗。此前 §5.13.9 的校准只比**运行态**（期望 running ≢ 实际 running 才回写），容器与镜像的**存在性**缺席既不上报也不显示——库里说装过、宿主上却不在了，界面说不出这件事。
+
+#### 5.19.2 两档口径（同一个 `calibrate` 实现，按 `auditImages` 分档）
+
+| 档位 | 入口 | 核查范围 | 落点 |
+|------|------|---------|------|
+| **轻量**（每任务后 / 启动 / 每 24h 校准） | `LifecycleService.Calibrate` → `calibrate(ctx, false)` | **只判容器存在性**，且复用本次已取到的 `ManagedContainers` 实际态——零额外 Docker 调用 | `internal/service/lifecycle_service.go` |
+| **全量**（手动点「同步状态」） | `App.Calibrate`（门面名沿用已生成的 bindings）→ `AppService.Calibrate` → `LifecycleService.SyncAll` → `calibrate(ctx, true)` | 容器 + **该版本应运行的镜像** + **php 的扩展固化镜像** `phpo/php:{ver}` | 同上 |
+
+**全量口径的镜像判定用「该版本实际会跑的那一份」**：php 有固化镜像即以 `phpo/php:{ver}` 为准，没有才回官方基座 `php:{ver}-fpm`——否则会把「装了扩展的版本」说成基座镜像缺失。
+
+#### 5.19.3 缺失态：派生态、三种类别、绝不自动改库
+
+`model.ServiceGap{Kind, Version, Reason, Ref}`，`Reason` 冻结为 **3** 种：
+
+| `Reason` | 含义 | 前端文案键 |
+|----------|------|-----------|
+| `container` | 同名容器 `phpo-{kind}-{version}` 不存在 | `svc.gap.container` |
+| `image` | 该版本应运行的镜像不存在 | `svc.gap.image` |
+| `extensions_image` | 库里记着**已启用扩展**，而固化镜像 `phpo/php:{ver}` 不在本机（容器只能退回基座，那几项其实没在跑，§5.16.2） | `svc.gap.extensions_image` |
+
+**四条硬口径**：
+
+1. **`Gaps` 是派生态**：由 `store.SetGaps` 挂到 `Snapshot.Gaps`，**不落 SQLite**——它是「此刻宿主与库的差集」，落库即等于伪造第二份权威。零缺失时序列化为 `[]`（§5.6.3 契约，`normalizeCollections` 已含 `Gaps`）。
+2. **绝不自动改 `installed`**：用户用第三方工具删了容器，不等于「卸载了这个版本」——配置、卷、缓存都还在，点「启用」即按当前配置幂等重建（§5.13.4）。自动降级 `installed` 会把可恢复的状态变成不可逆的记账错误（裁决口径：「标记缺失态 + 日志点名，不自动改 installed」）。
+3. **探针报错一律上抛**：`ImageExists` 失败不能静默当作「本机没有」——把一次正常在机的镜像说成缺失，比不报更糟（§5.14.12 同一口径）。
+4. **顺序稳定**：`detectGaps` 按 `sortedKinds` + `uniqueSorted(version)` 产出，`sameGaps` 才能按内容+顺序等价比对。
+
+#### 5.19.4 幂等静默：不发「和上次一样」的事件
+
+发不发只看**本次比上次多说了什么**：
+
+```go
+if len(res.Corrections) == 0 && sameGaps(snap.Gaps, gaps) { return &res, nil }
+```
+
+**不得**用 `res.Changed()` 作闸门——它把「存在性漂移」也算进变更，而容器缺席是**常态化**的（停了就是缺席），于是每次校准、每次点同步都会重发同样的 drift + 快照，抽屉被同一行刷屏（§0.2 规则 25 的反面：落地要实时，但重复事实不得重复铺）。
+
+发事件时两条一起走：`docker:state-drift`（载荷 `model.StateDrift{Expected, Actual, Gaps}`，**不新增事件名**）+ `state:changed`（新快照带 `gaps`）。
+
+#### 5.19.5 前端落地：唯一入口 + 三处可见
+
+| 落点 | 口径 |
+|------|------|
+| `composables/useStateSync.ts` 的 `runSync()` | 手动「同步状态」的**唯一入口**：先 `syncAll()`（后端全量校准）再 `syncState()` 拉权威快照——校准无变化时不发事件，故点了同步就一定看到一次落地。**侧栏按钮与命令面板 ⌘R 都走这一个函数**，不得各写一份 |
+| `api/state.ts` 的 `syncAll()` | 调生成的门面 `app.Calibrate()`；demo 通道返回 `false`，调用方只拉本地占位快照 |
+| 抽屉左栏 | `useStateSync` 的 `EVENT.DockerStateDrift` 分支：`e.gaps` **逐条**一行 `meta`（`task.dockerGap`，含 kind/version/人话原因/`ref`）；**有缺失项时不再补那条 `expected → actual` 汇总**——同一次漂移说两遍等于把日志当重复输出通道；无缺失才退回汇总行（比对值缺席时退化为 `error` 文本） |
+| 服务卡片 | `appState.gapOf(kind, version)` → `.status-pill.pill-warn`（`data-gap`）显示「{原因}缺失」，`title` 给 `svc.gapTip`（哪一样不在了 + `ref` + 「点启用会按当前配置重建」）。**同版本至多一条**，取最先命中的 `reason` |
+| 未知 `reason` | `GAP_REASON_KEYS`（`constants/service.ts`）**查不到即原样透出**枚举名——后端将来多一种原因，界面最坏显示英文而不是留空白（§5.6.1 兜底位同口径） |
+
+`enterRealHost` 会清空 `gaps`（demo 占位值不得带进真实宿主首帧，硬红线 4）。
+
+#### 5.19.6 明确禁止
+
+- ❌ Docker 被第三方工具改过，界面却只说「已安装」——缺席必须点名（§0.2 规则 31）。
+- ❌ 手动「同步状态」只比运行态：必须覆盖容器 + 基座镜像 + 扩展固化镜像三类。
+- ❌ 为上报缺失态新增事件名或新增任务状态（17 事件名 / 4 状态冻结）。
+- ❌ 自动把 `installed` 降级、自动删记录、自动重建容器来「修好」缺失态——只标记、只点名，恢复由用户决定。
+- ❌ 把 `Gaps` 落库（它是派生态，权威只有 SQLite 的 `installed`/`running` + 宿主实际态）。
+- ❌ 用 `res.Changed()` 当发事件闸门（容器缺席常态化 → 每次同步刷屏）。
+- ❌ `ImageExists` 探针失败静默当作「本机没有」。
+- ❌ 侧栏按钮与 ⌘R 各写一份同步逻辑（唯一入口 `runSync`）。
+- ❌ 有缺失项时还铺一遍 `expected → actual` 汇总行。
+
+---
+
+### 5.20 文件权限策略：phpo 产出物一律 0777（v2.9.14 新增，需求 ②）
+
+**一句话**：**本产品面向程序员——phpo 自己建的所有目录与文件权限一律 `0777`；权限位必须显式 `chmod` 归一，不能只写在 `MkdirAll`/`WriteFile` 的入参上。**
+
+#### 5.20.1 范围：只含 phpo 自己的产出物
+
+| 在范围内 | 不在范围内 |
+|---------|-----------|
+| `config.yaml`、`phpo.db`（含 `-wal`/`-shm`）、`logs/operations.log`、`trash/`、`updates/` | **容器内进程写出来的文件**（`./mysql/{ver}/data/*`、`./pgsql/{ver}/data/*`、`./redis/{ver}/data/dump.rdb`、宿主 bind 目录里的 `logs/*.log`）——那是另一个 uid 的产物，去 `chown`/`chmod` 它等于越界改用户环境（裁决口径：「只改 phpo 自己的产出物」）。备份侧对应用 §5.17.1 的「读不动即跳过并聚合告警」，不强行改权限 |
+| PHPO_HOME 下 phpo 建的目录与文件：`nginx/sites/*.conf`、`{kind}/{ver}/conf/*`、渲染出的配置、缓存 `image.tar` / `image-extensions.tar` / `manifest.json`、临时目录、备份归档 `.tar.gz` | 站点根目录里用户的源码（WWW_ROOT 下用户自己的文件） |
+| `<用户数据目录>/` 全部 | 用户自己放进自定义根的东西 |
+
+**明文密码世界可读是本条的既定代价**（§1.5：明文存储、不加密、UI 可查看；§0.2 规则 5/6 禁止引入任何加密与 keyring）。产品定位为程序员，替用户限制访问不是本产品的职责（§0.2 规则 15、§1.11）。
+
+#### 5.20.2 唯一出口：`internal/util/fs.go`
+
+```go
+const (
+    DirPerm  = 0o777
+    FilePerm = 0o777
+)
+```
+
+| 助手 | 为什么要它 |
+|------|-----------|
+| `util.MkdirAll(path)` | `os.MkdirAll` 的入参权限会被 **umask 削位**（本机 umask `022` → 传 `0777` 实得 `0755`）。故 `missingDirs` 逐级收集本次新建的祖先并 `chmod`，**叶子目录无论是否新建都归一**——旧装机留下的 `0755` 目录在下一次写入时自愈 |
+| `util.WriteFile(path, content)` | 建父目录 + 写 + `os.Chmod(path, FilePerm)`（覆盖写时旧权限位原样留着，必须显式改） |
+| `util.Create(path)` | `os.Create` 的 `0666` 会被削成 `0644`；建完立即 `f.Chmod(FilePerm)` |
+| `util.AtomicWrite(path, content)` | 临时文件先 `Chmod` 再 `rename`（rename 保留 inode 权限），否则原子写反而产出 `0600` |
+
+**chmod 失败按 best-effort 忽略**（`_ =`）：目录属他人时改不动不是错误，不该因此判死整次操作（§0.2 规则 16）。
+
+#### 5.20.3 落点登记（新增写盘时按同一口径补，不得遗漏）
+
+`internal/config/configstore.go`（`config.yaml`）、`internal/store/sqlite.go`、`internal/engine/audit.go`（旧 `0644` 追加文件在打开时 `f.Chmod` 归一）、`internal/engine/trash.go`、`internal/engine/image.go`、`internal/vhost/sync.go`、`internal/vhost/hosts/{manager,elevate_windows}.go`、`internal/cache/{manifest,promote,tempdir}.go`、`pkg/archive/targz.go`、`internal/service/{workdir,backup_service,doctor_service,extension_service}.go`（`workdir.go` 含 `healPgLogging` 的原地截断写，配置渲染也经它落盘）、`internal/task/steps/steps_{config,service,site}.go`、`internal/updater/{downloader,installer_linux,rollback,update}.go`。
+
+#### 5.20.4 明确禁止
+
+- ❌ phpo 的产出物留非 `0777` 权限（§0.2 规则 32）。
+- ❌ 只把 `0o777` 写进 `os.MkdirAll`/`os.WriteFile`/`os.Create` 的入参就当作合规——umask 会削位，必须显式 `chmod`。
+- ❌ 为此去 `chown`/`chmod` 容器内进程或用户自己写的文件。
+- ❌ 借「权限放宽」之名引入密码加密、keyring、长度校验或任何访问限制（§0.2 规则 5/6，§1.5）。
+- ❌ 在 `util` 之外另立一份权限常量或再包一层 `os.MkdirAll(..., 0o777)`。
+
+---
+
 ## 6. 原型 → 生产映射表
 
 | 原型元素 | Go 侧落点 | 前端落点 |
@@ -1915,6 +2099,10 @@ logging_collector = off
 | 扩展执行期实时日志 + 失败点名（v2.9.9，需求 ③） | `engine/exec.go#ExecStream`（`stdcopy` 去帧双 writer）+ `extension_service.go`（`extLogWriter` / `extFailed` / `extDisableArgs`） | 抽屉左栏 `task:log` 逐行 + `submitWrite` toast 原样显示后端短消息 |
 | 备份跳过告警 + 逻辑导出（v2.9.9，需求 ④） | `pkg/archive/targz.go`（`Skip`，`Create` 返回 `([]string, []Skip, error)`）+ `backup_service.go`（`dumpKinds` / `dumpStep` / `dumpOne` / `dumpCmd` / `logSkips`） | `BackupView.vue` 无独立模态；结果与缺项进抽屉日志 |
 | 数据服务运行态（v2.9.9，需求 ③） | `template/templates/pgsql/postgresql.conf.tmpl`（stderr）+ `workdir.go#healPgLogging` + `engine/container.go`（`waitRunning` / `startFailureMsg` / `needsStop`）+ `engine/inspect.go`（`ContainerStatus` / `LogTail`） | —（报错文本经服务卡片状态点与 toast 回流） |
+| 同步状态全量口径 + 缺失态（v2.9.14，需求 ①/④） | `lifecycle_service.go`（`calibrate(ctx, auditImages)` 两档 / `SyncAll` / `detectGaps` / `sameGaps` / `sortedKinds`）+ `model.ServiceGap`（`GapContainer`/`GapImage`/`GapExtImage`）+ `model.Snapshot.Gaps` + `store.SetGaps` + `snapshot.go#normalizeCollections` 兜 `[]` | `api/state.ts#syncAll` + `useStateSync.ts#runSync`（侧栏「同步状态」与 ⌘R 唯一入口）+ `appState.gapOf` + `ServiceView.vue` 缺失态 pill + `constants/service.ts#GAP_REASON_KEYS` |
+| 扩展固化镜像的第二缓存槽位（v2.9.14，需求 ③） | `config/offline.go#OfflineExtImageTar` + `cache/{lookup,image_cache,promote}.go`（`LookupExtImage` / `LoadExtImage` / `PromoteExtImage`，在 `cache.Manager` 不经门面）+ `cache/manifest.go` 的 `extensions_image` 字段 | `CacheDetailModal.vue` 按 `CacheEntry.HasExtImage` 单独一栏显示两槽位（`offline.detail.extImage`）；`scripts/check-cache-manifest.go`（第 4 项门禁）锁死字段名 |
+| phpo 产出物一律 0777（v2.9.14，需求 ②） | `internal/util/fs.go`（`DirPerm`/`FilePerm` + `MkdirAll`/`WriteFile`/`Create`/`AtomicWrite` 显式 chmod 归一，失败 best-effort）——全仓 23 个落点统一走它 | —（权限是落盘事实，不进快照） |
+| 卸载不设「至少保留一个 PHP」门禁（v2.9.14，需求 ⑤） | `preflight/rules_service.go#uninstall`（php / nginx 依赖均 `warnf`；`pkg/errs` 删 `LastPhp` → **27** 码） | 各服务卡片「卸载」照常可点至最后一个版本；warnings 进确认弹框 |
 
 ---
 
@@ -2056,6 +2244,37 @@ logging_collector = off
 
 见 §5.18.4。
 
+### 决策 28：手动「同步状态」采用「全量口径 + 缺失态只点名不改库」（v2.9.14，需求 ①/④）
+
+**核心决策**：把校准拆成两档——**轻量**（启动 / 每任务后 / 每 24h，只判容器存在性并复用已取到的实际态）与**全量**（手动「同步状态」，再核每个已安装版本应运行的镜像与 php 的扩展固化镜像）；差集以 `Snapshot.Gaps` 表达、随 `docker:state-drift` 广播，**绝不自动改写 `installed`**。
+
+#### 理由
+
+1. **需求 ① 的现象**：用户用 Docker Desktop / `docker rm` / `docker rmi` 把容器和镜像全清了，服务列表照旧显示「已安装」——旧口径只比 `running`，存在性缺席既不上报也不显示。
+2. **不能把每次校准都做成全量**：全量要逐版本 `ImageExists`，是 O(已安装版本数) 次 Docker 调用；它挂在「每任务后」这一高频点上会把启停操作拖慢。手动同步是唯一能承受这个代价的入口，故 `auditImages` 只在 `SyncAll` 为真。
+3. **`installed` 不等于「宿主上有东西」**：容器被外部删掉时配置、卷、离线缓存全在，点「启用」即按当前配置幂等重建（§5.13.4）。自动降级 `installed` 是把一个**可恢复**状态改成**不可逆**的记账错误，且让用户丢失配置回显。
+4. **派生态不能伪装成第二份权威**：`Gaps` 落库即出现「库里两份说法」——本项目的硬红线 4 要求后端唯一权威，故 `Gaps` 只在快照里活一次。
+
+#### 明确禁止
+
+见 §5.19.6。
+
+### 决策 29：phpo 产出物的权限采用「一律 0777 + 显式 chmod 归一」（v2.9.14，需求 ②）
+
+**核心决策**：phpo 自己创建的**目录与文件**权限全部为 `0777`；且权限位**不靠** `os.MkdirAll` / `os.WriteFile` 的入参生效——每次写入后**显式 `chmod`** 归一。范围**只含 phpo 自己的产出物**，容器内进程写进 bind 目录的文件不在本条内（那是 §5.17.1 的跳过+告警口径）。
+
+#### 理由
+
+1. **产品定位是程序员**（§0.4 画像 A/D）：用户明确说「我们知道自己在做什么」。「有些文件不允许我删除」在本产品里不是安全特性而是缺陷——它逼用户去开终端改权限。
+2. **只写入参等于没写**：`MkdirAll(path, 0o777)` 与 `WriteFile(path, b, 0o777)` 的权限位会被进程 umask 削掉（本机 umask `0022` → 实际 `0755` / `0644`），`os.CreateTemp` 更是恒为 `0600`。因此归一必须发生在写入**之后**，且 `AtomicWrite` 要在 `rename` **之前** `Chmod`（rename 保留源文件权限位）。
+3. **旧装机要能自愈**：`MkdirAll` 对**叶子目录总是 chmod**，所以 v2.9.14 之前留下的 `0755` 目录会在下一次写入时被修好，不要求用户重装。
+4. **权限收在一处**：`internal/util/fs.go` 的四个助手是全仓唯一落点（23 个调用点），否则「777」会在每个包被重新解释一遍并再次漂移。
+5. **`config.yaml` 不豁免**：明文密码因此**世界可读**——这是本条的既定代价，用户裁决为「目录和文件一律 777」，§0.2 规则 5/6 同时禁止引入任何加密、keyring 或长度校验，也不提供开关（§1.5）。
+
+#### 明确禁止
+
+见 §5.20.4。
+
 ---
 
 ## 8. 跨平台差异矩阵
@@ -2071,10 +2290,11 @@ logging_collector = off
 | 路径大小写 | 不敏感 | 默认不敏感 | 敏感 |
 | 系统托盘 | ✅ | ✅ | ⚠️ 需 libappindicator |
 | 代码签名 | EV 证书 | Developer ID + 公证 | 无 |
-| `config.yaml` 权限 | NTFS ACL | `chmod 600` | `chmod 600` |
+| `config.yaml` 权限 | NTFS ACL | `chmod 777` | `chmod 777` |
 | 升级安装方式 | NSIS 静默安装 | .app 替换 | AppImage 替换 |
 | 缓存路径 | `./offline/` | `./offline/` | `./offline/` |
-| 缓存文件权限 | NTFS ACL | `chmod 644` | `chmod 644` |
+| 缓存文件权限 | NTFS ACL | `chmod 777` | `chmod 777` |
+| phpo 产出物权限（§5.20） | NTFS ACL（三平台一律 `0777`，由 `internal/util/fs.go` 显式 `chmod` 归一，不经 umask） | `chmod 777` | `chmod 777` |
 | 临时目录 | `./{kind}/{version}/ext/` | `./{kind}/{version}/ext/` | `./{kind}/{version}/ext/` |
 
 > **缓存路径与临时目录跨平台同记法**：两者都从 PHPO_HOME（`config.yaml` 的 `phpo_home`）派生，位置由装机向导决定，**不随平台写死**。各平台的默认候选：Windows `%USERPROFILE%\phpo\`、macOS/Linux `~/phpo/`（仅默认值，非约束）；`~` 的展开由 `internal/config` 在出口统一处理（Windows 无 shell `~`，见上「路径解析」行）。
@@ -2106,6 +2326,10 @@ logging_collector = off
 | **R97** | **容器内往宿主 bind 挂载目录写日志 → FATAL 崩溃循环，且旧装机的坏配置永不更新** | **pgsql 日志改走 stderr（模板 + `check-templates.go` golden 注明唯一生产偏离）；「启用」路径 `healPgLogging` 原地截断修复；`waitRunning` 复验 + 失败消息带退出码与容器日志尾部；`test/integration/g4_pgsql_heal_live_test.go` 真机两头取证（旧配置裸启动必失败 → 经 `Start` 自愈后就绪）（§5.18）**（v2.9.9） |
 | **R98** | **`state:changed` 落地链被单个缺席字段打断：事件到了、界面却不动，只能靠刷新页面回正** | **快照出口 `normalizeCollections` 把可空集合发成 `[]`/`{}`（`TestBuildSnapshot_NoNullCollections` 反射遍历锁死）；前端 `applySnapshot`/`applyTaskBoard`/`syncBoard` 逐字段兜空；`internal/app/queue_events_test.go` 锁死「任务开始那一帧就带人话标签」；§0.2 规则 29 + §5.6.3**（v2.9.12） |
 | **R99** | **耗时操作等待期界面「说不出在跑什么、按钮还亮着」：左栏日志只有步骤行、被点按钮可重复点击塞出同样任务** | **抽屉左栏 `.drawer-task-title` 标题条（文本只取快照 `TaskBrief.Label`）；`taskStore.isBusy` + `submitWrite` 的 `beginSubmit → await syncState() → endSubmit` 只禁被点那一颗（key=`type:kind:version:domain:file`）；§0.2 规则 30 + §5.6.4**（v2.9.13） |
+| **R100** | **容器/镜像被第三方工具删掉后界面仍说「已安装」，或反过来自动把 `installed` 改写成不可恢复的记账错误** | **两档校准（轻量只判容器 / 手动同步全量）+ `Snapshot.Gaps` 三 Reason 点名；只标记不自动改库、探针错误上抛、`sameGaps` 幂等静默（不用 `res.Changed()` 当闸门）；§0.2 规则 31 + §5.19**（v2.9.14） |
+| **R101** | **扩展固化镜像与基座镜像争用同一个缓存槽位（后写覆盖先写），或提升后用户无法核对到底进了哪个文件** | **每版本两槽位：`image.tar` / `image-extensions.tar` + 清单 `image` / `extensions_image` 各一条（`config/offline.go#OfflineExtImageTar`）；提升日志一行 `ok` 点名 ` committedRef → extTar` 全路径；`check-cache-manifest.go` 锁死字段名；§0.2 规则 35 + §5.14.2 + §5.16.3**（v2.9.14） |
+| **R102** | **phpo 产出物权限被 umask 削成 0755/0644，用户删不掉自己的文件；或反向把容器内进程产物也 chmod 成 777** | **`internal/util/fs.go` 一处收口（`DirPerm`/`FilePerm = 0o777` + 写后显式 `chmod`、`AtomicWrite` 先 Chmod 再 rename、叶子目录总归一以自愈旧装机）；范围**只含 phpo 自己的产出物**，容器内所写文件走 §5.17.1 跳过+告警；§0.2 规则 32 + §5.20**（v2.9.14） |
+| **R103** | **扩展弹窗 `await` 数十秒的后台任务才关闭；或 nginx 重载失败把已编译生效的扩展整单回滚** | **管理扩展弹窗提交即 `emit('close')`，进度/失败由抽屉日志与队列承载、`.then` 里 `await syncState()` 后 toast（§5.16.2）；nginx 缺席/未运行 → `dim` 跳过行、重载失败 → `err` 行 + `return nil` 不判死整单（§5.16.3）；§0.2 规则 34 + §5.16.2 / §5.16.3 / §5.16.5**（v2.9.14） |
 
 ---
 
@@ -2166,7 +2390,7 @@ logging_collector = off
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（80 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **10** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（81 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **10** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -2259,7 +2483,7 @@ logging_collector = off
 - [ ] 安装期是否默认勾选 `commonExts(version)`（11 项）？管理弹窗默认勾选是否等于**本版本当前已应用的扩展**？
 - [ ] 提交的是**完整目标扩展集**吗（无变化不建任务、不重建容器）？
 - [ ] 容器内命令的输出是否**去帧后逐行实时**进 `task:log`（stdout `meta` / stderr `dim`，超长无换行 4 KiB 强断）？
-- [ ] 失败是否一行 `err` 点名扩展 + 短消息「本次扩展集未应用」并让弹窗**不关**？
+- [ ] 失败是否一行 `err` 点名扩展 + 短消息「本次扩展集未应用」？（v2.9.14：弹窗**提交即关**，失败由 toast + 抽屉日志承载，不再要求「让弹窗不关」。）
 - [ ] 停用是否走 `rm -f conf.d/docker-php-ext-<name>.ini`（不是镜像里不存在的 `docker-php-ext-disable`）？
 - [ ] 命令是否以 argv 传入容器（不经 shell）？`check-ext-catalog.go` 门禁是否绿？
 - [ ] 固化镜像不在本机、容器退回基座重建时，待编译集是否换成**完整目标集**（不是只装 `added`）、并给一行 `dim` 说明？（§5.16.2 / v2.9.10）
@@ -2279,6 +2503,46 @@ logging_collector = off
 - [ ] 启动是否等到稳定 running（running 后复验）？失败消息是否带状态 + 退出码 + 容器日志尾部？
 - [ ] `check-templates.go` 的 golden 是否仍注明「pgsql 日志段是唯一生产偏离」？原型 SSOT 是否未改？
 
+### 12.10 同步状态全量口径 · 权限 0777 · 扩展弹窗与缓存槽位检查（v2.9.14 新增，§5.19–§5.20 · §5.16 · §1.11）
+
+**同步状态 / 缺失态（§5.19，需求 ①/④）**：
+
+- [ ] 手动「同步状态」是否走**全量**口径（容器 + 该版本应运行的镜像 + php 扩展固化镜像三样都核）？是否仍把「只比运行态」的轻量档留在启动 / 每任务后 / 每 24h？
+- [ ] php 有固化镜像时镜像判定是否以 `phpo/php:{ver}` 为准（不是官方基座）？
+- [ ] 缺失项是否逐条点名：快照 `gaps` + 服务卡片缺失态 pill + 抽屉一行 `meta`？未知 `reason` 是否**原样透出**而非留空白？
+- [ ] 是否**没有**自动改写 `installed`、没有自动删/建容器？（外部删除是派生态，恢复由用户点「启用」）
+- [ ] `Gaps` 是否只活一次（不落 SQLite）？零缺失时是否序列化为 `[]`（`normalizeCollections`，§5.6.3）？
+- [ ] 发事件闸门是否用 `len(res.Corrections)==0 && sameGaps(...)`，而**不是** `res.Changed()`？连点两次「同步状态」是否第二次不刷屏？
+- [ ] `ImageExists` 探针失败是否上抛（不静默当作「本机没有」）？
+- [ ] 侧栏按钮与命令面板 ⌘R 是否**共用** `runSync()` 一处？有缺失项时是否**不再**铺 `expected → actual` 汇总行？
+- [ ] `docker:state-drift` 载荷是否带 `gaps`（17 事件名**未新增**）？
+
+**文件权限（§5.20，需求 ②）**：
+
+- [ ] phpo 自己建的目录与文件是否**全部** 0777（含 `config.yaml`，无豁免、无开关）？
+- [ ] 是否**显式 `chmod` 归一**而不是只把 `0o777` 写进 `MkdirAll` / `WriteFile` 入参？`AtomicWrite` 是否在 `rename` **之前** `Chmod`？
+- [ ] 落盘是否统一走 `internal/util/fs.go` 四个助手（没有第二处自拼 `os.MkdirAll`/`os.WriteFile`/`os.CreateTemp` 而漏归一）？
+- [ ] 旧装机的 `0755`/`0644` 是否在下一次写入时被叶子归一修好（自愈）？
+- [ ] chmod 失败是否 **best-effort 忽略**（不因此判死写操作）？
+- [ ] 是否**没有**越界去 `chown`/`chmod` 容器内进程写的文件或用户环境里他人的目录？（那是 §5.17.1 的跳过+告警口径）
+
+**扩展弹窗与缓存槽位（§5.16.2 / §5.16.3 / §5.14.2，需求 ③/⑥）**：
+
+- [ ] 管理扩展弹窗是否**提交即 `emit('close')`**（没有 `await` 数十秒的后台任务才关）？
+- [ ] 管理扩展弹窗的默认勾选是否取自**权威快照** `appState.phpExtensions[version]`（不是空清单 / 本地残留）？
+- [ ] nginx 缺席 / 未安装 / 未运行是否给 `dim` 跳过行、重载失败是否 `err` 行 + `return nil`（**不**判死整单、**不**回滚已生效的扩展）？
+- [ ] 提升固化镜像的那行 `ok` 是否**点名缓存槽位全路径**（`{committedRef} → …/image-extensions.tar`）？
+- [ ] 每个 php 版本是否两份镜像缓存各占各的槽位与清单字段（`image` / `extensions_image`）？`PromoteExtImage` 是否**不会**覆盖基座 `image.tar`？
+- [ ] 零网络恢复加载扩展镜像是否发 `cache:hit`、损坏是否发 `cache:corrupted`（不因「走的是扩展槽位」而静默）？
+- [ ] `check-cache-manifest.go`（第 4 项门禁）是否仍锁死两槽位字段名？
+
+**卸载无保留门禁（§1.11，需求 ⑤）**：
+
+- [ ] 卸载最后一个 PHP / 被站点依赖的 PHP / 被站点依赖的 Nginx 是否一律**警告后照常卸载**？
+- [ ] `uninstall` 分支是否只剩 `SvcMissing` 与 `NotInstalled` 两条 `errf`？`pkg/errs` 是否已无 `LastPhp`（**27** 码）？
+- [ ] 三条用例是否都在（`TestUninstallLastPhpAllowed` / nginx 依赖告警放行 / 依赖站点 `warnf`）？
+
+
 ---
 
 ## 13. 总纲变更流程
@@ -2295,8 +2559,66 @@ logging_collector = off
 
 ---
 
-**phpo 项目总纲 v2.9.13**
+**phpo 项目总纲 v2.9.14**
 
+> **v2.9.14 变更（新增 §5.19「同步状态的全量口径与缺失态」与 §5.20「文件权限策略」，并把扩展缓存槽位、扩展弹窗生命周期、卸载保留门禁三处收口为冻结条款）**：
+> 用户一次性提出六项需求，其中五项明写「这个要写进总纲」：① 「所有的镜像和容器全都通过第三方工具停止和卸载了，但 phpo 的
+> 服务列表没有跟着变化」；② 「有些文件不允许我删除，我的要求是所有的文件夹和文件默认权限全部必须是 777，这个项目的定位是
+> 程序员，我们知道自己在做什么」；③ 「排查 PHP 扩展安装成功后有没有提升到 offline 下面的对应的扩展目录内」；④ 「同步状态
+> 要同步所有的状态，包括对 docker 服务的停止和卸载……全部」；⑤ 「卸载 PHP 服务允许全部卸载清空，禁止要求用户『至少保留一个
+> PHP 版本』」；⑥ 「点击应用并重建，弹框一直处理打开状态没有自动关闭；点击扩展管理后的弹框没有将当前安装的 php 已安装扩展
+> 默认选中」。**四项裁决**由提问取得：权限「目录和文件一律 777」（`config.yaml` 不豁免）、范围「只改 phpo 自己的产出物」、
+> 外部删除「标记缺失态 + 日志点名，不自动改 `installed`」；第 4 题（nginx 依赖门禁是否降级）未答复，按 §0.2 规则 16「能警告
+> 的不要阻止」实现为警告后照常卸载。
+>
+> **落条款**：① §0.2 新增规则 **31–35**（故意续在 30 之后不重编号）——31 禁止「Docker 被第三方工具改过界面却只说已安装」、
+> 32 禁止 phpo 产出物留非 0777 权限、33 禁止「至少保留一个」这类保留门禁、34 禁止让瞬时弹窗替后台任务守门、35 禁止把扩展
+> 固化镜像与基座镜像写进同一缓存槽位；② **§5.19** 新节写全两档口径（`Calibrate`→`calibrate(ctx,false)` 轻量只判容器且复用
+> 已取实际态；`App.Calibrate`→`AppService.Calibrate`→`SyncAll`→`calibrate(ctx,true)` 全量再核「该版本实际会跑的那一份」镜像
+> 与 `phpo/php:{ver}`）、`model.ServiceGap` 的 **3** 个 Reason（`container`/`image`/`extensions_image`）、四条硬口径（`Gaps`
+> 派生不落库、绝不自动改 `installed`、探针错误上抛、`sortedKinds`+`uniqueSorted` 顺序稳定）、**幂等静默闸门**
+> `len(res.Corrections)==0 && sameGaps(snap.Gaps,gaps)`（**不得**用 `res.Changed()`——容器缺席是常态化，每次同步即刷屏）、
+> 前端五处落地（唯一入口 `runSync()`、`api/state.ts#syncAll`、抽屉 `gaps` 逐条点名且不再补汇总行、服务卡片
+> `appState.gapOf` 缺失 pill、`GAP_REASON_KEYS` 未知原因原样透出兜底）；③ **§5.20** 新节写明范围（含/不含两栏对照：容器内
+> 进程所写文件与 WWW_ROOT 用户源码不适用本条，备份侧仍走 §5.17.1 跳过+告警）、唯一出口 `internal/util/fs.go`
+> 的 `DirPerm`/`FilePerm = 0o777` 与四个助手（`MkdirAll` 逐级 `missingDirs` 归一 + 叶子总 chmod 以自愈旧装机、`WriteFile`
+> /`Create` 写后显式 `chmod`、`AtomicWrite` **先 Chmod 再 rename**——rename 保留 inode 权限，否则原子写反而产出 `0600`）、
+> **chmod 失败 best-effort 忽略**、§5.20.3 登记 **23** 个落点文件；④ §1.11 补卸载三行对照表（站点依赖 → `warnf`、最后一个
+> PHP → 不设门禁、nginx 依赖 → `warnf`），`pkg/errs` 删 `LastPhp` 使码数 **28 → 27**；⑤ §5.14.2/§5.14.10/§5.14.12 补
+> **每版本两个 image 槽位**（基座 `image.tar`/`manifest.image` ≡ 扩展 `image-extensions.tar`/`manifest.extensions_image`），
+> 三个能力 `LookupExtImage`/`LoadExtImage`/`PromoteExtImage` 留在 `cache.Manager`（安装/恢复链路内部步骤，**不经** `OfflineService`
+> 门面，故 `App.*` 绑定方法数不变）；⑥ §5.16.2 新增「弹窗生命周期」整段并**覆盖** v2.9.9 的「弹窗不关闭改一项重试」旧口径
+> （根因：`apply()` 内 `await applyExtensions(...)` 在数十秒链路上，成功也不关；现提交即 `emit('close')`，`.then` 里
+> `await syncState()` 后 toast），同节把管理弹窗默认勾选钉为**权威快照** `appState.phpExtensions[version]`；§5.16.3 把固化镜像
+> 一行改为**点名缓存槽位**（`已提升到离线缓存: {committedRef} → {extTar}` 全路径）并写全 nginx 一步的四档 `dim`（未接入 /
+> 未安装 / 运行态未知 / 未运行）与失败一行 `err` + `return nil` **不判死整单**（此刻扩展已固化、容器已运行于扩展镜像、
+> 该步从未改动 vhost，撤回等于毁掉做对了的工作）；⑦ §5.6 事件表把 `docker:state-drift` 载荷补成
+> `{ expected, actual, gaps }`（**17 事件名一个未增**），§5.6.2 对照表同步「有 gaps 逐条铺开、为空才落汇总行」。
+>
+> **同步落点**：头部 **5** 条新条款、§0.2 规则 31–35、§0.3 **4** 行（错误码 27／缺失态类别数 3／同步口径分档 2／产出物权限
+> 0777）、§1.1 结论表 **3** 行、§1.11、§1.13.3 目录树、§4.1（`util/fs.go` 注释）、§4.2（`config.yaml` 权限与节末权限注）、
+> §5.2、§5.6/§5.6.2、§5.14.2/§5.14.10/§5.14.12、§5.16.2/§5.16.3/§5.16.5、**§5.19/§5.20 两新节**、§6 映射表 **4** 行、
+> §7 **决策 28/29**、§8 跨平台权限行、§9 **R100–R103**、§12.9 一项改写 + **§12.10** 新自查（四组 **24** 项）、底部摘要
+> **4** 条 bullet；派生文档按 §13 第 4 步同步。
+>
+> **验真**：`gofmt -l .` 无输出、`go vet ./...`、`go build ./...`、`go test ./... -count=1` 全绿；五门禁全过（i18n zh-CN /
+> en-US 各 **610** 键、集合相等；模板 golden 空 diff；Docker 命名；缓存清单字段含 `extensions_image`；扩展 **73** 项分类对账）；
+> `vue-tsc --noEmit` EXIT=0。新增用例：`internal/cache/extimage_test.go`（两槽位互不覆盖）、`internal/service/lifecycle_service_test.go`
+> （轻量/全量分档 + `sameGaps` 静默 + 探针上抛）、`internal/preflight/preflight_test.go`（卸载降级为警告）、
+> `internal/config/password_test.go`（`config.yaml` 落盘即 0777）、`internal/util/fs_test.go`（umask 削位下显式归一）。
+> §4.1／§11.3 的 `*_test.go` 计数按实测校正为 **81**（与包同目录；全仓 91 = 81 + `test/integration/` 10）。
+> **真宿主 GUI 未走查**（本轮只到单元测试与类型检查层面：缺失态 pill、抽屉 gaps 逐行、扩展弹窗提交即关，均需实机点击级验收）；
+> `pnpm build` 与产物走查在下一轮，`frontend/dist` 届时按规约还原。
+>
+> **明确未改**：8 条硬红线原文、三段式写操作、**17 个事件名（未新增，仅补 `docker:state-drift` 载荷字段）**、后端任务状态
+> **4** 个、显示态映射与 `displayOf` 单一出口、preflight **19** action 与 NEEDS_HOME **17**（`uninstall` 仍是同一 action，
+> 只是内部两条 `errf` 变 `warnf`）、`App.*` 绑定方法数（扩展槽位三能力不经门面）、扩展目录 **73**／常用 **11**、门禁
+> **5** 项、i18n 键数（本轮两侧同步增删后仍相等，以门禁输出为准）、抽屉 70%／30% 默认占比与 40–80 拖拽区间、系统日志通道
+> 200 行上限、§5.15 三根互斥唯一、§5.16.1 目录与 §5.16.4 停用=删 ini、§5.17 备份容错、§5.18 数据服务运行态、§5.6.4 等待期
+> 反馈两项条款、密码／版本／域名／端口策略、冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`。
+> **一处生产偏离需注明**：§5.20 把 `config.yaml` 权限从 v2.9.0 的 `0600` 改为 `0777`，是用户明确裁决（「目录和文件一律 777」）
+> 的结果，其代价是明文密码世界可读——已在 §5.2、§5.20.1 与本条记载，不是笔误。
+>
 > **v2.9.13 变更（新增 §5.6.4「等待期反馈：操作名进抽屉标题条 + 被点按钮禁用」，把「一切耗时操作实时说出在做什么」写成冻结条款）**：
 > 用户提出的最高优先级需求：**「所有的一切全部（操作/点击/变化/请求/反馈/响应/日志/消息…）优先把直观名字放进日志抽屉，
 > 以便用户第一时间知晓；其他功能同理；点击立即备份时等待期间按钮应禁用，结束再恢复可用」**。此前 §5.6.1 只管住右栏队列行的
@@ -2566,6 +2888,10 @@ logging_collector = off
 - 数据服务运行态（v2.9.9）：**容器内进程不往宿主 bind 挂载目录写日志文件（pgsql 日志走 stderr 由 Docker 收集）· 旧装机的坏配置在「启用」时就地截断自愈 · 启动等稳定 running，失败带退出码与容器日志尾部（见 §5.18）**
 - 任务抽屉：**日志左默认 70% ／ 队列右默认 30%（中缝可左右拖拽 40–80%、双击复位；头部三区只有左区固定为「服务」二字（状态点保留），中／右区照旧） · 新任务永远在最上面（提交时间倒序） · 每行显式显示态（等待中／执行中／已完成，另留 unknown 兜底位；系派生，后端任务状态仍为 4 个）**
 - 等待期反馈（v2.9.13）：**当前操作的直观名字显示在抽屉左栏日志之上（`.drawer-task-title`，文本只取快照 `TaskBrief.Label`；头部三区不动，无选中任务时不渲染）· 耗时写操作等待期被点的那一颗按钮 `:disabled`，在 `await syncState()` 之后才复能 · 禁用只限那一颗（key=`type:kind:version:domain:file`），其他按钮照常可点、FIFO 排队能力不变（见 §5.6.4）**
+- 同步状态（v2.9.14）：**手动「同步状态」是全量口径——逐个已安装版本核容器／基座镜像／php 扩展固化镜像，缺席项以派生 `Snapshot.Gaps`（三 Reason）逐条点名到服务卡片与抽屉日志；绝不自动改写 `installed`、不自动删建资源，恢复由用户点「启用」幂等重建；轻量档（启动／每任务后／每 24h）只判容器并复用已取到的实际态（见 §5.19）**
+- 文件权限（v2.9.14）：**phpo 自己的产出物目录与文件一律 `0777`，且必须写后显式 `chmod` 归一（`internal/util/fs.go` 一处收口；写进 `MkdirAll`/`WriteFile` 入参会被 umask 削掉）· 旧装机在下次写入时自愈 · `config.yaml` 不豁免，明文密码因此世界可读 · 容器内进程所写文件不在本条范围（见 §5.20）**
+- 卸载无保留门禁（v2.9.14）：**禁止「至少保留一个 PHP 版本」这类门禁（`pkg/errs` 已删该码，28 → 27）· 站点依赖与最后一个版本一律降级为警告并照常卸载（PHP 与 Nginx 同口径，见 §1.11）**
+- 扩展缓存槽位与弹窗（v2.9.14）：**每个 php 版本两份镜像缓存各占槽位（`image.tar` / `image-extensions.tar`，清单 `image` / `extensions_image`）· 提升日志一行 `ok` 点名落点全路径 · 固化镜像缺席由 `LoadExtImage` 零网络 `docker load` 恢复并发 `cache:hit`/`cache:corrupted` · 管理扩展弹窗提交即关闭、默认勾选取权威快照 · nginx 缺席/未运行 `dim` 跳过、重载失败 `err` 后继续，不判死已生效的扩展（见 §5.14.2 / §5.16.2 / §5.16.3）**
 - 等效命令：**全界面不展示 `phpo …` 伪命令行（抽屉头部、三处模态的「将执行」预览、向导与 demo 日志首行；仅保留 `taskStore` 的参数登记，见 §1.4）**
 - 升级：**支持版本检查和自动升级（SHA256 + Ed25519 双校验）**
 - Docker 清洁：**所有操作幂等、原子、隔离、一致、可清理、可恢复**

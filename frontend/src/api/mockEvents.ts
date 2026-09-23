@@ -17,6 +17,8 @@ const MOCK_SNAPSHOT: StateSnapshot = {
   },
   phpExtensions: { '8.5': ['gd', 'redis', 'opcache'], '8.4': ['gd', 'redis', 'pdo_mysql'] },
   dirReady: { PHPO_HOME: true, WWW_ROOT: true },
+  // gaps 是后端全量校准派生的缺失态（§5.19）；mock 载荷给空集，形状与真实快照一致
+  gaps: [],
   tasks: { running: { id: 't-1', label: 'mock · php 8.5 安装', type: 'install', step: 2, total: 6, startedAt: '2026-09-21T10:00:00Z' }, pending: [] },
 }
 
@@ -31,7 +33,7 @@ const MOCK_SAMPLES: Record<string, unknown> = {
   [EVENT.UpdateDone]: { status: 'success', version: '9.9.9' },
   [EVENT.DockerCleanup]: { stage: 'prune', resource: 'phpo-php-8.3', action: 'removed' },
   [EVENT.DockerOrphanFound]: { resources: [{ name: 'phpo-redis-7', kind: 'container' }] },
-  [EVENT.DockerStateDrift]: { expected: { running: ['8.4'] }, actual: { running: [] } },
+  [EVENT.DockerStateDrift]: { expected: { running: ['8.4'] }, actual: { running: [] }, gaps: [{ kind: 'php', version: '8.3', reason: 'container', ref: 'phpo-php-8.3' }] },
   [EVENT.CacheHit]: { kind: 'php', version: '8.4', source: 'offline', size: 450_000_000 },
   [EVENT.CacheMiss]: { kind: 'php', version: '8.5', action: 'pull' },
   [EVENT.CachePromote]: { kind: 'php', version: '8.5', entries: [{ name: 'image.tar', sha256: 'def456' }] },

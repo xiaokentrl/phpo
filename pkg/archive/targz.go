@@ -13,6 +13,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"phpo/internal/util"
 )
 
 // Source 一个待打包条目：ArcPrefix 归档内相对前缀（如 "home"/"www"/"offline"/"db"），HostPath 宿主绝对路径（目录或文件）。
@@ -36,10 +38,10 @@ type Skip struct {
 // data/ 常由容器内 uid 拥有且 0700/0600，冷拷贝本就拿不到，这部分内容由调用方的逻辑导出兜住。
 // 但写入 tar 中途失败必须上抛：header 已声明的 Size 无法回收，硬跳过会产出解包即坏的归档。
 func Create(dst string, sources []Source) ([]string, []Skip, error) {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(dst)); err != nil {
 		return nil, nil, fmt.Errorf("创建归档目录失败: %w", err)
 	}
-	f, err := os.Create(dst)
+	f, err := util.Create(dst)
 	if err != nil {
 		return nil, nil, fmt.Errorf("创建归档文件失败: %w", err)
 	}
@@ -190,11 +192,11 @@ func Extract(src, dstDir string) (int, error) {
 		if err != nil {
 			return count, err
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := util.MkdirAll(filepath.Dir(target)); err != nil {
 			return count, err
 		}
-		mode := os.FileMode(hdr.Mode).Perm()
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+		// 归档内的模式仅作留档；落盘权限一律归一（总纲「文件权限策略」）
+		out, err := util.Create(target)
 		if err != nil {
 			return count, err
 		}

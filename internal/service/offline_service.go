@@ -290,6 +290,7 @@ func (s *OfflineService) buildEntry(e cache.Entry) model.CacheEntry {
 	}
 	if mf, err := s.cache.LoadManifest(e.Kind, e.Version); err == nil && mf != nil {
 		ce.HasImage = mf.Image != nil
+		ce.HasExtImage = mf.ExtImage != nil
 		ce.ApkCount = len(mf.Apk)
 		ce.PeclCount = len(mf.Pecl)
 	}

@@ -53,12 +53,15 @@ func (m *Manager) ListEntries() ([]Entry, error) {
 	return out, nil
 }
 
-// corrupted 判定：镜像/扩展任一存在文件校验失败
+// corrupted 判定：镜像/固化镜像/扩展任一存在文件校验失败
 func (m *Manager) corrupted(kind, version string) bool {
 	if il, _ := m.LookupImage(kind, version); il.Corrupted {
 		return true
 	}
 	if kind == "php" {
+		if el, _ := m.LookupExtImage(version); el.Corrupted {
+			return true
+		}
 		for _, et := range []string{"apk", "pecl"} {
 			for _, name := range listFiles(filepath.Join(m.env.OfflineExtDir(kind, version, et))) {
 				if el, _ := m.LookupExtension(version, et, name); el.Corrupted {
@@ -70,7 +73,7 @@ func (m *Manager) corrupted(kind, version string) bool {
 	return false
 }
 
-// VerifyEntry 逐文件重校验 kind/version 缓存（§5.14.5）：镜像 tar + php 的 apk/pecl 包各按 manifest SHA256 校验。
+// VerifyEntry 逐文件重校验 kind/version 缓存（§5.14.5）：基座与固化镜像 tar + php 的 apk/pecl 包各按 manifest SHA256 校验。
 // 与 corrupted() 的区别在于本方法会把每个损坏项发射 cache:corrupted，并返回失败文件相对名清单（emitCorrupted 由离线视图「校验」触发，需可见告警）。
 func (m *Manager) VerifyEntry(kind, version string) ([]string, error) {
 	var failed []string
@@ -84,6 +87,15 @@ func (m *Manager) VerifyEntry(kind, version string) ([]string, error) {
 		m.emitCorrupted(kind, version, model.ManifestPackage{Name: name})
 	}
 	if kind == "php" {
+		el, err := m.LookupExtImage(version)
+		if err != nil {
+			return nil, err
+		}
+		if el.Corrupted {
+			name := filepath.Base(el.Path)
+			failed = append(failed, name)
+			m.emitCorrupted(kind, version, model.ManifestPackage{Name: name})
+		}
 		for _, et := range []string{"apk", "pecl"} {
 			for _, fn := range listFiles(filepath.Join(m.env.OfflineExtDir(kind, version, et))) {
 				el, err := m.LookupExtension(version, et, fn)
@@ -115,6 +127,11 @@ func (m *Manager) Stats() (model.CacheStats, error) {
 		}
 		if il, _ := m.LookupImage(e.Kind, e.Version); il.Hit || il.Corrupted {
 			st.ImageCount++
+		} else if e.Kind == "php" {
+			// 只有固化镜像的条目（基座缓存被清掉/手工只导入过扩展镜像）同样占一份镜像缓存
+			if el, _ := m.LookupExtImage(e.Version); el.Hit || el.Corrupted {
+				st.ImageCount++
+			}
 		}
 	}
 	st.ExtCount = m.countExtPackages()

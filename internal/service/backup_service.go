@@ -21,6 +21,7 @@ import (
 	"phpo/internal/engine"
 	"phpo/internal/model"
 	"phpo/internal/task"
+	"phpo/internal/util"
 	"phpo/pkg/archive"
 	"phpo/pkg/dockerutil"
 )
@@ -153,7 +154,7 @@ func (s *BackupService) SaveAs(file, dst string) error {
 		return fmt.Errorf("%s 不存在", file)
 	}
 	defer src.Close()
-	out, err := os.Create(dst)
+	out, err := util.Create(dst)
 	if err != nil {
 		return err
 	}
@@ -352,10 +353,10 @@ func (s *BackupService) dumpStep(dumpDir string) *task.FuncStep {
 
 // dumpOne 转储单个服务到 dst；dumpDir 只在真要导出时才建（空目录不会进归档，也就不会凭空多出 dump/ 顶层）
 func (s *BackupService) dumpOne(ctx context.Context, name string, argv []string, dst string, log task.StepLog) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(dst)); err != nil {
 		return err
 	}
-	f, err := os.Create(dst)
+	f, err := util.Create(dst)
 	if err != nil {
 		return err
 	}
@@ -531,10 +532,10 @@ func (s *BackupService) materialize(staging string) error {
 	// 明文 config.yaml 原样落回 XDG 用户配置目录（用户裁决：随包携带、恢复覆盖，§1.5），并热重载内存态供后续重建读取
 	cfgSrc := filepath.Join(staging, "config", "config.yaml")
 	if b, err := os.ReadFile(cfgSrc); err == nil {
-		if err := os.MkdirAll(filepath.Dir(s.cfg.Path()), 0o755); err != nil {
+		if err := util.MkdirAll(filepath.Dir(s.cfg.Path())); err != nil {
 			return err
 		}
-		if err := os.WriteFile(s.cfg.Path(), b, 0o600); err != nil {
+		if err := util.WriteFile(s.cfg.Path(), b); err != nil {
 			return err
 		}
 		if err := s.cfg.Reload(); err != nil {
@@ -626,12 +627,12 @@ func copyTree(dstRoot, srcRoot string) error {
 		}
 		target := filepath.Join(dstRoot, rel)
 		if info.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return util.MkdirAll(target)
 		}
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := util.MkdirAll(filepath.Dir(target)); err != nil {
 			return err
 		}
 		in, err := os.Open(p)
@@ -639,7 +640,7 @@ func copyTree(dstRoot, srcRoot string) error {
 			return err
 		}
 		defer in.Close()
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+		out, err := util.Create(target)
 		if err != nil {
 			return err
 		}

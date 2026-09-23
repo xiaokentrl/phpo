@@ -56,6 +56,12 @@ function fmt(ts: string): string {
             <CacheHitBadge :kind="kind" :version="version" />
           </dd>
         </div>
+        <div v-if="kind === 'php'" class="cd-row">
+          <dt>{{ t('offline.detail.extImage') }}</dt>
+          <dd>
+            <span :class="entry.hasExtImage ? 'pill-ok' : 'pill-off'">{{ entry.hasExtImage ? t('offline.detail.hasImage') : t('offline.detail.noImage') }}</span>
+          </dd>
+        </div>
         <div class="cd-row"><dt>{{ t('offline.detail.apk') }}</dt><dd>{{ entry.apkCount }}</dd></div>
         <div class="cd-row"><dt>{{ t('offline.detail.pecl') }}</dt><dd>{{ entry.peclCount }}</dd></div>
         <div class="cd-row">

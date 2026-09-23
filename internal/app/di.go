@@ -189,6 +189,8 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	tm.SetRecorder(st)
 	lc := service.NewLifecycle(cli, st, c.Emitter, env, cfg)
 	cacheMgr := steps.NewCacheManager(env, c.Emitter, cli)
+	// php 建/重建容器时固化镜像不在本机 → 从缓存 image-extensions.tar 零网络载入（§5.14.3）
+	lc.SetExtImageLoader(cacheMgr)
 	c.AppService = service.NewAppService(lc, tm, cacheMgr, cli, env)
 	c.EnvService = service.NewEnvService(cfg, st, c.Emitter)
 	c.ConfigService = service.NewConfigService(env, tm)
@@ -285,9 +287,11 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	}
 
 	// §5.13.9 启动时校准：仅在工作目录已落地后执行（校准会读写运行态存储并访问容器；首启未配置则零落盘、零拨号）。
-	// Docker 缺席/未运行时容忍失败，不阻断 GUI 启动
+	// Docker 缺席/未运行时容忍失败，不阻断 GUI 启动。
+	// 首帧走全量口径（SyncAll）：用户用第三方工具停掉/删掉容器或镜像后，打开应用就该看见缺失态，
+	// 不必等他先点一次「同步状态」（§5.19）。每任务后的校准仍是轻量的 SetDoneWatcher 那条。
 	if calibrate && cfg.RootsPersisted() {
-		if _, cerr := lc.Calibrate(ctx); cerr != nil {
+		if _, cerr := lc.SyncAll(ctx); cerr != nil {
 			c.Emitter.Emit(EventDockerStateDrift, map[string]any{"error": cerr.Error()})
 		}
 	}

@@ -56,3 +56,11 @@ export const DEFAULT_FILE_COUNT: Record<ServiceKind, number> = {
 }
 
 export const SVC_ICON: Record<string, string> = { php: '🐘', mysql: '🐬', pgsql: '🐘', redis: '⚡', nginx: '🌐' }
+
+// GAP_REASON_KEYS：快照 gaps 的缺失原因（model.ServiceGap.Reason）→ 人话文案键（§5.19）。
+// 未知取值由调用方原样透出——后端将来多一种原因，界面最坏显示英文枚举名而不是消失。
+export const GAP_REASON_KEYS: Record<string, string> = {
+  container: 'svc.gap.container',
+  image: 'svc.gap.image',
+  extensions_image: 'svc.gap.extensions_image',
+}

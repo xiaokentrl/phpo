@@ -9,6 +9,7 @@ import (
 
 	"phpo/internal/config"
 	"phpo/internal/task"
+	"phpo/internal/util"
 	"phpo/internal/vhost"
 	"phpo/internal/vhost/hosts"
 )
@@ -49,7 +50,7 @@ func (s *PrepareSiteDir) Execute(_ context.Context, log task.StepLog) error {
 		log.Log("dim", "站点目录已存在，跳过创建: "+abs)
 		return nil
 	}
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	if err := util.MkdirAll(abs); err != nil {
 		return fmt.Errorf("创建站点目录失败 %s: %w", abs, err)
 	}
 	s.made = abs

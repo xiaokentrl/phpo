@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+
+	"phpo/internal/util"
 )
 
 // envVer 键规则：version 去点（8.4 → 84），与端口/密码 env 键命名一致（沿用原型）
@@ -47,7 +49,7 @@ type FileConfig struct {
 	Services    map[string]map[string]SvcSetting `yaml:"services,omitempty"` // kind -> version -> 设置
 }
 
-// ConfigStore 配置唯一读写门面：内存缓存 FileConfig + 原子落盘（0600）；写操作在任务串行下调用，加锁仅作兜底。
+// ConfigStore 配置唯一读写门面：内存缓存 FileConfig + 原子落盘（0777，phpo 产出物统一权限）；写操作在任务串行下调用，加锁仅作兜底。
 type ConfigStore struct {
 	mu   sync.Mutex
 	path string
@@ -326,17 +328,17 @@ func (c *ConfigStore) FlatEnv() map[string]string {
 	return out
 }
 
-// save 原子写盘（0600 明文密码，Windows 由 NTFS ACL 保证，§8）；调用方须已持锁。
+// save 原子写盘（明文密码，权限归一到 util.FilePerm，见总纲「文件权限策略」；Windows 由 NTFS ACL 决定）；调用方须已持锁。
 func (c *ConfigStore) save() error {
 	b, err := yaml.Marshal(&c.fc)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(c.path)); err != nil {
 		return err
 	}
 	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := util.WriteFile(tmp, b); err != nil {
 		return err
 	}
 	return os.Rename(tmp, c.path)

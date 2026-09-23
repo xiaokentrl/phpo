@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"phpo/internal/model"
+	"phpo/internal/util"
 )
 
 const SchemaVersion = 1
@@ -32,7 +33,7 @@ func (m *Manager) LoadManifest(kind, version string) (*model.CacheManifest, erro
 // SaveManifest 原子写清单到 {kind}/{version}/manifest.json
 func (m *Manager) SaveManifest(mf *model.CacheManifest) error {
 	path := m.env.OfflineManifestFile(mf.Kind, mf.Version)
-	if err := os.MkdirAll(dirOf(path), 0o755); err != nil {
+	if err := util.MkdirAll(dirOf(path)); err != nil {
 		return err
 	}
 	mf.UpdatedAt = time.Now().UTC()
@@ -41,7 +42,7 @@ func (m *Manager) SaveManifest(mf *model.CacheManifest) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := util.WriteFile(tmp, b); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

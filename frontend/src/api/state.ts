@@ -13,6 +13,16 @@ export async function getState(): Promise<StateSnapshot | null> {
   return (s ?? null) as unknown as StateSnapshot | null
 }
 
+// syncAll 让后端跑一次**全量**校准（§5.19）：容器 + 基座镜像 + PHP 扩展固化镜像三类缺失一次核清，
+// 结果经 docker:state-drift（逐条点名）+ state:changed（快照带 gaps）回流界面。
+// 门面方法名仍是生成的 Calibrate——bindings 已按该名生成，语义为「手动同步 = 全量口径」。
+// 无宿主（demo）返回 false，调用方只拉本地占位快照。
+export async function syncAll(): Promise<boolean> {
+  if (!hasBackend()) return false
+  await app.Calibrate()
+  return true
+}
+
 // setTrayPrefs 把两项托盘偏好交给原生外壳（撤下/挂上托盘图标 + 关闭按钮驻留或退出）。
 // 不做反向读取：偏好以 localStorage 为准；无宿主时直接跳过，demo 下仅驱动窗口内 AppTrayMenu.vue。
 export async function setTrayPrefs(showTray: boolean, minimizeOnClose: boolean): Promise<void> {

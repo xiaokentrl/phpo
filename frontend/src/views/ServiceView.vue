@@ -13,7 +13,7 @@ import { hasBackend } from '@/api/site'
 import { Dialogs } from '@wailsio/runtime'
 import { dataDirOf, defaultDataDir, envKeyPort, setPort, setServiceDataDir } from '@/api/env'
 import PasswordField from '@/components/common/PasswordField.vue'
-import { DIR_ROWS, DEFAULT_FILE_COUNT, SVC_META } from '@/constants/service'
+import { DIR_ROWS, DEFAULT_FILE_COUNT, GAP_REASON_KEYS, SVC_META } from '@/constants/service'
 import type { ServiceKind, TaskBrief } from '@/types'
 import { needsPort, needsPassword } from '@/utils/format'
 import { verRoot } from '@/utils/path'
@@ -58,6 +58,23 @@ function busyPill(version: string): string | null {
   }
   if ((tasks.pendingBriefs || []).some(targets)) return t('task.queued')
   return null
+}
+
+// gapReason 该版本缺失项的人话名词（§5.19）。未知取值原样透出——后端将来多一种原因，
+// 界面最坏显示枚举名而不是留空白或误报成别的。
+function gapReason(version: string): string {
+  const g = state.gapOf(props.kind, version)
+  if (!g) return ''
+  const key = GAP_REASON_KEYS[g.reason]
+  return key ? t(key) : g.reason
+}
+
+// gapTip 悬浮说明「哪一样不在了 + 怎么回来」。库内 installed 不因外部删除而自动改（硬红线 4），
+// 缺失态是派生态；要恢复由用户自己点「启用」（Start 走幂等重建，§5.13.4）。
+function gapTip(version: string): string {
+  const g = state.gapOf(props.kind, version)
+  if (!g) return ''
+  return t('svc.gapTip', { reason: gapReason(version), ref: g.ref, start: t('svc.start') })
 }
 
 // 端口行内编辑：needsPort 的服务端口都会进容器 spec（nginx 是基准端口，与站点端口并集一起发布）
@@ -195,6 +212,10 @@ async function browseDir(version: string): Promise<void> {
           <span v-if="state.isServiceRunning(kind, version)" class="status-pill pill-ok"><span class="pill-dot"></span>{{ t('svc.running') }}</span>
           <span v-else class="status-pill pill-off"><span class="pill-dot"></span>{{ t('svc.stopped') }}</span>
           <span v-if="busyPill(version)" class="status-pill pill-warn" data-task-busy>{{ busyPill(version) }}</span>
+          <!-- 缺失态（§5.19）：Docker 侧已被外部停/删，但库里仍记已安装——卡片点名缺的是哪一样，不自动改权威态 -->
+          <span v-if="state.gapOf(kind, version)" class="status-pill pill-warn" data-gap :title="gapTip(version)">
+            <span class="pill-dot"></span>{{ t('svc.gapMissing', { reason: gapReason(version) }) }}
+          </span>
         </div>
 
         <div>

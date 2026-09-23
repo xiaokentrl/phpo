@@ -7,6 +7,7 @@ func TestOfflinePaths(t *testing.T) {
 	e := DerivePaths("", "")
 	cases := []struct{ got, want string }{
 		{e.OfflineImageTar("php", "8.4"), "~/phpo/offline/php/8.4/image.tar"},
+		{e.OfflineExtImageTar("php", "8.4"), "~/phpo/offline/php/8.4/image-extensions.tar"},
 		{e.OfflineManifestFile("mysql", "8.4"), "~/phpo/offline/mysql/8.4/manifest.json"},
 		{e.OfflineExtDir("php", "8.4", ExtTypePECL), "~/phpo/offline/php/8.4/pecl"},
 		{e.TempExtDir("php", "8.4"), "~/phpo/php/8.4/ext"},

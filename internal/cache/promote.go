@@ -9,24 +9,40 @@ import (
 	"time"
 
 	"phpo/internal/model"
+	"phpo/internal/util"
 )
 
 // PromoteImage 把临时镜像 tar 提升到离线缓存并登记 manifest.image（源即临时目录，提升后搬走）
 func (m *Manager) PromoteImage(kind, version, ref, tmpTar string) error {
-	return m.commitImage(kind, version, ref, tmpTar, false)
+	return m.commitImage(kind, version, ref, tmpTar, false,
+		m.env.OfflineImageTar(kind, version),
+		func(mf *model.CacheManifest, img *model.ManifestImage) { mf.Image = img })
+}
+
+// PromoteExtImage 把扩展固化镜像（phpo/php:{version}）提升到它自己的缓存槽位并登记 manifest.extensions_image。
+// 基座的 image.tar / manifest.image 一字不动——共用槽位等于每次应用扩展都把基座缓存覆盖掉（§5.14.2 两槽位）。
+func (m *Manager) PromoteExtImage(version, ref, tmpTar string) error {
+	if err := m.commitImage("php", version, ref, tmpTar, false,
+		m.env.OfflineExtImageTar("php", version),
+		func(mf *model.CacheManifest, img *model.ManifestImage) { mf.ExtImage = img }); err != nil {
+		return err
+	}
+	m.emitPromote("php", version, nil)
+	return nil
 }
 
 // ImportImage 把手工选定的镜像 tar 登记进离线缓存；源文件是用户资产，只复制不搬走
 func (m *Manager) ImportImage(kind, version, ref, srcTar string) error {
-	if err := m.commitImage(kind, version, ref, srcTar, true); err != nil {
+	if err := m.commitImage(kind, version, ref, srcTar, true,
+		m.env.OfflineImageTar(kind, version),
+		func(mf *model.CacheManifest, img *model.ManifestImage) { mf.Image = img }); err != nil {
 		return err
 	}
 	m.emitPromote(kind, version, nil)
 	return nil
 }
 
-func (m *Manager) commitImage(kind, version, ref, src string, keepSrc bool) error {
-	dst := m.env.OfflineImageTar(kind, version)
+func (m *Manager) commitImage(kind, version, ref, src string, keepSrc bool, dst string, set func(*model.CacheManifest, *model.ManifestImage)) error {
 	sha, err := FileSHA256(src)
 	if err != nil {
 		return err
@@ -38,12 +54,12 @@ func (m *Manager) commitImage(kind, version, ref, src string, keepSrc bool) erro
 	if err != nil {
 		return err
 	}
-	mf.Image = &model.ManifestImage{
+	set(mf, &model.ManifestImage{
 		Name:     ref,
 		Size:     fileSize(dst),
 		Sha256:   sha,
 		CachedAt: time.Now().UTC(),
-	}
+	})
 	return m.SaveManifest(mf)
 }
 
@@ -69,7 +85,7 @@ func (m *Manager) commitExtension(phpVersion, extType, src string, keepSrc bool)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+	if err := util.MkdirAll(dstDir); err != nil {
 		return err
 	}
 	if err := placeFile(src, dst, keepSrc); err != nil {
@@ -100,7 +116,7 @@ func upsertPackage(apk, pecl *[]model.ManifestPackage, extType string, e model.M
 
 // placeFile 把源文件落到缓存目标位：keepSrc=true 时只复制（手工导入保留用户原件），否则提升到搬走（临时目录必清）
 func placeFile(src, dst string, keepSrc bool) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := util.MkdirAll(filepath.Dir(dst)); err != nil {
 		return err
 	}
 	if keepSrc {
@@ -121,7 +137,7 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	out, err := util.Create(dst)
 	if err != nil {
 		return err
 	}

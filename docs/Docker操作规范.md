@@ -1,6 +1,6 @@
 # Docker 操作规范
 
-> 对应 AGENTS.md §1.12 / §3.3 硬红线 7/8 / §5.13 / 工单 T704。核心原则：phpo 对 Docker 的任何操作都必须干净、不影响后续操作。冲突以 AGENTS.md 为准。
+> 对应 AGENTS.md §1.12 / §3.3 硬红线 7/8 / §5.13 / §5.19 / 工单 T704。核心原则：phpo 对 Docker 的任何操作都必须干净、不影响后续操作。冲突以 AGENTS.md 为准。
 
 ## 1. 六项保证（§5.13.1）
 
@@ -53,7 +53,7 @@ Step 五接口：`Name / Execute / Rollback / Cleanup / Cancelable`（[任务取
 
 ## 6. 状态一致与校准（§5.13.9）
 
-- `engine/calibrate.go`：启动 + 每次任务后 + 手动，Docker ≡ SQLite；漂移发 `docker:state-drift`。
+- `engine/calibrate.go`：启动 + 每次任务后 + 手动，Docker ≡ SQLite；漂移发 `docker:state-drift`。它只做**纯比对**（期望运行态 ≢ 实际运行态即出修正项）；核查范围分**两档**，见 §6.3。
 - `engine/verify.go` + `engine/inspect.go`：操作后自检（§5.13.8，支持 CI 无人值守）。
 - `engine/health.go`：就绪门控不只看容器 `State.Running`（entrypoint 前置脚本，见 project 记忆「container readiness race」）。
 
@@ -68,13 +68,37 @@ Step 五接口：`Name / Execute / Rollback / Cleanup / Cancelable`（[任务取
 
 **容器内进程不得往宿主 bind 目录写日志文件**（§5.18.4）：那些文件由容器内 uid 创建、权限常为 `0700`/`0600`，宿主侧既读不动、也会在写不下时把服务打进 FATAL 崩溃循环。所有服务模板的日志一律走标准输出/标准错误，由 Docker 收集。
 
+> 权限口径的分界（§5.20 / 总纲 v2.9.14 需求 ②）：**phpo 自己创建的**目录与文件一律 `0777`（经 `internal/util/fs.go` 的四个助手，`umask` 不得削位）；**容器内进程写出来的**文件不在本策略范围内——那是镜像内 uid 的 umask 决定的，phpo 不做 chown/chmod 事后修正（§5.20.2）。因此备份归档仍会遇到读不动的条目，处置口径不变：跳过 + 按目录聚合告警（§5.17.1）。
+
 ### 6.2 容器内命令输出口径（§5.16.3）
 
 Docker exec attach 流每帧带 **8 字节二进制帧头**，直读原始流即把垃圾打进日志。唯一出口是 `engine.ExecStream(ctx, name, argv, stdout, stderr io.Writer)`（内部 `stdcopy.StdCopy` 去帧并分流）；扩展编译与备份逻辑导出共用它。无换行的超长进度条按 **4 KiB** 强制断行——攒成整串等于让用户盯着一段时长未知的「执行中」。
 
+### 6.3 全量同步与缺失态（§5.19，总纲 v2.9.14 需求 ①/④）
+
+用户用 Docker Desktop / `docker rm` / `docker rmi` 把容器和镜像清掉后，phpo 的服务列表不能照旧只说「已安装」。现按两档核查：
+
+| 档位 | 入口 | 核查范围 |
+|------|------|---------|
+| **轻量** | `LifecycleService.Calibrate` → `calibrate(ctx, false)`（每任务后 / 启动 / 每 24h） | **只判容器存在性**，复用本次已取到的 `ManagedContainers` 实际态——零额外 Docker 调用 |
+| **全量** | `App.Calibrate` → `AppService.Calibrate` → `LifecycleService.SyncAll` → `calibrate(ctx, true)`（手动点「同步状态」） | 容器 + **该版本应运行的镜像** + php 的扩展固化镜像 `phpo/php:{ver}` |
+
+**镜像判定用「该版本实际会跑的那一份」**：php 有固化镜像即以 `phpo/php:{ver}` 为准，没有才回官方基座 `php:{ver}-fpm`——否则会把「装了扩展的版本」说成基座镜像缺失。
+
+缺失以 `model.ServiceGap{Kind, Version, Reason, Ref}` 表达，`Reason` 冻结为 **3** 种：`container` / `image` / `extensions_image`。四条硬口径：
+
+1. **派生态、不落库**：`store.SetGaps` 挂到 `Snapshot.Gaps`；落库即伪造第二份权威。零缺失序列化为 `[]`（§5.6.3）。
+2. **绝不自动改 `installed`**：第三方工具删掉容器不等于「卸载了这个版本」——配置、卷、缓存都在，点「启用」即按当前配置幂等重建（§5.13.4）。只标记、只点名，恢复由用户决定。
+3. **探针报错一律上抛**：`ImageExists` 失败不能静默当作「本机没有」——把一次正常在机的镜像说成缺失，比不报更糟。
+4. **幂等静默**：发不发只看本次比上次多说了什么——`if len(res.Corrections) == 0 && sameGaps(snap.Gaps, gaps) { return &res, nil }`。**不得**用 `res.Changed()` 作闸门：它把「存在性漂移」也算进变更，而容器缺席是常态化的（停了就是缺席），于是每次校准都重发同样的 drift + 快照，抽屉被同一行刷屏。
+
+发事件时两条一起走：`docker:state-drift`（载荷 `model.StateDrift{Expected, Actual, Gaps}`，**不新增事件名**）+ `state:changed`（新快照带 `gaps`）。前端唯一入口是 `useStateSync.runSync()`（侧栏按钮与命令面板 ⌘R 共用），缺口见 [状态同步](./状态同步.md)。
+
 ## 7. 明确禁止（§5.13.13）
 
 不检查冲突 / 不回滚 / 留无名资源 / 删用户数据 / 重装清数据 / 导入不清空 / 状态不一致 / 静默失败 / 非幂等 / 无审计。
+
+另加 §5.19 三条：缺席只标不改库（不得自动降级 `installed`、自动删记录、自动重建容器来「修好」缺失态）；探针失败不得静默当作「本机没有」；发事件闸门不得用 `res.Changed()`。
 
 审计见 `docs/资源清洁机制.md`（孤儿/清理/回收站）与 `<用户数据目录>/logs/operations.log`（JSON Lines，§5.13.10）。
 

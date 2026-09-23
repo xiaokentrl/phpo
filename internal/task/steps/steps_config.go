@@ -11,6 +11,7 @@ import (
 
 	"phpo/internal/model"
 	"phpo/internal/task"
+	"phpo/internal/util"
 )
 
 // ConfigFile 一个待写入配置：Host 为宿主绝对路径，Content 为新内容
@@ -58,11 +59,11 @@ func (s *SaveConfigStep) Execute(ctx context.Context, log task.StepLog) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Dir(f.Host), 0o755); err != nil {
+		if err := util.MkdirAll(filepath.Dir(f.Host)); err != nil {
 			return fmt.Errorf("创建配置目录失败 %s: %w", filepath.Dir(f.Host), err)
 		}
 		s.wrote = append(s.wrote, f.Host)
-		if err := os.WriteFile(f.Host, []byte(f.Content), 0o644); err != nil {
+		if err := util.WriteFile(f.Host, []byte(f.Content)); err != nil {
 			return fmt.Errorf("写入配置失败 %s: %w", f.Host, err)
 		}
 		log.Log(string(model.LogOk), "已写入 "+f.Host)
@@ -82,7 +83,7 @@ func (s *SaveConfigStep) Rollback(context.Context) error {
 			}
 			continue
 		}
-		if err := os.WriteFile(host, []byte(*orig), 0o644); err != nil {
+		if err := util.WriteFile(host, []byte(*orig)); err != nil {
 			errs = append(errs, err)
 		}
 	}

@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"phpo/internal/config"
@@ -35,6 +36,7 @@ type StateStore interface {
 	BuildSnapshot() (*model.Snapshot, error)
 	SetInstalled(kind, version string, installed bool) error
 	SetRunning(kind, version string, running bool) error
+	SetGaps(gaps []model.ServiceGap) // 缺失态是派生态：随快照广播，不落库（§5.19）
 }
 
 // Emitter §5.6 事件发射最小抽象（app.Emitter 满足）
@@ -48,14 +50,20 @@ type Service interface {
 	ContainerSpec(version string, env config.Env) (engine.ContainerSpec, error)
 }
 
+// ExtImageLoader 从离线缓存零网络载入扩展固化镜像（*cache.Manager 满足）
+type ExtImageLoader interface {
+	LoadExtImage(ctx context.Context, version string) (ref string, ok bool, err error)
+}
+
 // LifecycleService 组合注入依赖；env 为当前派生路径
 type LifecycleService struct {
-	docker   DockerOps
-	store    StateStore
-	emitter  Emitter
-	env      config.Env
-	services map[model.ServiceKind]Service
-	nginx    *NginxService
+	docker    DockerOps
+	store     StateStore
+	emitter   Emitter
+	env       config.Env
+	services  map[model.ServiceKind]Service
+	nginx     *NginxService
+	extImages ExtImageLoader
 }
 
 func NewLifecycle(docker DockerOps, store StateStore, emitter Emitter, env config.Env, reader EnvReader) *LifecycleService {
@@ -78,6 +86,9 @@ func NewLifecycle(docker DockerOps, store StateStore, emitter Emitter, env confi
 // 让装/重建 nginx 与站点写链路发布同一份端口并集，不出现「nginx 起来了、站点端口没绑」的空档。
 func (l *LifecycleService) SetNginxPortSource(src NginxPortSource) { l.nginx.SetPortSource(src) }
 
+// SetExtImageLoader 注入离线缓存的固化镜像载入器（di 装配期，cache.Manager 就绪后调用）
+func (l *LifecycleService) SetExtImageLoader(ld ExtImageLoader) { l.extImages = ld }
+
 // ---- 校准 ----
 
 // Snapshot 读当前权威视图（后端唯一权威，前端经 state:changed 或直接拉取）
@@ -90,7 +101,21 @@ func (l *LifecycleService) Snapshot() (*model.Snapshot, error) {
 //   - 无变化则静默返回。
 //
 // 存在性漂移（缺失/孤儿）仅随事件上报，不自动删建，避免误删用户数据（§5.13.13）。
+//
+// 本口径是「每任务后 / 启动」的轻量校准：容器存在性用已经取到的实际态判，不额外拨 Docker。
+// 镜像层面的存在性核查（基座镜像、php 扩展固化镜像）只在手动「同步状态」这条全量口径里做，见 SyncAll。
 func (l *LifecycleService) Calibrate(ctx context.Context) (*engine.CalibrateResult, error) {
+	return l.calibrate(ctx, false)
+}
+
+// SyncAll 手动「同步状态」的全量口径（§5.19）：在轻量校准之上，逐个已安装版本再核一遍
+// 基座镜像与 php 扩展固化镜像是否还在本机——用户用第三方工具把镜像也删了，界面必须说出来。
+// 三项都只上报缺失态（进快照 Gaps）+ 逐行点名，不自动改 installed、不自动删任何东西。
+func (l *LifecycleService) SyncAll(ctx context.Context) (*engine.CalibrateResult, error) {
+	return l.calibrate(ctx, true)
+}
+
+func (l *LifecycleService) calibrate(ctx context.Context, auditImages bool) (*engine.CalibrateResult, error) {
 	snap, err := l.store.BuildSnapshot()
 	if err != nil {
 		return nil, err
@@ -100,7 +125,14 @@ func (l *LifecycleService) Calibrate(ctx context.Context) (*engine.CalibrateResu
 		return nil, err
 	}
 	res := engine.Calibrate(refsOf(snap.Installed), refsOf(snap.Running), actual)
-	if !res.Changed() {
+	gaps, err := l.detectGaps(ctx, snap, actual, auditImages)
+	if err != nil {
+		return nil, err
+	}
+	// 发不发事件只看「本次比上次多说了什么」：运行态修正在跑，或缺失项集合变了。
+	// 不用 res.Changed()——它把「存在性漂移」也算进去，而容器缺席是常态化的（停了就是缺席），
+	// 于是每次校准/每次点同步都会重发同样的 drift + 快照，抽屉被同一行刷屏。
+	if len(res.Corrections) == 0 && sameGaps(snap.Gaps, gaps) {
 		return &res, nil
 	}
 
@@ -109,9 +141,11 @@ func (l *LifecycleService) Calibrate(ctx context.Context) (*engine.CalibrateResu
 			return nil, fmt.Errorf("校准回写运行态失败 %s/%s: %w", c.Ref.Kind, c.Ref.Version, err)
 		}
 	}
+	l.store.SetGaps(gaps)
 	l.emitter.Emit("docker:state-drift", model.StateDrift{
 		Expected: driftView(snap.Installed, snap.Running),
 		Actual:   actualView(actual),
+		Gaps:     gaps,
 	})
 	fresh, err := l.store.BuildSnapshot()
 	if err != nil {
@@ -119,6 +153,82 @@ func (l *LifecycleService) Calibrate(ctx context.Context) (*engine.CalibrateResu
 	}
 	l.emitter.Emit("state:changed", map[string]any{"snapshot": fresh})
 	return &res, nil
+}
+
+// detectGaps 逐个已安装版本核「库里说装过、宿主上却不在了」的东西。
+// 容器存在性复用调用方已取到的实际态（零额外 IO）；镜像存在性按 auditImages 分档：
+//   - false（每任务后 / 启动校准）只判容器；
+//   - true（手动同步状态）再判该版本应运行的镜像，以及 php 的扩展固化镜像。
+//
+// 探针报错一律上抛：静默当作「不在本机」等于把一次正常的镜像说成缺失，比不报更糟（§5.14.12）。
+func (l *LifecycleService) detectGaps(ctx context.Context, snap *model.Snapshot, actual []engine.ActualState, auditImages bool) ([]model.ServiceGap, error) {
+	present := make(map[string]bool, len(actual))
+	for _, a := range actual {
+		present[a.Ref.Name()] = true
+	}
+	var gaps []model.ServiceGap
+	for _, kind := range sortedKinds(snap.Installed) {
+		for _, version := range uniqueSorted(snap.Installed[kind]) {
+			name := dockerutil.ContainerName(kind, version)
+			if !present[name] {
+				gaps = append(gaps, model.ServiceGap{Kind: kind, Version: version, Reason: model.GapContainer, Ref: name})
+			}
+			if !auditImages {
+				continue
+			}
+			extRef := engine.CommittedPHPRef(version)
+			hasExt := false
+			if kind == string(model.KindPHP) {
+				has, err := l.docker.ImageExists(ctx, extRef)
+				if err != nil {
+					return nil, err
+				}
+				hasExt = has
+				// 库里记着启用过扩展、固化镜像却不在本机：容器只能退回基座，那几项其实没在跑（§5.16.2）
+				if !has && len(snap.PHPExtensions[version]) > 0 {
+					gaps = append(gaps, model.ServiceGap{Kind: kind, Version: version, Reason: model.GapExtImage, Ref: extRef})
+				}
+			}
+			// 该版本实际应运行的镜像：php 有固化镜像即以它为准，否则是官方基座
+			want := extRef
+			if !hasExt {
+				ref, err := engine.ImageRefFor(kind, version)
+				if err != nil {
+					return nil, err
+				}
+				want = ref
+			}
+			if has, err := l.docker.ImageExists(ctx, want); err != nil {
+				return nil, err
+			} else if !has {
+				gaps = append(gaps, model.ServiceGap{Kind: kind, Version: version, Reason: model.GapImage, Ref: want})
+			}
+		}
+	}
+	return gaps, nil
+}
+
+// sortedKinds 给出稳定的 kind 顺序：sameGaps 按内容+顺序比对，无序即每次同步都刷一遍日志
+func sortedKinds(installed map[string][]string) []string {
+	out := make([]string, 0, len(installed))
+	for kind := range installed {
+		out = append(out, kind)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sameGaps 两组缺失项是否等价（内容与顺序一致即等价；detectGaps 按 kind/version 排序产出，故顺序稳定）
+func sameGaps(a, b []model.ServiceGap) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- 生命周期操作（三阶段 Op 包装） ----
@@ -156,9 +266,10 @@ func (l *LifecycleService) Reinstall(ctx context.Context, kind model.ServiceKind
 }
 
 // specFor 取该种类的装配策略并产出容器 spec。
-// php 额外一步：本机若已有扩展链路 commit 出的 phpo/php:{version}，就以它为准——
+// php 额外一步：以扩展链路 commit 出的 phpo/php:{version} 为准——先探本机镜像库，
+// 本机没有（docker rmi / 换机）再查离线缓存的 image-extensions.tar 零网络载入回来。
 // 从基座 php:{version}-fpm 建容器会抹掉用户已启用的扩展，而 php_extensions 表还记着它们（§5.13.1 一致性）。
-// 探针报错必须上抛：静默当作「本机没有」等于把上述抹除过程伪装成一次正常重建（§5.14.12）。
+// 两处探针报错都必须上抛：静默当作「本机没有」等于把上述抹除过程伪装成一次正常重建（§5.14.12）。
 func (l *LifecycleService) specFor(ctx context.Context, kind model.ServiceKind, version string) (engine.ContainerSpec, error) {
 	svc, ok := l.services[kind]
 	if !ok {
@@ -173,6 +284,13 @@ func (l *LifecycleService) specFor(ctx context.Context, kind model.ServiceKind, 
 		has, err := l.docker.ImageExists(ctx, ref)
 		if err != nil {
 			return spec, err
+		}
+		if !has && l.extImages != nil {
+			loaded, ok, err := l.extImages.LoadExtImage(ctx, version)
+			if err != nil {
+				return spec, err
+			}
+			has, ref = ok, loaded
 		}
 		if has {
 			spec.Image = ref

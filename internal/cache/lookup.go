@@ -17,7 +17,20 @@ type ImageLookup struct {
 
 // LookupImage 检查离线镜像缓存；命中前必须校验 SHA256（硬约束）
 func (m *Manager) LookupImage(kind, version string) (ImageLookup, error) {
-	tar := m.env.OfflineImageTar(kind, version)
+	return m.lookupTar(kind, version, m.env.OfflineImageTar(kind, version), func(mf *model.CacheManifest) *model.ManifestImage {
+		return mf.Image
+	})
+}
+
+// LookupExtImage 检查扩展固化镜像（phpo/php:{version}）的缓存槽位；与基座镜像分文件、分记录
+func (m *Manager) LookupExtImage(version string) (ImageLookup, error) {
+	return m.lookupTar("php", version, m.env.OfflineExtImageTar("php", version), func(mf *model.CacheManifest) *model.ManifestImage {
+		return mf.ExtImage
+	})
+}
+
+// lookupTar 校验一份镜像 tar 与其清单记录的 SHA256：无记录即不匹配（防误命中零网络 load 到错镜像）
+func (m *Manager) lookupTar(kind, version, tar string, rec func(*model.CacheManifest) *model.ManifestImage) (ImageLookup, error) {
 	if _, err := os.Stat(tar); err != nil {
 		if os.IsNotExist(err) {
 			return ImageLookup{}, nil
@@ -25,8 +38,10 @@ func (m *Manager) LookupImage(kind, version string) (ImageLookup, error) {
 		return ImageLookup{}, err
 	}
 	want := ""
-	if mf, err := m.LoadManifest(kind, version); err == nil && mf.Image != nil {
-		want = mf.Image.Sha256
+	if mf, err := m.LoadManifest(kind, version); err == nil {
+		if r := rec(mf); r != nil {
+			want = r.Sha256
+		}
 	}
 	got, err := FileSHA256(tar)
 	if err != nil {
@@ -84,8 +99,8 @@ func manifestExtSha(mf *model.CacheManifest, extType, name string) string {
 	return ""
 }
 
-// CachedImageRef 返回离线缓存 tar 所对应的镜像引用（manifest.image.name）；未命中或无记录返回 ("", false)。
-// 供上层区分「基座镜像缓存」与「已固化扩展镜像缓存」（T601 重装同配置零网络判定）。
+// CachedImageRef 返回基座镜像缓存 tar 所对应的镜像引用（manifest.image.name）；未命中或无记录返回 ("", false)。
+// 固化镜像不在此列——它有独立槽位，读 manifest.extensions_image（见 LookupExtImage）。
 func (m *Manager) CachedImageRef(kind, version string) (string, bool) {
 	lk, err := m.LookupImage(kind, version)
 	if err != nil || !lk.Hit {

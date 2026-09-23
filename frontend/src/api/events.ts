@@ -1,6 +1,6 @@
 // 事件总线前端侧：§5.6 事件协议全量 17 个事件名 + 载荷类型 + 订阅通道（唯一真实来源）
 // 硬红线 4：前端只订阅后端事件，从不本地乐观更新；发射由后端（Wails Event）或 M1 mock 定时器负责。
-import type { StateSnapshot } from '@/types'
+import type { ServiceGap, StateSnapshot } from '@/types'
 
 // 与 internal/app/emitter.go 常量一一对应，禁止漂移（§5.6 顺序按类别）
 export const EVENT = {
@@ -57,7 +57,7 @@ export interface DockerCleanupPayload { stage: string; resource: string; action:
 export interface DockerOrphanFoundPayload { resources: unknown[] }
 // error 是启动校准失败这一路的实际载荷（internal/app/di.go）：拿不到比对值只有一个 error 字符串，
 // 协议表里的 expected / actual 此时缺席，故两者皆为可选。
-export interface DockerStateDriftPayload { expected?: unknown; actual?: unknown; error?: string }
+export interface DockerStateDriftPayload { expected?: unknown; actual?: unknown; error?: string; gaps?: ServiceGap[] }
 export interface CacheHitPayload { kind: string; version: string; source: string; size: number }
 export interface CacheMissPayload { kind: string; version: string; action: string }
 export interface CachePromotePayload { kind: string; version: string; entries: unknown[] }

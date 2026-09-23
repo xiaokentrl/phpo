@@ -156,20 +156,39 @@ func TestInstallPortConflictBlocks(t *testing.T) {
 
 // —— uninstall ——
 
-func TestUninstallHasDependents(t *testing.T) {
+// TestUninstallDependentSitesWarnNotBlocks 站点仍引用该 PHP 时不再阻止卸载（§0.2 规则 16）：
+// 与 service-stop 同口径——说清后果，但放行。卸载后这些站点的 vhost 上游即失效，属用户可自修的结果。
+func TestUninstallDependentSitesWarnNotBlocks(t *testing.T) {
 	res := Run(ActUninstall, Ctx{Kind: "php", Version: "8.4"}, readyWorld())
-	if !contains(res.Errors, errs.HasDependents+": PHP 8.4 ← demo.test") {
-		t.Fatalf("被站点依赖应报 hasDependents，得 %+v", res.Errors)
+	if !res.Ok {
+		t.Fatalf("被站点依赖应告警放行，得 errors=%+v", res.Errors)
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("应产生依赖告警")
 	}
 }
 
-func TestUninstallLastPhp(t *testing.T) {
+// TestUninstallLastPhpAllowed 最后一个 PHP 版本同样允许卸载：本产品不替程序员决定留哪个版本（§1.11）。
+// 「卸空了怎么建站」由 site-add 的 PhpNeeded 把住，那是另一条规则的岗位，不是卸载的下限。
+func TestUninstallLastPhpAllowed(t *testing.T) {
 	w := readyWorld()
 	w.Snap.Installed["php"] = []string{"8.4"}
 	w.Snap.Sites = nil
 	res := Run(ActUninstall, Ctx{Kind: "php", Version: "8.4"}, w)
-	if !contains(res.Errors, errs.LastPhp) {
-		t.Fatalf("最后一个 PHP 应报 lastPhp，得 %+v", res.Errors)
+	if !res.Ok {
+		t.Fatalf("最后一个 PHP 应可卸载，得 errors=%+v", res.Errors)
+	}
+}
+
+// TestUninstallNginxDependentSitesWarnNotBlocks 与 PHP 同口径：站点仍依赖 Nginx 也不阻止卸载。
+// 「卸空」是本产品允许的合法终局（§1.11）——拦下点击等于替程序员做决定，说清 502 后果即可（§0.2 规则 16）。
+func TestUninstallNginxDependentSitesWarnNotBlocks(t *testing.T) {
+	res := Run(ActUninstall, Ctx{Kind: "nginx", Version: "alpine"}, readyWorld())
+	if !res.Ok {
+		t.Fatalf("被站点依赖的 nginx 应告警放行，得 errors=%+v", res.Errors)
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("应产生依赖告警")
 	}
 }
 

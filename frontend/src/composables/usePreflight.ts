@@ -24,7 +24,6 @@ const PF = {
   isRunning: '服务正在运行，请先停止',
   notRunning: '服务未运行',
   hasDependents: '存在依赖该服务的站点，无法继续',
-  lastPhp: '至少保留一个 PHP 版本',
   backupMissing: '备份归档不存在',
   offlineMissing: '离线缓存条目不存在',
   svcMissing: '服务不存在',
@@ -213,9 +212,9 @@ export function usePreflight() {
         if (!SVC_META[kind as ServiceKind]) { errors.push(PF.svcMissing); break }
         if (!installed(kind).includes(version)) { errors.push(`${PF.notInstalled}: ${kind} ${version}`); break }
         if (kind === 'php') {
+          // 依赖站点与「最后一个版本」只告警不阻止（§0.2 规则 16 / §1.11）；文案与后端 rules_service.go 逐字对齐
           const used = app.sites.filter((s) => s.php === version).map((s) => s.domain)
-          if (used.length) errors.push(`${PF.hasDependents}: PHP ${version} ← ${used.join(', ')}`)
-          if (installed('php').length <= 1) errors.push(PF.lastPhp)
+          if (used.length) warnings.push(`以下站点正在使用 PHP ${version}：${used.join(', ')} —— 卸载后这些站点的 vhost 上游失效`)
         }
         if (kind === 'nginx' && app.sites.length) errors.push(`${PF.hasDependents}: ${app.sites.length} 个站点依赖 Nginx`)
         break

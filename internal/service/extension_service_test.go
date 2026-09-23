@@ -135,11 +135,11 @@ func (c *fakeImageCache) EnsureImage(_ context.Context, kind, version, ref strin
 func (c *fakeImageCache) CachedImageRef(string, string) (string, bool) {
 	return c.cachedRef, c.cachedRefOK
 }
-func (c *fakeImageCache) PromoteImage(kind, version, ref, tmpTar string) error {
+func (c *fakeImageCache) PromoteExtImage(version, ref, tmpTar string) error {
 	if _, err := os.Stat(tmpTar); err != nil {
 		return err
 	}
-	c.promoted = append(c.promoted, kind+"/"+version+"="+ref)
+	c.promoted = append(c.promoted, "php/"+version+"="+ref)
 	return nil
 }
 func (c *fakeImageCache) EnsureTempDir(kind, version string) (string, error) {
@@ -377,5 +377,114 @@ func TestExtension_Apply_FailureNamesExtension(t *testing.T) {
 	}
 	if !hasErrLine {
 		t.Fatalf("应有一行 err 级日志点名扩展，实得 %+v %v", em.levels, em.logs)
+	}
+}
+
+// ---- 重载 Nginx 这一步的三种缺席情形（§5.16.3「未接入 nginx 时 dim 跳过重载，不得静默」）----
+
+// fakeReloader 记录 nginx 重载被调了几次、返回什么
+type fakeReloader struct {
+	calls int
+	err   error
+}
+
+func (r *fakeReloader) Reload(context.Context) error {
+	r.calls++
+	return r.err
+}
+
+// installNginx 在权威快照里登记 nginx 单例版本（重载器按它现取容器名）
+func installNginx(st *extStore, version string) {
+	st.snap.Installed[string(model.KindNginx)] = []string{version}
+}
+
+// TestExtension_Apply_ReloadsWhenNginxRunning nginx 在跑时扩展重建换了 php 容器 IP，
+// nginx 缓存的上游会失效 —— 这一步必须真的执行，并给一行 ok。
+func TestExtension_Apply_ReloadsWhenNginxRunning(t *testing.T) {
+	svc, rt, _, st, em, _ := newExtSvc(t)
+	rl := &fakeReloader{}
+	svc.reload = rl
+	installNginx(st, "1.25")
+	rt.running[dockerName("nginx", "1.25")] = true
+	if err := svc.Apply(context.Background(), "8.4", []string{"gd"}); err != nil {
+		t.Fatal(err)
+	}
+	if rl.calls != 1 {
+		t.Fatalf("nginx 在跑时应重载一次，实得 %d", rl.calls)
+	}
+	if !strings.Contains(strings.Join(em.logs, "\n"), "Nginx 已重载") {
+		t.Fatalf("重载成功应有 ok 行，实得 %v", em.logs)
+	}
+}
+
+// TestExtension_Apply_SkipsReloadWhenNginxNotInstalled nginx 未安装时重载器必然解析不到容器
+// （生产里 NewNginxReloader 返回「nginx 未安装」错误）。判死整单等于：没装 nginx 的机器
+// 永远装不上任何 PHP 扩展 —— 弹窗不关、扩展不落库、下次打开也没勾选。
+func TestExtension_Apply_SkipsReloadWhenNginxNotInstalled(t *testing.T) {
+	svc, _, _, _, em, _ := newExtSvc(t)
+	rl := &fakeReloader{}
+	svc.reload = rl
+	if err := svc.Apply(context.Background(), "8.4", []string{"gd"}); err != nil {
+		t.Fatalf("nginx 未安装不应让扩展失败: %v", err)
+	}
+	if rl.calls != 0 {
+		t.Fatalf("nginx 未安装不应调用重载，实得 %d", rl.calls)
+	}
+	if !strings.Contains(strings.Join(em.logs, "\n"), "跳过重载") {
+		t.Fatalf("跳过重载必须给一行说明，不得静默，实得 %v", em.logs)
+	}
+}
+
+// TestExtension_Apply_SkipsReloadWhenNginxNotRunning 装了但没在跑（含容器被第三方删掉）：
+// 没有可重载的对象，同样跳过而非判失败。
+func TestExtension_Apply_SkipsReloadWhenNginxNotRunning(t *testing.T) {
+	svc, _, _, st, em, _ := newExtSvc(t)
+	rl := &fakeReloader{}
+	svc.reload = rl
+	installNginx(st, "1.25")
+	if err := svc.Apply(context.Background(), "8.4", []string{"gd"}); err != nil {
+		t.Fatalf("nginx 未运行不应让扩展失败: %v", err)
+	}
+	if rl.calls != 0 {
+		t.Fatalf("nginx 未运行不应调用重载，实得 %d", rl.calls)
+	}
+	all := strings.Join(em.logs, "\n")
+	if !strings.Contains(all, "未运行") || !strings.Contains(all, "跳过重载") {
+		t.Fatalf("应点名「容器未运行 + 跳过重载」，实得 %v", em.logs)
+	}
+}
+
+// TestExtension_Apply_ReloadFailureKeepsExtensions 重载真失败（nginx 配置坏了）不回滚扩展：
+// 固化镜像已 commit、容器已在扩展镜像上运行、vhost 内容本次没改过 —— 撤回整单只会把
+// 做对了的扩展工作一起丢掉，而 nginx 的问题在日志里点名即可（§0.2 规则 16）。
+func TestExtension_Apply_ReloadFailureKeepsExtensions(t *testing.T) {
+	svc, rt, c, st, em, _ := newExtSvc(t)
+	rl := &fakeReloader{err: errors.New("nginx: [emerg] bad config")}
+	svc.reload = rl
+	installNginx(st, "1.25")
+	rt.running[dockerName("nginx", "1.25")] = true
+	if err := svc.Apply(context.Background(), "8.4", []string{"gd"}); err != nil {
+		t.Fatalf("重载失败不应判死扩展单: %v", err)
+	}
+	if strings.Join(rt.removedImg, ",") != "" {
+		t.Fatalf("不应撤回固化镜像，实得 %v", rt.removedImg)
+	}
+	if rt.images[dockerName("php", "8.4")] != engine.CommittedPHPRef("8.4") {
+		t.Fatalf("容器应留在固化镜像上，实得 %v", rt.images)
+	}
+	if strings.Join(st.saved["8.4"], ",") != "gd" {
+		t.Fatalf("扩展应落库，实得 %v", st.saved)
+	}
+	if len(c.promoted) != 1 {
+		t.Fatalf("固化镜像应已提升，实得 %v", c.promoted)
+	}
+	var hasErrLine bool
+	for i, l := range em.levels {
+		if l == "err" && strings.Contains(em.logs[i], "bad config") {
+			hasErrLine = true
+		}
+	}
+	if !hasErrLine {
+		t.Fatalf("重载失败要留一行 err 级日志点名原因，实得 %+v %v", em.levels, em.logs)
 	}
 }

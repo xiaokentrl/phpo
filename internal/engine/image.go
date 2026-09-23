@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/image"
+
+	"phpo/internal/util"
 )
 
 // ImageLoad 从 tar 路径加载镜像（零网络）；resp.Body 必须读完再关，否则加载不完成
@@ -41,7 +43,7 @@ func (c *Client) ImageSave(ctx context.Context, ref, outPath string) error {
 	defer rc.Close()
 
 	tmp := outPath + ".tmp"
-	f, err := os.Create(tmp)
+	f, err := util.Create(tmp)
 	if err != nil {
 		return fmt.Errorf("创建导出文件失败: %w", err)
 	}

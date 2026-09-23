@@ -5,15 +5,16 @@ import "time"
 
 // CacheEntry 单个 {kind}/{version} 缓存聚合条目
 type CacheEntry struct {
-	Kind       string    `json:"kind"`
-	Version    string    `json:"version"`
-	Path       string    `json:"path"`
-	HasImage   bool      `json:"hasImage"`
-	ApkCount   int       `json:"apkCount"`
-	PeclCount  int       `json:"peclCount"`
-	TotalSize  int64     `json:"totalSize"`
-	LastVerify time.Time `json:"lastVerify"`
-	VerifyOK   bool      `json:"verifyOk"`
+	Kind        string    `json:"kind"`
+	Version     string    `json:"version"`
+	Path        string    `json:"path"`
+	HasImage    bool      `json:"hasImage"`
+	HasExtImage bool      `json:"hasExtImage"` // php 条目：扩展固化镜像 phpo/php:{version} 是否已缓存（§5.14.2 两槽位）
+	ApkCount    int       `json:"apkCount"`
+	PeclCount   int       `json:"peclCount"`
+	TotalSize   int64     `json:"totalSize"`
+	LastVerify  time.Time `json:"lastVerify"`
+	VerifyOK    bool      `json:"verifyOk"`
 }
 
 // CacheStats 缓存根目录总览（§5.14.7）

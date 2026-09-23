@@ -14,6 +14,7 @@ import (
 	"phpo/internal/model"
 	"phpo/internal/task"
 	"phpo/internal/template"
+	"phpo/internal/util"
 )
 
 // prepareService 建目录 + 渲染默认配置；kind 无模板（如未支持种类）时仅建目录树。
@@ -27,7 +28,7 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 		if sub == "data" && env.HasCustomDataDir(string(kind), version) {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
+		if err := util.MkdirAll(filepath.Join(root, sub)); err != nil {
 			return fmt.Errorf("创建目录失败 %s/%s: %w", root, sub, err)
 		}
 	}
@@ -40,7 +41,7 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 		if m.From != "" {
 			target = filepath.Dir(m.Host)
 		}
-		if err := os.MkdirAll(target, 0o755); err != nil {
+		if err := util.MkdirAll(target); err != nil {
 			return fmt.Errorf("准备挂载目录失败 %s: %w", target, err)
 		}
 	}
@@ -56,10 +57,10 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 			kept++
 			continue // 已存在，不覆盖
 		}
-		if err := os.MkdirAll(filepath.Dir(host), 0o755); err != nil {
+		if err := util.MkdirAll(filepath.Dir(host)); err != nil {
 			return err
 		}
-		if err := os.WriteFile(host, []byte(f.Content), 0o644); err != nil {
+		if err := util.WriteFile(host, []byte(f.Content)); err != nil {
 			return fmt.Errorf("写入配置失败 %s: %w", host, err)
 		}
 		logf(log, model.LogOk, "写入默认配置 "+host)
@@ -72,7 +73,7 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 }
 
 // 旧版默认 postgresql.conf 的日志三行：logging_collector 要往宿主 bind 挂进来的 ./pgsql/{ver}/logs
-// 建文件，而那目录由宿主用户创建（0755）、容器内 postgres 是另一个 uid，建文件即 Permission denied →
+// 建文件，而那目录由宿主用户创建（当时 0755）、容器内 postgres 是另一个 uid，建文件即 Permission denied →
 // postgres FATAL 退出 → unless-stopped 无限重启，服务永远启不来（真机取证退出码 1、重启 40 次）。
 const (
 	oldPgLogBlock = "logging_collector = on\nlog_directory = '/var/log/postgresql'\nlog_filename = 'postgresql-%Y-%m-%d.log'\n"
@@ -100,7 +101,7 @@ func healPgLogging(env config.Env, kind model.ServiceKind, version string, log t
 		}
 		return
 	}
-	if err := os.WriteFile(path, []byte(fixed), 0o644); err != nil {
+	if err := util.WriteFile(path, []byte(fixed)); err != nil {
 		logf(log, model.LogErr, fmt.Sprintf("修复 %s 失败: %v", path, err))
 		return
 	}

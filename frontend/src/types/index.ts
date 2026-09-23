@@ -142,6 +142,7 @@ export interface CacheEntry {
   version: string
   path: string
   hasImage: boolean
+  hasExtImage: boolean
   apkCount: number
   peclCount: number
   totalSize: number
@@ -215,6 +216,16 @@ export interface SvcMeta {
   defaultPort: number
 }
 
+// ServiceGap 一条「库里记着已安装、宿主上却不在了」的点名项，与后端 model.ServiceGap 逐字对齐（§5.19）。
+// 只上报缺失态、不改 installed：用第三方工具删掉容器不等于用户要卸载，数据卷与重建入口都必须留着。
+export type GapReason = 'container' | 'image' | 'extensions_image'
+export interface ServiceGap {
+  kind: ServiceKind
+  version: string
+  reason: GapReason
+  ref: string
+}
+
 // StateSnapshot 与后端 model.Snapshot（internal/model/snapshot.go）JSON 逐字对齐；
 // 是 state:changed 事件载荷，前端只按其落地、绝不本地乐观更新（硬红线 4）。
 export interface StateSnapshot {
@@ -225,6 +236,7 @@ export interface StateSnapshot {
   phpExtensions: Record<string, string[]>
   dirReady: Record<string, boolean>
   tasks: TaskBoard
+  gaps: ServiceGap[]
 }
 
 // DockerStatus 与后端 model.DockerStatus（internal/model/dto.go）JSON 逐字对齐；

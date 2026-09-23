@@ -9,7 +9,7 @@ import { useLayoutStore } from '@/stores/layoutStore'
 import { CMD_ITEMS, type CmdItem } from '@/constants/cmd'
 import { router } from '@/router'
 import { toast } from '@/composables/useToast'
-import { syncState } from '@/composables/useStateSync'
+import { runSync } from '@/composables/useStateSync'
 import { runDoctor } from '@/api/doctor'
 
 const { t } = useI18n()
@@ -62,9 +62,9 @@ function scrollToTop(): void {
   document.querySelector('.app-main')?.scrollTo({ top: 0 })
 }
 
-// resync：⌘R 与侧栏「同步状态」同源——拉一次权威快照再提示（硬红线 4：状态只来自后端）
+// resync：⌘R 与侧栏「同步状态」同源——全量校准 + 拉一次权威快照再提示（§5.19；硬红线 4：状态只来自后端）
 async function resync(): Promise<void> {
-  await syncState()
+  await runSync()
   toast(t('common.refresh'), 'ok', 1400)
 }
 

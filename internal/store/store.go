@@ -35,6 +35,9 @@ type Store struct {
 	env   EnvProvider
 	hosts HostsProbe
 	board TaskBoardProvider
+
+	gapsMu sync.RWMutex       // 保护 gaps：同步状态在任务线写、快照在事件线读
+	gaps   []model.ServiceGap // 最近一次全量同步点名的缺失项（派生态，不落库）
 }
 
 // New 返回延迟打开的运行态存储：不建目录、不建库、不迁移。装配期用它注入各服务门面。
@@ -56,6 +59,21 @@ type TaskBoardProvider func() model.TaskBoard
 
 // SetTaskBoard 注入任务面板 provider（装配期一次性调用，先于任何并发访问）
 func (s *Store) SetTaskBoard(p TaskBoardProvider) { s.board = p }
+
+// SetGaps 记下最近一次全量同步点名的缺失项（§5.19）。
+// 它是派生态而非权威态：不落库（重启后由启动校准重新现取），也不改动 installed / running 任何一行。
+func (s *Store) SetGaps(gaps []model.ServiceGap) {
+	s.gapsMu.Lock()
+	defer s.gapsMu.Unlock()
+	s.gaps = gaps
+}
+
+// Gaps 读回当前缺失态（快照出口的唯一来源）
+func (s *Store) Gaps() []model.ServiceGap {
+	s.gapsMu.RLock()
+	defer s.gapsMu.RUnlock()
+	return s.gaps
+}
 
 func (s *Store) Close() error {
 	s.mu.Lock()

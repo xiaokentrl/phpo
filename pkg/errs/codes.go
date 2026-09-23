@@ -1,4 +1,5 @@
-// PF 校验错误码表：preflight 返回的用户级错误文案（原型 PF 常量直译 + 生产新增，共 28 条）
+// PF 校验错误码表：preflight 返回的用户级错误文案（原型 PF 直译 + 生产新增，共 27 条；
+// 原型的 lastPhp「至少保留一个 PHP 版本」已随 §1.11 最小限制裁决删除，见 AGENTS.md）
 package errs
 
 // 错误码 → 中文文案；占位符 {from} {to} {version} 等由 preflight 填充
@@ -22,7 +23,6 @@ const (
 	IsRunning      = "服务正在运行，请先停止"
 	NotRunning     = "服务未运行"
 	HasDependents  = "存在依赖该服务的站点，无法继续"
-	LastPhp        = "至少保留一个 PHP 版本"
 	BackupMissing  = "备份归档不存在"
 	OfflineMissing = "离线缓存条目不存在"
 	SvcMissing     = "服务不存在"
@@ -35,7 +35,7 @@ const (
 )
 
 // CodeCount 供对账测试：PF 表条目数
-const CodeCount = 28
+const CodeCount = 27
 
 // AllCodes 返回全部错误码文案（测试对账用）
 func AllCodes() []string {
@@ -44,7 +44,7 @@ func AllCodes() []string {
 		PortInvalid, PortInUse, PortAdvance,
 		DomainInvalid, DomainExists, RootEmpty, RootEscaped, RootOutsideWww,
 		RootDuplicated, PathTraversal, NotInstalled, IsRunning, NotRunning,
-		HasDependents, LastPhp, BackupMissing, OfflineMissing, SvcMissing,
+		HasDependents, BackupMissing, OfflineMissing, SvcMissing,
 		SiteMissing, ExtInvalid, ConfigEmpty, NginxNeeded, PhpNeeded, FileMissing,
 	}
 }

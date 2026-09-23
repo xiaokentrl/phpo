@@ -8,15 +8,17 @@ import (
 	"context"
 	"os"
 	"os/exec"
+
+	"phpo/internal/util"
 )
 
 type linuxInstaller struct{}
 
 func newPlatformInstaller() Installer { return linuxInstaller{} }
 
-// Install  chmod +x 后以 --update 触发 AppImage 自替换
+// Install  赋权后以 --update 触发 AppImage 自替换
 func (linuxInstaller) Install(ctx context.Context, pkgPath string) error {
-	if err := os.Chmod(pkgPath, 0o755); err != nil {
+	if err := os.Chmod(pkgPath, util.FilePerm); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, pkgPath, "--update")

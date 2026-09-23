@@ -16,6 +16,7 @@ func TestCacheManifestFrozenKeys(t *testing.T) {
 	  "created_at": "2026-09-18T12:00:00Z",
 	  "updated_at": "2026-09-18T14:30:00Z",
 	  "image": {"name":"php:8.4-fpm","digest":"sha256:abc123","size":450000000,"sha256":"def456","cached_at":"2026-09-18T12:00:00Z"},
+	  "extensions_image": {"name":"phpo/php:8.4","size":520000000,"sha256":"ccc333","cached_at":"2026-09-18T12:40:00Z"},
 	  "apk": [{"name":"libzip-1.10.1.apk","sha256":"aaa111","size":123456,"cached_at":"2026-09-18T12:30:00Z"}],
 	  "pecl": [{"name":"redis-6.0.2.tgz","sha256":"bbb222","size":234567,"cached_at":"2026-09-18T13:00:00Z"}]
 	}`
@@ -28,6 +29,10 @@ func TestCacheManifestFrozenKeys(t *testing.T) {
 	}
 	if m.Image == nil || m.Image.Name != "php:8.4-fpm" || m.Image.Size != 450000000 {
 		t.Fatalf("image 解析错: %+v", m.Image)
+	}
+	// 基座与扩展固化镜像各一条记录，互不覆盖（§5.14.2 两槽位）
+	if m.ExtImage == nil || m.ExtImage.Name != "phpo/php:8.4" || m.ExtImage.Sha256 != "ccc333" {
+		t.Fatalf("extensions_image 解析错: %+v", m.ExtImage)
 	}
 	if len(m.Apk) != 1 || m.Apk[0].Name != "libzip-1.10.1.apk" {
 		t.Fatalf("apk 解析错: %+v", m.Apk)
