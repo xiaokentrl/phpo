@@ -872,5 +872,5 @@ func relaunchSelf() {
 	if err := cmd.Start(); err != nil {
 		return
 	}
-	cmd.Process.Release()
+	_ = cmd.Process.Release()
 }

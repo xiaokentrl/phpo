@@ -20,11 +20,6 @@ type FileValidator interface {
 	ValidateFile(ctx context.Context, path string) error
 }
 
-// noopValidator 未注入校验器时空过（单测/离线场景）
-type noopValidator struct{}
-
-func (noopValidator) Validate(context.Context, string, string) error { return nil }
-
 // Runner 执行一条命令并返回合并输出（stdout+stderr）；注入以便单测免依赖真实 docker/nginx
 type Runner func(ctx context.Context, name string, arg ...string) ([]byte, error)
 

@@ -138,7 +138,7 @@ func Run(action string, c Ctx, w *World) *model.PreflightResult {
 		w.Snap = model.NewSnapshot()
 	}
 
-	if needsHome[action] && !(w.Snap.DirReady["PHPO_HOME"] && w.Snap.DirReady["WWW_ROOT"]) {
+	if needsHome[action] && (!w.Snap.DirReady["PHPO_HOME"] || !w.Snap.DirReady["WWW_ROOT"]) {
 		r.errors = append(r.errors, errs.HomeNotReady)
 	}
 

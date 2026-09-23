@@ -212,12 +212,12 @@ func (s *Store) SetPHPExtensions(version string, exts []string) error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM php_extensions WHERE version=?`, version); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	for _, e := range exts {
 		if _, err := tx.Exec(`INSERT INTO php_extensions(version,ext) VALUES(?,?)`, version, e); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 	}

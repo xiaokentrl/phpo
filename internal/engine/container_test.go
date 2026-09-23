@@ -4,9 +4,10 @@ package engine
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
 	"phpo/internal/config"
 	"phpo/pkg/dockerutil"
+
+	"github.com/docker/docker/api/types/container"
 )
 
 func testEnv() config.Env { return config.DerivePaths("~/phpo", "~/www") }

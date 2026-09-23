@@ -288,13 +288,13 @@ func TestSingleFlightNeverConcurrent(t *testing.T) {
 		onRun: func(context.Context) { <-release }}
 	second := &testStep{BaseStep: BaseStep{StepName: "second"}, rec: &recorder{},
 		onRun: func(context.Context) { secondStarted.Store(true) }}
-	go func() { m.Run(context.Background(), &Task{ID: "long", Steps: []Step{blocker}}) }()
+	go func() { _, _ = m.Run(context.Background(), &Task{ID: "long", Steps: []Step{blocker}}) }()
 	for !m.Running() {
 		time.Sleep(time.Millisecond)
 	}
 	done := make(chan struct{})
 	go func() {
-		m.Run(context.Background(), &Task{ID: "second", Steps: []Step{second}})
+		_, _ = m.Run(context.Background(), &Task{ID: "second", Steps: []Step{second}})
 		close(done)
 	}()
 	waitFor(t, "第二个任务入队", func() bool { return len(m.Board().Pending) == 1 })

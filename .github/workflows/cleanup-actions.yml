@@ -14,4 +14,4 @@ jobs:
     steps:
       - uses: iamazeem/delete-workflow-runs-action@v1
         with:
-          keep: 10         # 保留最近 1 次运行，设为 0 则全部删除
+          keep: 0          # 0 = 清空全部运行记录（含本工作流自己这一次）

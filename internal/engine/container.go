@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"time"
 
+	"phpo/internal/config"
+	"phpo/pkg/dockerutil"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
-	"phpo/internal/config"
-	"phpo/pkg/dockerutil"
 )
 
 // ContainerSpec 描述一个 phpo 托管服务容器的创建意图
@@ -100,10 +101,10 @@ func (c *Client) StartContainer(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	switch {
-	case status == "running":
+	switch status {
+	case "running":
 		return nil
-	case status == "restarting":
+	case "restarting":
 		if err := c.cli.ContainerRestart(ctx, name, container.StopOptions{}); err != nil {
 			return err
 		}

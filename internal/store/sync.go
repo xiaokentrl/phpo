@@ -15,7 +15,7 @@ func (s *Store) ApplyTaskResult(meta model.TaskMeta, snap *model.Snapshot) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	// 全量物化运行态快照：installed / sites / ext（配置真相与 dirReady 在 config.yaml 侧派生，不在此重放）
 	if _, err := tx.Exec(`DELETE FROM installed`); err != nil {
 		return err

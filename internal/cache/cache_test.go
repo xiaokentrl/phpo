@@ -166,11 +166,17 @@ func TestEnsureImageMissPromote(t *testing.T) {
 func TestEnsureImageCorruptedFallback(t *testing.T) {
 	m, env, cap, fb := newMgr(t)
 	tar := env.OfflineImageTar("redis", "8")
-	os.MkdirAll(dirOf(tar), 0o755)
-	os.WriteFile(tar, []byte("REAL"), 0o644)
+	if err := os.MkdirAll(dirOf(tar), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tar, []byte("REAL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	mf := newManifest("redis", "8")
 	mf.Image = &model.ManifestImage{Name: "redis:8", Sha256: "deadbeef"} // 故意不匹配
-	m.SaveManifest(mf)
+	if err := m.SaveManifest(mf); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := m.EnsureImage(context.Background(), "redis", "8", "redis:8"); err != nil {
 		t.Fatal(err)
@@ -239,12 +245,18 @@ func TestInstallExtensionHit(t *testing.T) {
 	m, env, cap, _ := newMgr(t)
 	// 预置 pecl 缓存
 	p := env.OfflineExtDir("php", "8.4", "pecl") + "/redis-6.0.2.tgz"
-	os.MkdirAll(dirOf(p), 0o755)
-	os.WriteFile(p, []byte("EXT-PKG"), 0o644)
+	if err := os.MkdirAll(dirOf(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("EXT-PKG"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	sha, _ := FileSHA256(p)
 	mf := newManifest("php", "8.4")
 	mf.Pecl = []model.ManifestPackage{{Name: "redis-6.0.2.tgz", Sha256: sha, Size: 7}}
-	m.SaveManifest(mf)
+	if err := m.SaveManifest(mf); err != nil {
+		t.Fatal(err)
+	}
 
 	compiled := false
 	err := m.InstallExtension(context.Background(), "8.4", "pecl", "redis-6.0.2.tgz", "",
@@ -328,9 +340,15 @@ func TestScanAndClearResidue(t *testing.T) {
 	// 造两个残留临时目录
 	d1 := env.TempExtDir("php", "8.4")
 	d2 := env.TempExtDir("mysql", "8.4")
-	os.MkdirAll(d1, 0o755)
-	os.MkdirAll(d2, 0o755)
-	os.WriteFile(d1+"/junk", []byte("x"), 0o644)
+	if err := os.MkdirAll(d1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(d2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d1+"/junk", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := m.ScanAndClearResidue(context.Background()); err != nil {
 		t.Fatal(err)
@@ -363,11 +381,17 @@ func TestCleanupConservative(t *testing.T) {
 	seedImage(t, m, env, "php", "8.4", []byte("GOOD")) // 完好
 	// 造一个损坏条目
 	bad := env.OfflineImageTar("nginx", "alpine")
-	os.MkdirAll(dirOf(bad), 0o755)
-	os.WriteFile(bad, []byte("X"), 0o644)
+	if err := os.MkdirAll(dirOf(bad), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte("X"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	mf := newManifest("nginx", "alpine")
 	mf.Image = &model.ManifestImage{Name: "nginx", Sha256: "wrong"}
-	m.SaveManifest(mf)
+	if err := m.SaveManifest(mf); err != nil {
+		t.Fatal(err)
+	}
 
 	res, err := m.CleanupCache(context.Background(), model.CleanupConservative, nil, 0)
 	if err != nil {

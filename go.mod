@@ -4,6 +4,7 @@ go 1.27
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
+	github.com/containerd/errdefs v1.0.0
 	github.com/docker/docker v28.3.2+incompatible
 	github.com/docker/go-connections v0.8.1
 	github.com/wailsapp/wails/v3 v3.0.0-beta.23
@@ -17,7 +18,6 @@ require (
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
-	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.2.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect

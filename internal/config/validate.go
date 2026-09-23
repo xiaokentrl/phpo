@@ -68,7 +68,7 @@ func ValidateSiteRoot(root, wwwRoot string) RootCheck {
 		return RootCheck{Msg: errs.PathTraversal}
 	}
 	www := NormPath(wwwRoot)
-	if !(r == www || strings.HasPrefix(r, www+"/")) {
+	if r != www && !strings.HasPrefix(r, www+"/") {
 		return RootCheck{Ok: true, Value: r, OutsideWww: true}
 	}
 	return RootCheck{Ok: true, Value: r}

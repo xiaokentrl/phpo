@@ -76,9 +76,13 @@ func newSiteSvc(t *testing.T, validate vhost.Validator) (*SiteService, *fakeSite
 	t.Helper()
 	dir := t.TempDir()
 	env := config.DerivePaths(filepath.Join(dir, "phpo"), filepath.Join(dir, "www"))
-	os.MkdirAll(env.NginxSitesRoot, 0o755)
+	if err := os.MkdirAll(env.NginxSitesRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	hostsFile := filepath.Join(dir, "hosts")
-	os.WriteFile(hostsFile, []byte("127.0.0.1 localhost\n"), 0o644)
+	if err := os.WriteFile(hostsFile, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	st := newFakeSiteStore()
 	vh := vhost.New(env)
@@ -166,7 +170,9 @@ func TestSiteService_Remove_ToTrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 放个文件进站点目录，确保整目录入回收站
-	os.WriteFile(filepath.Join(env.WWWRoot, "demo.test", "index.php"), []byte("<?php"), 0o644)
+	if err := os.WriteFile(filepath.Join(env.WWWRoot, "demo.test", "index.php"), []byte("<?php"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := svc.Remove(context.Background(), "demo.test"); err != nil {
 		t.Fatal(err)

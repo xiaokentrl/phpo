@@ -30,7 +30,6 @@ type fakeExtRuntime struct {
 	commits     []string          // commit ref 序列
 	removedImg  []string
 	savedTo     string
-	promoteOK   bool
 	execFailOn  string // 命中该子串的 exec 失败
 	execOut     string // 每次 exec 往 stdout 写的字节，模拟 configure/make 的输出流
 	createCalls []engine.ContainerSpec

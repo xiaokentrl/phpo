@@ -85,7 +85,7 @@ func TestQueueFIFOAndBoard(t *testing.T) {
 	relA, relB, relC := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	done := make(chan struct{}, 3)
 	go func() {
-		m.Run(context.Background(), &Task{ID: "a", Label: "A", Steps: []Step{gateStep("a", relA)}})
+		_, _ = m.Run(context.Background(), &Task{ID: "a", Label: "A", Steps: []Step{gateStep("a", relA)}})
 		done <- struct{}{}
 	}()
 	waitFor(t, "A 进入运行", func() bool { return m.Running() })

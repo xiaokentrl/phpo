@@ -10,8 +10,12 @@ import (
 func mkSite(t *testing.T, www, domain string) string {
 	t.Helper()
 	dir := filepath.Join(www, domain)
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(filepath.Join(dir, "index.php"), []byte("<?php echo 1;"), 0o644)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.php"), []byte("<?php echo 1;"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 

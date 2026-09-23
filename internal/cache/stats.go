@@ -156,7 +156,7 @@ func (m *Manager) countExtPackages() int {
 
 func dirSize(path string) int64 {
 	var total int64
-	filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
@@ -170,7 +170,7 @@ func dirSize(path string) int64 {
 
 func dirMTime(path string) time.Time {
 	var latest time.Time
-	filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

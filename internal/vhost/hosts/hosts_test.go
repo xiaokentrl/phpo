@@ -54,7 +54,9 @@ func TestRemove_WholeLineDropped(t *testing.T) {
 
 func TestManager_AddRemovePersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hosts")
-	os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o644)
+	if err := os.WriteFile(path, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	m := NewAt(path)
 
 	res, err := m.Add("demo.test")

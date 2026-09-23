@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
@@ -25,7 +25,7 @@ func (c *Client) ContainerExists(ctx context.Context, name string) bool {
 func (c *Client) ContainerRunning(ctx context.Context, name string) (bool, error) {
 	insp, err := c.cli.ContainerInspect(ctx, name)
 	if err != nil {
-		if errdefs.IsNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return false, nil
 		}
 		return false, err
@@ -38,7 +38,7 @@ func (c *Client) ContainerRunning(ctx context.Context, name string) (bool, error
 func (c *Client) ContainerStatus(ctx context.Context, name string) (string, int, error) {
 	insp, err := c.cli.ContainerInspect(ctx, name)
 	if err != nil {
-		if errdefs.IsNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return "", 0, nil
 		}
 		return "", 0, err
@@ -89,7 +89,7 @@ func oneLineTail(s string, maxLines int) string {
 func (c *Client) PublishedPorts(ctx context.Context, name string) ([]int, error) {
 	insp, err := c.cli.ContainerInspect(ctx, name)
 	if err != nil {
-		if errdefs.IsNotFound(err) {
+		if cerrdefs.IsNotFound(err) {
 			return nil, nil
 		}
 		return nil, err

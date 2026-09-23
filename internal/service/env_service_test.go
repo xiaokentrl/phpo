@@ -10,10 +10,9 @@ import (
 
 // fakeEnvStore 实现 EnvStore：内存密码/端口表 + 快照
 type fakeEnvStore struct {
-	pw      map[string]string
-	ports   map[string]int
-	snap    *model.Snapshot
-	emitter *fakeEmitter
+	pw    map[string]string
+	ports map[string]int
+	snap  *model.Snapshot
 }
 
 func newFakeEnvStore() *fakeEnvStore {
