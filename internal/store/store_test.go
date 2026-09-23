@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"phpo/internal/model"
+	"phpo/internal/util"
 )
 
 func openStore(t *testing.T) *Store {
@@ -379,6 +380,47 @@ func TestDeferredOpen_PersistedButMissingDirStillOpens(t *testing.T) {
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatalf("库文件应已建立: %v", err)
 	}
+}
+
+// phpo.db 连 WAL/SHM 伴生文件建库即归一 0777（§5.20）：驱动走 os 默认 0666&~umask，
+// 只 chmod 父目录会留下 0644；旧装机的坏权限在下次打开时同样修好。
+func TestDBFilePermNormalized(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "phpo.db")
+
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Fatal("打开前不应存在库文件")
+	}
+	s := New(dbPath)
+	s.SetEnvProvider(&lazyEnv{persisted: true})
+	if _, err := s.ListSites(); err != nil {
+		t.Fatalf("打开失败: %v", err)
+	}
+	if mode := permOf(t, dbPath); mode != util.FilePerm {
+		t.Errorf("延迟建库后 %s 权限应为 %o，实得 %04o", dbPath, util.FilePerm, mode)
+	}
+	s.Close()
+
+	if err := os.Chmod(dbPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("重开失败: %v", err)
+	}
+	defer st.Close()
+	if mode := permOf(t, dbPath); mode != util.FilePerm {
+		t.Errorf("重开应自愈旧装机的 0644，实得 %04o", mode)
+	}
+}
+
+func permOf(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("读取 %s 失败: %v", path, err)
+	}
+	return fi.Mode().Perm()
 }
 
 // TestSnapshotSitesEnriched 快照在出口逐站点派生 health/hosts（不落库、前端不推断，硬红线 4）：

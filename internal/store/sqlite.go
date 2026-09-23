@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
@@ -24,6 +25,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	normalizeDBPerms(path)
 	return &Store{path: path, db: db}, nil
 }
 
@@ -40,4 +42,14 @@ func openDB(path string) (*sql.DB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	return db, nil
+}
+
+// normalizeDBPerms 把库文件连同一并存在的 WAL / SHM 伴生文件归一为 0777（§5.20）。
+// openDB 只归一了父目录：modernc 驱动建库时走 os 默认的 0666&~umask，umask 022 下即停在 0644。
+// chmod 失败 best-effort 忽略（库可能属他人，不该因此判死打开）；伴生文件在干净关闭时会被移除、
+// 下次写入时重建，故其权限随每次打开一并归一。
+func normalizeDBPerms(path string) {
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		_ = os.Chmod(p, util.FilePerm)
+	}
 }

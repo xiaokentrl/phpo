@@ -108,6 +108,7 @@ func (s *Store) ensure() (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
+	normalizeDBPerms(s.path)
 	s.db = db
 	return db, nil
 }

@@ -134,7 +134,7 @@
 | 镜像缓存槽位数 | **2**（基座 `image.tar` ／ 扩展固化 `image-extensions.tar`，各一条清单记录） | `internal/config/offline.go` 的 `OfflineImageTar` / `OfflineExtImageTar` + `manifest.image` / `manifest.extensions_image`（§5.14.2） |
 | 缺失态类别数 | **3**（`container` ／ `image` ／ `extensions_image`） | `internal/model/resource.go` 的 `GapContainer` / `GapImage` / `GapExtImage`（§5.19）；不落库，随快照 `Gaps` 派生广播 |
 | 「同步状态」口径分档 | **2**（每任务后与启动＝轻量，只判容器存在性；手动「同步状态」＝全量，再核基座镜像与扩展固化镜像） | `internal/service/lifecycle_service.go` 的 `Calibrate` / `SyncAll` → `calibrate(ctx, auditImages)`（§5.19） |
-| phpo 产出物权限 | **0777**（目录与文件一律；显式 `chmod` 归一，不靠 `MkdirAll`/`WriteFile` 入参） | `internal/util/fs.go` 的 `DirPerm` / `FilePerm`（§5.20）；`internal/config/password_test.go` 锁死 `config.yaml` 为 0777 |
+| phpo 产出物权限 | **0777**（目录与文件一律；显式 `chmod` 归一，不靠 `MkdirAll`/`WriteFile` 入参） | `internal/util/fs.go` 的 `DirPerm` / `FilePerm`（§5.20）；`internal/config/password_test.go` 锁死 `config.yaml` 为 0777、`internal/store/store_test.go#TestDBFilePermNormalized` 锁死 `phpo.db` |
 | 任务账本日志保留 | **尾部 500 行** | `internal/task/ledger.go`（`maxLedgerLines`）；写回 `operations` 表（迁移 0008 加 `task_id/label/logs`） |
 | SQLite 迁移数 | **8** | `internal/store/migrate/0001–0008.sql` |
 | VHosts 方法数 | **9** | `VHosts` 对象方法 |
@@ -914,7 +914,8 @@ phpo/
 │       ├── m5_mysql_live_test.go  m5_pgsql_live_test.go
 │       ├── m5_redis_live_test.go  m5_wordpress_live_test.go
 │       ├── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
-│       └── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
+│       ├── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
+│       └── g5_v2914_live_test.go             # 真机取证 v2.9.14：两缓存槽位互不覆盖 · 产出物 0777 · 外部删除的缺失态点名 · 零网络恢复固化镜像
 │       # 单元测试与包同目录（81 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
@@ -2006,7 +2007,7 @@ const (
 
 #### 5.20.3 落点登记（新增写盘时按同一口径补，不得遗漏）
 
-`internal/config/configstore.go`（`config.yaml`）、`internal/store/sqlite.go`、`internal/engine/audit.go`（旧 `0644` 追加文件在打开时 `f.Chmod` 归一）、`internal/engine/trash.go`、`internal/engine/image.go`、`internal/vhost/sync.go`、`internal/vhost/hosts/{manager,elevate_windows}.go`、`internal/cache/{manifest,promote,tempdir}.go`、`pkg/archive/targz.go`、`internal/service/{workdir,backup_service,doctor_service,extension_service}.go`（`workdir.go` 含 `healPgLogging` 的原地截断写，配置渲染也经它落盘）、`internal/task/steps/steps_{config,service,site}.go`、`internal/updater/{downloader,installer_linux,rollback,update}.go`。
+`internal/config/configstore.go`（`config.yaml`）、`internal/store/sqlite.go`（`openDB` 只归一父目录，库文件由驱动以 `0666&~umask` 建出即停在 `0644`；故 `Open` 与延迟建库的 `Store.ensure` 在 `migrate` 之后各调一次 `normalizeDBPerms`，把 `phpo.db` 连同**当时已存在**的 `-wal` / `-shm` 一并归一——两者是会话期临时产物、干净关闭即移除，下次打开时再归一次）、`internal/engine/audit.go`（旧 `0644` 追加文件在打开时 `f.Chmod` 归一）、`internal/engine/trash.go`、`internal/engine/image.go`、`internal/vhost/sync.go`、`internal/vhost/hosts/{manager,elevate_windows}.go`、`internal/cache/{manifest,promote,tempdir}.go`、`pkg/archive/targz.go`、`internal/service/{workdir,backup_service,doctor_service,extension_service}.go`（`workdir.go` 含 `healPgLogging` 的原地截断写，配置渲染也经它落盘）、`internal/task/steps/steps_{config,service,site}.go`、`internal/updater/{downloader,installer_linux,rollback,update}.go`。
 
 #### 5.20.4 明确禁止
 
@@ -2390,7 +2391,7 @@ const (
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（81 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **10** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（81 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **11** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -2606,8 +2607,13 @@ const (
 > `vue-tsc --noEmit` EXIT=0。新增用例：`internal/cache/extimage_test.go`（两槽位互不覆盖）、`internal/service/lifecycle_service_test.go`
 > （轻量/全量分档 + `sameGaps` 静默 + 探针上抛）、`internal/preflight/preflight_test.go`（卸载降级为警告）、
 > `internal/config/password_test.go`（`config.yaml` 落盘即 0777）、`internal/util/fs_test.go`（umask 削位下显式归一）。
-> §4.1／§11.3 的 `*_test.go` 计数按实测校正为 **81**（与包同目录；全仓 91 = 81 + `test/integration/` 10）。
-> **真宿主 GUI 未走查**（本轮只到单元测试与类型检查层面：缺失态 pill、抽屉 gaps 逐行、扩展弹窗提交即关，均需实机点击级验收）；
+> **真机 live 取证（`test/integration/g5_v2914_live_test.go`，`PHPO_LIVE=1` PASS，全程零网络）** 抓到一处本文件已登记、代码却未覆盖的落点：
+> `internal/store/sqlite.go` 的 `openDB` 只归一父目录，`phpo.db` 由驱动以 `0666&~umask` 建出即停在 `0644`（同一次运行里缓存根、两份 tar、
+> `manifest.json`、`config.yaml` 实测均 0777）。现由 `normalizeDBPerms` 在 `Open` 与 `Store.ensure` 的 `migrate` 之后归一库文件连同当时的
+> `-wal`/`-shm`，用例 `internal/store/store_test.go#TestDBFilePermNormalized` 锁死；该 live 用例同时取证两槽位互不覆盖、外部删除只点名
+> 不改 `installed`（`sameGaps` 幂等静默）、缺席固化镜像由 `LoadExtImage` 零网络恢复。§4.1／§11.3 的 `*_test.go` 计数按实测校正为
+> **81**（与包同目录；全仓 92 = 81 + `test/integration/` 11）。
+> **真宿主 GUI 未走查**（live 用例覆盖后端语义与落盘事实，不替代点击级验收：缺失态 pill、抽屉 gaps 逐行、扩展弹窗提交即关仍需实机）；
 > `pnpm build` 与产物走查在下一轮，`frontend/dist` 届时按规约还原。
 >
 > **明确未改**：8 条硬红线原文、三段式写操作、**17 个事件名（未新增，仅补 `docker:state-drift` 载荷字段）**、后端任务状态
