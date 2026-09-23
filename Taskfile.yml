@@ -37,8 +37,12 @@ tasks:
 
   # 说明：wails3 v3.0.0-beta.23 的 `wails3 build` / `wails3 package` 会转发到本 Taskfile
   # 的同名任务（build / package），真正的编译编排在下面这些任务里。
+  # 本任务**不加** `-tags gtk3`，故 Wails 在 Linux 上走 GTK4 一路：pkg-config 需要
+  # gtk4 / webkitgtk-6.0 / libsoup-3.0 / gio-unix-2.0 / glib-2.0 / gobject-2.0 / x11
+  # （apt: libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev libx11-dev）。
+  # CI 三条工作流的 Linux runner 因此必须是 ubuntu-24.04（22.04 源里没有 libwebkitgtk-6.0-dev）。
   build:
-    desc: 构建当前平台桌面二进制（CGO + webkit2gtk）
+    desc: 构建当前平台桌面二进制（Linux 上为 CGO + GTK4 / webkitgtk-6.0）
     deps: [frontend:build]
     cmds:
       - go build -trimpath -ldflags "-s -w -X phpo/internal/app.Version=$(bash scripts/version.sh)" -o build/bin/{{.BINARY}} .

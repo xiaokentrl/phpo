@@ -12,6 +12,10 @@
 #                        在签名前反推公钥比对，不匹配（占位未替换）即拒绝发布（硬红线 6）。
 #     APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID / build/signing/*.p12  macOS 开发者签名+公证（可选）
 #     WIN_CERT / WIN_CERT_PASSWORD                                                   Windows 代码签名（可选）
+#
+# 说明：Linux 出包与 ci.yml/lint.yml 同一工具链口径——Wails beta.23 的 Linux cgo 走 GTK4 一路
+#   （pkg-config: gtk4 webkitgtk-6.0 libsoup-3.0 gio-unix-2.0 + x11），故 linux matrix 与两个
+#   纯脚本作业都用 ubuntu-24.04（22.04 无 libwebkitgtk-6.0-dev）；actions 跟到跑 node24 的主版本。
 name: Release
 
 on:
@@ -43,11 +47,11 @@ jobs:
   verify-guard:
     name: Verify signing guard (dry-run)
     if: github.event_name == 'workflow_dispatch' && inputs.guard_only
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       PHPO_SIGNING_KEY: ${{ secrets.PHPO_SIGNING_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check embedded pubkey matches signing key
         if: env.PHPO_SIGNING_KEY != ''
@@ -71,39 +75,43 @@ jobs:
       matrix:
         include:
           - target: linux
-            os: ubuntu-22.04
+            os: ubuntu-24.04
           - target: windows
             os: windows-latest
           - target: darwin
             os: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
-        shell: bash
-
-      - name: Install Linux toolchain (webkit2gtk)
+      - name: Install Linux toolchain (GTK4 / webkitgtk)
         if: matrix.target == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev \
+            libglib2.0-dev libx11-dev build-essential pkg-config
+
+      # 顺序要求：`go install …/cmd/wails3` 本身要编译 wails 的 Linux cgo 包
+      # （internal/operatingsystem 的 webkit_linux.go 同样 pkg-config gtk4 webkitgtk-6.0），
+      # 故工具链必须先于 Wails CLI 安装。
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@${{ env.WAILS_VERSION }}
+        shell: bash
 
       - name: Install NSIS (Windows)
         if: matrix.target == 'windows'
@@ -118,7 +126,7 @@ jobs:
         shell: bash
 
       - name: Upload staged artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.target }}
           path: build/bin/*
@@ -127,24 +135,28 @@ jobs:
   release:
     name: Sign & Release
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       # 提到 job 级 env：步骤 if 可读 env 上下文（secrets 上下文在 step if 不可用）。
       PHPO_SIGNING_KEY: ${{ secrets.PHPO_SIGNING_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
+      # merge-multiple: true —— 三个平台的产物一律平铺进 out/，不套 `pkg-<target>/` 子目录。
+      # 下游两处都按平铺消费：gen-checksums.sh 用 `find out -maxdepth 1 -type f`，
+      # 发布步骤用 `files: out/*`。钉死该输入后 download-artifact 各主版本行为一致。
       - name: Download all platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pkg-linux
           path: out
-      - uses: actions/download-artifact@v4
-        with: { name: pkg-windows, path: out }
-      - uses: actions/download-artifact@v4
-        with: { name: pkg-darwin, path: out }
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with: { name: pkg-windows, path: out, merge-multiple: true }
+      - uses: actions/download-artifact@v8
+        with: { name: pkg-darwin, path: out, merge-multiple: true }
 
       - name: Compute version
         id: ver
@@ -167,7 +179,7 @@ jobs:
         run: BIN_DIR=out bash scripts/gen-checksums.sh
 
       - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: phpo ${{ steps.ver.outputs.version }}

@@ -1,4 +1,8 @@
 # Lint 门禁：Go 格式/静态 + 前端类型 + 工作流自检（对应 AGENTS.md §11.3 / 并行轨 TX01）
+#
+# 说明：runner 与工具链口径同 ci.yml——Wails beta.23 的 Linux cgo 走 GTK4 一路
+#   （pkg-config: gtk4 webkitgtk-6.0 libsoup-3.0 gio-unix-2.0 + x11），故须 ubuntu-24.04；
+#   actions 一律跟到跑 node24 的主版本，否则本文件的 actionlint 作业把三个工作流一起判红。
 name: Lint
 
 on:
@@ -18,18 +22,19 @@ env:
 jobs:
   go-lint:
     name: Go fmt & golangci-lint
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install webkit2gtk toolchain
+      - name: Install GTK4 / webkitgtk toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev \
+            libglib2.0-dev libx11-dev build-essential pkg-config
 
       - name: gofmt check
         run: |
@@ -55,28 +60,29 @@ jobs:
   # 否则 typecheck 作业与 CI 的前端作业一样恒红。工具链同 ci.yml frontend 作业。
   frontend-lint:
     name: Frontend typecheck
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
-      - name: Install webkit2gtk toolchain
+      - name: Install GTK4 / webkitgtk toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev \
+            libglib2.0-dev libx11-dev build-essential pkg-config
 
       - name: Install Wails CLI
         run: |
@@ -94,7 +100,7 @@ jobs:
 
   workflow-lint:
     name: actionlint
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: reviewdog/action-actionlint@v1

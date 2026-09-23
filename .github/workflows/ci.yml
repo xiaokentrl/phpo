@@ -1,7 +1,14 @@
 # CI 主链路：构建 + 全量单测 + 工程规范校验 + 前端构建（对应 AGENTS.md §11.3 / 并行轨 TX01）
 #
-# 说明：`go test ./...` 会编译含 Wails ui 包在内的全部包，Linux 上需 webkit2gtk 开发头（CGO）。
+# 说明：`go build ./...` 与 `go test ./...` 会编译含 Wails ui 包在内的全部包，Linux 上需 GTK4/webkitgtk 开发头（CGO）。
+#   Wails v3.0.0-beta.23 未加 `gtk3` 构建标签时走的是 GTK4 一路（#cgo pkg-config: gtk4 webkitgtk-6.0
+#   libsoup-3.0 gio-unix-2.0 glib-2.0 gobject-2.0 + x11），故 runner 必须是 ubuntu-24.04：
+#   22.04 的 apt 源里根本没有 libwebkitgtk-6.0-dev，装旧的 libwebkit2gtk-4.1-dev 编不过（build/vet 恒红）。
 #   纯逻辑单测不触碰真实 Docker；集成 live 测以 PHPO_LIVE 门禁，默认 skip，不在 CI 强跑。
+#
+# 说明：actions 一律跟到跑 node24 的主版本（checkout v5 / setup-go v6 / setup-node v6 /
+#   pnpm-action-setup v5 / upload-artifact v7 / download-artifact v8）——node20 运行时已被
+#   actionlint 判为弃用（error），三个工作流只要还钉在旧主版本，Lint 的 workflow-lint 作业即恒红。
 name: CI
 
 on:
@@ -21,18 +28,19 @@ env:
 jobs:
   go:
     name: Go build & test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Install webkit2gtk toolchain
+      - name: Install GTK4 / webkitgtk toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev \
+            libglib2.0-dev libx11-dev build-essential pkg-config
 
       - name: Build
         run: go build ./...
@@ -57,28 +65,29 @@ jobs:
   # bindings 的生成已收进 Taskfile 的 frontend:build 依赖，这里不再单列，避免两处口径漂移。
   frontend:
     name: Frontend build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
-      - name: Install webkit2gtk toolchain
+      - name: Install GTK4 / webkitgtk toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential pkg-config
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev \
+            libglib2.0-dev libx11-dev build-essential pkg-config
 
       - name: Install Wails CLI
         run: |
