@@ -1,0 +1,17 @@
+name: Cleanup Workflow Runs
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # 每周日执行一次，可按需修改
+  workflow_dispatch:      # 支持手动触发
+
+permissions:
+  actions: write          # 必须授予删除权限
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: iamazeem/delete-workflow-runs-action@v1
+        with:
+          keep: 1         # 保留最近 1 次运行，设为 0 则全部删除
