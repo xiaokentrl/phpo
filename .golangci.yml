@@ -1,24 +1,33 @@
-run:
-  timeout: 5m
-
+version: "2"
 linters:
+  enable:
+    - misspell
+  settings:
+    errcheck:
+      # 与总纲一致：忽略标记的清理调用需显式 _ =
+      check-blank: false
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - frontend/bindings
+      - test/fixtures
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
   enable:
     - gofmt
     - goimports
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - misspell
-
-linters-settings:
-  errcheck:
-    # 与总纲一致：忽略标记的清理调用需显式 _ =
-    check-blank: false
-
-issues:
-  exclude-dirs:
-    - frontend/bindings
-    - test/fixtures
+  exclusions:
+    generated: lax
+    paths:
+      - frontend/bindings
+      - test/fixtures
+      - third_party$
+      - builtin$
+      - examples$

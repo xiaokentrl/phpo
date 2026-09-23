@@ -46,14 +46,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # golangci-lint 目前设为非阻断：编写环境离线无法本地安装/验证其是否全绿
-      # （errcheck/staticcheck/gosimple/unused/ineffassign/goimports/misspell 均需联网装二进制）；
-      # 先输出暴露问题，待首次联网 CI 确认干净后改回阻断（删去 continue-on-error）。
+      # v2 主线（v2.13.2，built with go1.27）——原钉的 v1.61.0 用 go1.23 构建，面对 `go 1.27` 目标
+      # 直接 `can't load config …` 退出码 3，即该步一项检查都没跑（不是「跑过且干净」）。
+      # 仍设为非阻断：迁移后本机首次真跑暴露 **31** 项既有问题（errcheck 18／staticcheck 6／
+      # unused 4／goimports 3），逐项处置属独立工单，待其清零后再删去 continue-on-error 转为门禁。
       - name: golangci-lint
         continue-on-error: true
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" v1.61.0
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.13.2
           "$(go env GOPATH)/bin/golangci-lint" run ./...
 
   # vue-tsc 静态导入 frontend/bindings/（wails3 生成物且被 gitignore），全新 checkout 必须先出绑定，
