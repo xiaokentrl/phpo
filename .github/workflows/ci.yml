@@ -73,9 +73,10 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # 与本机 pnpm 12 对齐：frontend/pnpm-workspace.yaml 只有 allowBuilds 而无 packages:，pnpm 9 读它即报「packages field missing or empty」；lockfile 9.0 由 pnpm 12 向后兼容读取
       - uses: pnpm/action-setup@v5
         with:
-          version: 9
+          version: 12
 
       - uses: actions/setup-node@v6
         with:
