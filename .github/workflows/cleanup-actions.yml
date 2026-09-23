@@ -11,7 +11,25 @@ permissions:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    env:
+      # run #1／#2（head 43ecd95，各 5s 失败）的日志级判据：
+      #   Fetching workflow runs
+      #   failed to determine base repo: failed to run git: fatal: not a git repository
+      #   [FATAL] 50: gh run list "${GH_RUN_LIST_ARGS[@]}"
+      # 即该动作的 gh 2.101.0 找不到仓库上下文——本工作流没有 actions/checkout，工作目录里没有
+      # .git，gh 就只能在「git remote 探测」这一步死掉。GH_REPO 是 gh 的官方覆盖项（优先于 git
+      # 探测），因此不必为删运行记录而克隆整个仓库。若仍失败，退路是照上游 CI 的做法加一步
+      # actions/checkout 给 gh 造出 git 上下文。
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: iamazeem/delete-workflow-runs-action@v1
         with:
-          keep: 0          # 0 = 清空全部运行记录（含本工作流自己这一次）
+          # keep 取 1 而不是 0。该动作把 keep 换算成起始行号：`KEEP > 0` 时才 +1（+1 是给
+          # 「正在跑的这一条自己」留位），随后 `tail -n +$KEEP` 取待删集。keep=0 因此落在
+          # 两处雷区：跳过 +1、且要把「第 0 行」当起点——本机 uutils coreutils 0.10.0 实测
+          # 就不一致（管道输入时输出空 ⇒ 一条都不删、作业却判绿；读文件时输出全部 ⇒ 连正在
+          # 跑的这条一起删）。runner 上的 GNU tail 未实测，故不把「清空」寄托在未定义行为上。
+          # keep=1 的语义是明确的那一条：跳过最新一行（= 本清理作业自身，GitHub 也不允许删
+          # 自己正在跑的记录），其余全部删除 ⇒ All workflows 清到只剩这一条。要留更多历史把
+          # 这里调大即可（该动作 clamp 到 0–10）。
+          keep: 1
