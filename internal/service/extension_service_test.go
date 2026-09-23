@@ -7,10 +7,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"phpo/internal/cache"
 	"phpo/internal/config"
 	"phpo/internal/engine"
 	"phpo/internal/model"
@@ -24,6 +26,7 @@ type fakeExtRuntime struct {
 	running     map[string]bool
 	images      map[string]string // 容器名 → 当前运行镜像
 	execs       []string          // 依次记录的 exec argv（join）
+	probes      []string          // 包管理器探测单独记账：它不是编译命令，别污染 exec 序列断言
 	commits     []string          // commit ref 序列
 	removedImg  []string
 	savedTo     string
@@ -32,10 +35,16 @@ type fakeExtRuntime struct {
 	execOut     string // 每次 exec 往 stdout 写的字节，模拟 configure/make 的输出流
 	createCalls []engine.ContainerSpec
 	hasImages   []string // 本机已存在的镜像（不依赖本次 commit，用于「固化镜像仍在」的正常路径）
+
+	pkgMgr      string   // 基座包管理器探测结果（apk / deb / none）；空即 deb
+	copiedTo    []string // CopyTo 记账："dstDir|包文件名"
+	copiedFrom  map[string][]string
+	copyToErr   error
+	copyFromErr error
 }
 
 func newFakeExtRuntime() *fakeExtRuntime {
-	return &fakeExtRuntime{running: map[string]bool{}, images: map[string]string{}}
+	return &fakeExtRuntime{running: map[string]bool{}, images: map[string]string{}, copiedFrom: map[string][]string{}}
 }
 
 func (f *fakeExtRuntime) ManagedContainers(context.Context) ([]engine.ActualState, error) {
@@ -91,8 +100,18 @@ func (f *fakeExtRuntime) ContainerRunning(_ context.Context, name string) (bool,
 
 // ExecStream 将去帧后的 stdout/stderr 分别写进两个 writer；假件把 execOut 当 stdout、把命令行当 stderr，
 // 以便测试断言编译输出逐行进了任务日志。execFailOn 命中则返回失败错误，模拟编译中断。
+// 包管理器探测单独记账（它是判定基座、不是编译命令），否则每条 want 序列都要拖一行 sh -c 探针。
 func (f *fakeExtRuntime) ExecStream(_ context.Context, name string, cmd []string, stdout, stderr io.Writer) error {
 	line := strings.Join(cmd, " ")
+	if strings.Contains(line, "/lib/apk/db/installed") {
+		f.probes = append(f.probes, line)
+		pm := f.pkgMgr
+		if pm == "" {
+			pm = string(config.PkgManagerDeb)
+		}
+		_, _ = io.WriteString(stdout, pm+"\n")
+		return nil
+	}
 	f.execs = append(f.execs, line)
 	if f.execOut != "" {
 		_, _ = io.WriteString(stdout, f.execOut)
@@ -103,6 +122,38 @@ func (f *fakeExtRuntime) ExecStream(_ context.Context, name string, cmd []string
 	}
 	return nil
 }
+
+// CopyTo 记账「回填进容器的包文件」；CopyFrom 把 copiedFrom[srcDir] 落到 dstDir，
+// 使「取回 → 提升」这条链在假件里仍有真文件可校验（PromoteExtension 会 stat）。
+func (f *fakeExtRuntime) CopyTo(_ context.Context, _, dstDir string, hostFiles ...string) error {
+	if f.copyToErr != nil {
+		return f.copyToErr
+	}
+	for _, h := range hostFiles {
+		f.copiedTo = append(f.copiedTo, dstDir+"|"+filepath.Base(h))
+	}
+	return nil
+}
+
+func (f *fakeExtRuntime) CopyFrom(_ context.Context, _, srcDir, dstDir string) ([]string, error) {
+	if f.copyFromErr != nil {
+		return nil, f.copyFromErr
+	}
+	names := f.copiedFrom[srcDir]
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return nil, err
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dstDir, n), []byte("pkg:"+n), 0o644); err != nil {
+			return nil, err
+		}
+	}
+	return append([]string(nil), names...), nil
+}
+
 func (f *fakeExtRuntime) CommitContainer(_ context.Context, name, ref string) error {
 	f.commits = append(f.commits, ref)
 	f.images[name] = ref
@@ -123,9 +174,15 @@ type fakeImageCache struct {
 	home        string
 	ensured     []string
 	promoted    []string
+	promotedPkg []string // 提升过的扩展包文件："pecl/redis-6.0.2.tgz"
 	cleared     []string
 	cachedRef   string
 	cachedRefOK bool
+
+	extHits   map[string]cache.ExtLookup // "pecl/redis" → 查缓存结果
+	pkgList   map[string][]string        // "apk" → ListExtPackages 命中路径
+	lookupErr error
+	promoteEr error
 }
 
 func (c *fakeImageCache) EnsureImage(_ context.Context, kind, version, ref string) error {
@@ -155,6 +212,29 @@ func (c *fakeImageCache) ClearTempDir(_ context.Context, kind, version, reason s
 	return nil
 }
 
+// 扩展包（apk / pecl）缓存：命中结果由用例显式预置，未命中即零值（走网络分支）
+func (c *fakeImageCache) LookupExtPackage(_, extType, name string) (cache.ExtLookup, error) {
+	if c.lookupErr != nil {
+		return cache.ExtLookup{}, c.lookupErr
+	}
+	return c.extHits[extType+"/"+name], nil
+}
+
+func (c *fakeImageCache) ListExtPackages(_, extType string) ([]string, error) {
+	return c.pkgList[extType], nil
+}
+
+func (c *fakeImageCache) PromoteExtension(_, extType, tmpFile string) error {
+	if c.promoteEr != nil {
+		return c.promoteEr
+	}
+	if _, err := os.Stat(tmpFile); err != nil {
+		return err
+	}
+	c.promotedPkg = append(c.promotedPkg, extType+"/"+filepath.Base(tmpFile))
+	return nil
+}
+
 // extStore 实现 ExtStore
 type extStore struct {
 	snap    *model.Snapshot
@@ -179,6 +259,9 @@ func dockerName(kind, version string) string {
 	return "phpo-" + kind + "-" + version
 }
 
+// j 把 argv 拼成假件记账的单行形态
+func j(cmd []string) string { return strings.Join(cmd, " ") }
+
 func newExtSvc(t *testing.T) (*ExtensionService, *fakeExtRuntime, *fakeImageCache, *extStore, *fakeEmitter, config.Env) {
 	t.Helper()
 	home := t.TempDir()
@@ -196,15 +279,34 @@ func newExtSvc(t *testing.T) (*ExtensionService, *fakeExtRuntime, *fakeImageCach
 
 func TestExtension_Apply_Happy(t *testing.T) {
 	svc, rt, c, st, em, env := newExtSvc(t)
+	// pecl 未命中缓存：先 pecl download 取包 → 宿主取回 → 提升进缓存 → 再从暂存文件编译
+	rt.copiedFrom[config.ExtStagingPECL] = []string{"redis-6.0.2.tgz"}
 	// 基座容器未运行：ensureRunning 先从 base 建并启动
 	err := svc.Apply(context.Background(), "8.4", []string{"redis", "gd"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 编译命令（added 稳定序：gd 内置先，redis 走 pecl 两步）
-	want := []string{"docker-php-ext-install gd", "pecl install redis", "docker-php-ext-enable redis"}
-	if strings.Join(rt.execs, "|") != strings.Join(want, "|") {
+	// 编译命令（added 稳定序：gd 内置先，redis 走 pecl：取包 → 从文件装 → 写 ini），末尾清空容器暂存目录
+	want := []string{
+		"docker-php-ext-install gd",
+		j(config.ExtPeclDownloadCmd("redis")),
+		"pecl install " + path.Join(config.ExtStagingPECL, "redis-6.0.2.tgz"),
+		"docker-php-ext-enable redis",
+		j(config.ExtStagingCleanupCmd),
+	}
+	if got := strings.Join(rt.execs, "|"); got != strings.Join(want, "|") {
 		t.Fatalf("exec 序列不符\n期望 %v\n实得 %v", want, rt.execs)
+	}
+	// .tgz 本体已提升进离线缓存（下次即零网络命中）
+	if strings.Join(c.promotedPkg, ",") != "pecl/redis-6.0.2.tgz" {
+		t.Fatalf("pecl 包文件应进缓存，实得 %v", c.promotedPkg)
+	}
+	if !em.has("cache:miss") {
+		t.Fatalf("未命中扩展包缓存应发 cache:miss，实得 %v", em.events)
+	}
+	// 暂存目录清理必须在 commit 之前：否则包文件被固化进 phpo/php:{version}（镜像层垃圾）
+	if len(rt.execs) == 0 || rt.execs[len(rt.execs)-1] != j(config.ExtStagingCleanupCmd) {
+		t.Fatalf("最后一条 exec 应是清空容器暂存目录，实得 %v", rt.execs)
 	}
 	// 固化到 phpo 专用 tag
 	if got := engine.CommittedPHPRef("8.4"); len(rt.commits) != 1 || rt.commits[0] != got {
@@ -229,6 +331,140 @@ func TestExtension_Apply_Happy(t *testing.T) {
 	if !em.has("service:changed") || !em.has("state:changed") || !em.has("task:done") {
 		t.Fatalf("应发 service:changed+state:changed+task:done，实得 %v", em.events)
 	}
+}
+
+// TestExtension_Apply_PeclCacheHit_ZeroNetwork 命中 pecl 包缓存时必须零网络：把 .tgz 回填容器暂存目录，
+// 再从该文件 `pecl install`，不得出现 `pecl download`（在线取包等于把缓存形同虚设）。
+func TestExtension_Apply_PeclCacheHit_ZeroNetwork(t *testing.T) {
+	svc, rt, c, _, em, env := newExtSvc(t)
+	pkg := filepath.Join(env.OfflineExtDir("php", "8.4", "pecl"), "redis-6.0.2.tgz")
+	c.extHits = map[string]cache.ExtLookup{"pecl/redis": {Hit: true, Path: pkg, Size: 4096}}
+	if err := svc.Apply(context.Background(), "8.4", []string{"redis"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"pecl install " + config.ExtStagingPECL + "/redis-6.0.2.tgz",
+		"docker-php-ext-enable redis",
+		j(config.ExtStagingCleanupCmd),
+	}
+	if got := strings.Join(rt.execs, "|"); got != strings.Join(want, "|") {
+		t.Fatalf("命中缓存应零网络从暂存文件编译\n期望 %v\n实得 %v", want, rt.execs)
+	}
+	if strings.Join(rt.copiedTo, ",") != config.ExtStagingPECL+"|redis-6.0.2.tgz" {
+		t.Fatalf("应把缓存包回填容器暂存目录，实得 %v", rt.copiedTo)
+	}
+	if !em.has("cache:hit") {
+		t.Fatalf("命中扩展包缓存应发 cache:hit，实得 %v", em.events)
+	}
+	if len(c.promotedPkg) != 0 {
+		t.Fatalf("命中缓存不应重复提升，实得 %v", c.promotedPkg)
+	}
+}
+
+// TestExtension_Apply_ApkPrefetchOnAlpine Alpine 基座的 PHPIZE_DEPS 是 .apk 形态的可离线文件：
+// 先回填既有 apk 缓存，再用 --cache-dir 预取（官方脚本的 --no-cache 用完即弃，永远拿不到包文件），
+// 取回宿主并提升进缓存根。
+func TestExtension_Apply_ApkPrefetchOnAlpine(t *testing.T) {
+	svc, rt, c, _, _, env := newExtSvc(t)
+	rt.pkgMgr = string(config.PkgManagerAPK)
+	c.pkgList = map[string][]string{"apk": {filepath.Join(env.OfflineExtDir("php", "8.4", "apk"), "libzip-1.0.apk")}}
+	rt.copiedFrom[config.ExtStagingAPK] = []string{"oniguruma-7.9.1.apk"}
+	if err := svc.Apply(context.Background(), "8.4", []string{"gd"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		j(config.ExtApkPrefetchCmd()),
+		"docker-php-ext-install gd",
+		j(config.ExtStagingCleanupCmd),
+	}
+	if got := strings.Join(rt.execs, "|"); got != strings.Join(want, "|") {
+		t.Fatalf("Alpine 基座应先预取构建依赖\n期望 %v\n实得 %v", want, rt.execs)
+	}
+	if strings.Join(rt.copiedTo, ",") != config.ExtStagingAPK+"|libzip-1.0.apk" {
+		t.Fatalf("应把 apk 缓存回填暂存目录（零网络复用），实得 %v", rt.copiedTo)
+	}
+	if strings.Join(c.promotedPkg, ",") != "apk/oniguruma-7.9.1.apk" {
+		t.Fatalf("新取回的 .apk 应提升进缓存，实得 %v", c.promotedPkg)
+	}
+}
+
+// TestExtension_Apply_DebBaseSkipsApkPrefetch 官方 php:8.x-fpm 是 Debian 基座：那里没有 .apk 形态的
+// 构建依赖可离线。不得照抄 apk 命令（容器内没有 apk 即必然失败并判死整单），给一行 dim 说明即可。
+func TestExtension_Apply_DebBaseSkipsApkPrefetch(t *testing.T) {
+	svc, rt, _, _, em, _ := newExtSvc(t)
+	rt.pkgMgr = string(config.PkgManagerDeb)
+	if err := svc.Apply(context.Background(), "8.4", []string{"gd"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"docker-php-ext-install gd", j(config.ExtStagingCleanupCmd)}
+	if got := strings.Join(rt.execs, "|"); got != strings.Join(want, "|") {
+		t.Fatalf("deb 基座不应跑 apk 预取\n期望 %v\n实得 %v", want, rt.execs)
+	}
+	if !strings.Contains(strings.Join(em.logs, "\n"), "不产生可离线包文件") {
+		t.Fatalf("跳过 apk 预取要有一行说明，不得静默，实得 %v", em.logs)
+	}
+}
+
+// TestExtension_Apply_CacheFailuresDegrade 缓存这一层是「让下次零网络」的优化，不是本次编译的前提：
+// 包取不回宿主 → 不提升、改走在线编译；提升失败 → 本次照常成功。判死整单等于把优化路径变成新的故障源。
+func TestExtension_Apply_CacheFailuresDegrade(t *testing.T) {
+	svc, rt, c, _, em, _ := newExtSvc(t)
+	rt.copiedFrom[config.ExtStagingPECL] = []string{"redis-6.0.2.tgz"}
+	rt.copyFromErr = errors.New("container is not running")
+	if err := svc.Apply(context.Background(), "8.4", []string{"redis"}); err != nil {
+		t.Fatalf("取回扩展包失败不应判死扩展单: %v", err)
+	}
+	if !containsStr(rt.execs, "pecl install redis") {
+		t.Fatalf("未取得暂存包应退回在线编译，实得 %v", rt.execs)
+	}
+	if len(c.promotedPkg) != 0 {
+		t.Fatalf("取回失败不应提升，实得 %v", c.promotedPkg)
+	}
+	if !strings.Contains(strings.Join(em.logs, "\n"), "取回宿主失败") {
+		t.Fatalf("取回失败要留一行说明，实得 %v", em.logs)
+	}
+
+	// 提升失败（缓存根只读）：本次编译仍用暂存文件完成
+	svc2, rt2, c2, _, em2, _ := newExtSvc(t)
+	rt2.copiedFrom[config.ExtStagingPECL] = []string{"redis-6.0.2.tgz"}
+	c2.promoteEr = errors.New("read-only cache root")
+	if err := svc2.Apply(context.Background(), "8.4", []string{"redis"}); err != nil {
+		t.Fatalf("提升失败不应判死扩展单: %v", err)
+	}
+	if !containsStr(rt2.execs, "pecl install "+config.ExtStagingPECL+"/redis-6.0.2.tgz") {
+		t.Fatalf("包已在容器暂存目录，仍应零网络编译，实得 %v", rt2.execs)
+	}
+	if len(c2.promotedPkg) != 0 {
+		t.Fatalf("提升失败不应记账，实得 %v", c2.promotedPkg)
+	}
+	if !strings.Contains(strings.Join(em2.logs, "\n"), "提升失败") {
+		t.Fatalf("提升失败要留一行说明，实得 %v", em2.logs)
+	}
+}
+
+// TestExtension_Apply_ExtPkgCorrupted 缓存里有包但 SHA256 不符：先发 cache:corrupted 再回退网络，
+// 不得静默用坏包编译（§5.14.5）。
+func TestExtension_Apply_ExtPkgCorrupted(t *testing.T) {
+	svc, rt, c, _, em, env := newExtSvc(t)
+	c.extHits = map[string]cache.ExtLookup{"pecl/redis": {Corrupted: true, Path: filepath.Join(env.OfflineExtDir("php", "8.4", "pecl"), "redis-6.0.2.tgz")}}
+	if err := svc.Apply(context.Background(), "8.4", []string{"redis"}); err != nil {
+		t.Fatal(err)
+	}
+	if !em.has("cache:corrupted") {
+		t.Fatalf("损坏条目应发 cache:corrupted，实得 %v", em.events)
+	}
+	if !containsStr(rt.execs, j(config.ExtPeclDownloadCmd("redis"))) {
+		t.Fatalf("损坏后应回退网络取包，实得 %v", rt.execs)
+	}
+}
+
+func containsStr(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestExtension_Apply_NoChange(t *testing.T) {
@@ -271,8 +507,15 @@ func TestExtension_Apply_BaseFallbackRecompilesFullSet(t *testing.T) {
 	if err := svc.Apply(context.Background(), "8.4", []string{"redis", "gd", "zip"}); err != nil {
 		t.Fatal(err)
 	}
-	// gd 与 zip 内置（各一条命令），redis 走 pecl（install + enable 两条）；全量重编译即三项都在，按扩展名稳定序
-	want := []string{"docker-php-ext-install gd", "pecl install redis", "docker-php-ext-enable redis", "docker-php-ext-install zip"}
+	// gd 与 zip 内置（各一条命令），redis 走 pecl（取包 + install + enable 三条）；全量重编译即三项都在，按扩展名稳定序
+	want := []string{
+		"docker-php-ext-install gd",
+		j(config.ExtPeclDownloadCmd("redis")),
+		"pecl install redis",
+		"docker-php-ext-enable redis",
+		"docker-php-ext-install zip",
+		j(config.ExtStagingCleanupCmd),
+	}
 	if got := strings.Join(rt.execs, "|"); got != strings.Join(want, "|") {
 		t.Fatalf("退回基座时应全量重编译目标扩展集\n期望 %v\n实得 %v", want, rt.execs)
 	}

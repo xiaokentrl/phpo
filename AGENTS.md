@@ -13,7 +13,7 @@
 > **应用升级**：支持版本检查和自动升级
 > **配置存储**：单一 `config.yaml`（YAML）落在各平台 XDG 用户配置目录内的 `phpo` 子目录，承载工作根目录 + 自定义缓存根/备份根 + 每服务版本的明文密码/宿主端口/数据目录；SQLite 仅存运行态，且**延迟建库**——两根工作目录写入 `config.yaml` 前不创建用户数据目录；`dirReady` 不落库，由快照按「两根已持久化 + 目录实际存在」派生；不再使用 `./.env` 或 `~/.phpo/config.json`
 > **可自定义根**（v2.9.8 新增，见 §5.15）：离线缓存根、备份归档根、以及**每个服务版本的数据目录**皆可由用户编辑路径或浏览选定任意文件夹；三处各自**互斥唯一**——自定义一旦设定即完全取代对应默认根（`./offline/` · `./backups/` · `{KIND_ROOT}/{version}/data`），任一时刻只有一条路径生效，不并存、不做二级回退；唯一校验是路径安全（硬红线 3）
-> **PHP 扩展**（v2.9.9 新增，见 §5.16）：每个 PHP 版本一份**全量扩展目录**（73 项 · 8 分组），安装弹窗与「管理扩展」弹窗共用同一份；常用 11 项在安装时**默认勾选**，勾选/取消即本次的**目标扩展集**；容器内编译输出**逐行实时**进抽屉日志，某一项失败必须**点名该扩展**并中止本单（不静默、不吞）；**固化镜像不在本机即容器退回基座重建时，待编译集换成完整目标集**（基座不含原启用集，只装增量会让库里「已启用」而容器里没有，§5.16.2）
+> **PHP 扩展**（v2.9.9 新增，见 §5.16）：每个 PHP 版本一份**全量扩展目录**（73 项 · 8 分组），安装弹窗与「管理扩展」弹窗共用同一份；常用 11 项在安装时**默认勾选**，勾选/取消即本次的**目标扩展集**；容器内编译输出**逐行实时**进抽屉日志，某一项失败必须**点名该扩展**并中止本单（不静默、不吞）；**固化镜像不在本机即容器退回基座重建时，待编译集换成完整目标集**（基座不含原启用集，只装增量会让库里「已启用」而容器里没有，§5.16.2）；**扩展包本体（pecl 的 `.tgz` 与 Alpine 构建依赖的 `.apk`）在安装与重新编译两条路径上都必须落到缓存根**，命中即零网络回填容器暂存目录 `/tmp/phpo-ext/{apk,pecl}` 并从该文件编译，暂存目录在 `docker commit` **之前**清空（v2.9.14 追加，见 §5.14.3 / §0.2 规则 36）
 > **备份归档**（v2.9.9 新增，见 §5.17）：打包时读不动的条目**跳过并逐目录聚合告警**，不判死整包；mysql / pgsql / redis 在暂停服务**之前**先做**逻辑导出**（`mysqldump` / `pg_dumpall` / `redis-cli --rdb`），产物入归档 `dump/` 前缀——冷拷贝缺的那部分由 dump 补回
 > **容器日志出口**（v2.9.9 新增，见 §5.18）：服务容器内进程**不得往宿主 bind 挂载目录写日志文件**（容器 uid 对该目录无写权限即 FATAL 崩溃循环，服务永远启不来）；日志一律走 stderr → 由 Docker 收集；启停必须等**稳定 running**，失败报错带容器日志尾部
 > **同步状态全量口径**（v2.9.14 新增，见 §5.19）：用户用 Docker Desktop / `docker rm` / `docker rmi` 等第三方工具把容器或镜像停掉、删掉之后，**手动「同步状态」必须把每一项都对上**——逐个已安装版本核**容器、基座镜像、php 扩展固化镜像**三样，缺席的逐项**点名**（服务卡片缺失态 + 抽屉逐行日志）；但**绝不自动改写 `installed`**（外部删容器不等于用户要卸载），也不自动删任何资源，恢复入口留给用户点「启用」（幂等重建）
@@ -26,7 +26,7 @@
 > **密码策略**：明文，默认 `123456`，可修改，可为空，长度不校验，UI 可查看
 > **最小限制原则**：除 8 条硬红线外，所有限制放开或降级为警告
 > **Docker 清洁原则**：所有操作幂等、原子、可回滚、可清理
-> **离线缓存原则**：装任何镜像/扩展必先查缓存 · 命中零网络 · 镜像未命中先探本机镜像库（已有即零网络重建缓存）· 否则下载编译 · 成功后提升到缓存 · 无论成败均清空临时目录 · 断网重装靠缓存 · 内网开发靠缓存
+> **离线缓存原则**：装任何镜像/扩展必先查缓存 · 命中零网络 · 镜像未命中先探本机镜像库（已有即零网络重建缓存）· 否则下载编译 · 成功后提升到缓存 · 无论成败均清空临时目录 · 断网重装靠缓存 · 内网开发靠缓存；**扩展缓存的是「包文件本体」**（pecl 的 `.tgz`、Alpine 构建依赖的 `.apk`），安装与重新编译两条路径都必须落盘，命中即回填容器暂存目录后从该文件编译（v2.9.14 追加，§0.2 规则 36）
 > **编码准则**：**编码前思考 · 简洁优先 · 精准修改 · 目标驱动执行**（v2.7 新增，见 §3.4）
 
 ---
@@ -82,7 +82,7 @@
 20. **禁止破坏用户数据**：卸载默认保留 volume；删除 volume 必须二次确认；回收站机制。
 21. **禁止绕过离线缓存**：
     - **安装任何 Docker 镜像（php/mysql/pgsql/redis/nginx 等）时，必须先到缓存根（默认 `./offline/`，用户可自定义，见 §5.15）下查 `{kind}/{version}/` 目录**；命中则 `docker load`（零网络）；未命中**先探本机 Docker 镜像库**：镜像已在本机就直接 `docker save` 提升到缓存（零网络，`cache:miss` 的 `action=local`），本机也没有才 `docker pull`（`action=pull`）。
-    - **安装任何 PHP 扩展（apk/pecl）时，必须先查 `./offline/php/{version}/{apk|pecl}/` 目录**；命中则直接使用（零网络）；未命中才网络下载到临时目录。
+    - **安装任何 PHP 扩展（apk/pecl）时，必须先查 `./offline/php/{version}/{apk|pecl}/` 目录**；命中则把**包文件本体**零网络回填容器暂存目录 `/tmp/phpo-ext/{apk|pecl}`，**从该文件编译**；未命中才先取包到暂存目录（`pecl download` / `apk add --cache-dir`）→ 取回宿主临时目录 → 提升进缓存 → 再从文件编译。**「命中则使用」指的是包文件，不是扩展名**——只按扩展名装而不留包本体，等于每次换机都必拨网络。
     - **临时目录路径固定为 `./{kind}/{version}/ext/`**（如 `./php/8.4/ext/`）。
     - **未命中时下载到临时目录 → 编译/加载 → 成功后立刻把文件从临时目录提升到缓存目录 → 无论成功失败，必须清空临时目录**。
     - **编译失败 → 直接清空临时目录 → 报错，不进缓存**。
@@ -106,6 +106,7 @@
 33. **禁止「至少保留一个」这类保留门禁**（v2.9.14 新增，见 §1.11）：卸载时「存在依赖该版本的站点」「这是最后一个 PHP 版本」一律**降级为警告并照常卸载**（PHP 与 Nginx 同口径）；`pkg/errs` 已删除 `LastPhp` 码（28 → **27**），卸载分支只保留 `SvcMissing` 与 `NotInstalled` 两条 `errf`。把可警告的事做成阻止，等于替程序员做决定（§0.2 规则 15/16）。
 34. **禁止让瞬时弹窗替后台任务守门**（v2.9.14 新增，见 §5.16.2 / §5.16.3）：扩展管理弹窗的 `apply()` **不得 `await`** 数十秒的编译链路——**提交即 `emit('close')`**，进度与失败由抽屉日志 / 右栏队列承载（§5.6.4 同一路子）。同理，任务里**已经做对的那部分**不得被后置环节的失败判死：nginx 缺席/未运行给 `dim` 跳过行、重载失败给一行 `err` 后 `return nil`，**不撤回已编译生效的扩展**。
 35. **禁止把扩展固化镜像与基座镜像写进同一个缓存槽位**（v2.9.14 新增，见 §5.14.2 / §5.16.3）：每个 php 版本**两份** image 缓存（`image.tar` 与 `image-extensions.tar`，清单 `image` / `extensions_image` 各一条）；提升固化镜像后必须**一行 `ok` 点名落点全路径**（`{committedRef} → {extTar}`），只说「已提升」等于没回答需求 ③ 的「有没有提升到 offline 对应的扩展目录内」。
+36. **禁止只缓存扩展的「结果」而不缓存扩展的「包」**（v2.9.14 追加，见 §5.14.3 / §5.16.3）：扩展的**包文件本体**必须在**安装**与**重新编译**两条路径上都落到缓存根（pecl → `{pecl}/{name}-{版本}.tgz`，Alpine 构建依赖 → `{apk}/*.apk`，各带 `manifest.json` 的 SHA256 条目），命中时**零网络回填容器暂存目录** `/tmp/phpo-ext/{apk|pecl}` 并从该文件编译。为此：查找扩展包必须按**扩展名前缀**匹配（`pecl install redis` 的产物永远叫 `redis-6.0.2.tgz`，按精确名查等于永不命中）；Alpine 构建依赖必须用 `apk add --cache-dir <暂存目录>`（官方脚本的 `--no-cache` 用完即弃，永远拿不到 `.apk`）；容器暂存目录必须在 `docker commit` **之前**清空，否则包文件被固化进 `phpo/php:{version}` 镜像层。基座不是 Alpine 时（Debian / 认不出）**不产生可离线的系统包**，给一行 `dim` 说明后跳过——**不得**为此造 deb 槽位。缓存链上任一环节（查询/回填/下载/取回/提升）失败**只 `dim` 并退回在线编译，绝不判死整单**（§0.2 规则 16）。
 
 ### 0.3 数字权威表（Agent 引用禁止出错）
 
@@ -132,6 +133,9 @@
 | 等待期按钮禁用判据 | **`taskStore.isBusy(meta)`，key = `type:kind:version:domain:file` 拼接** | `stores/taskStore.ts`（`busyKeyOf` / `isBusy` / `beginSubmit` / `endSubmit`）+ `composables/useTask.ts#submitWrite`（提交即 begin → `await syncState()` → end）；**只禁被点的那一颗**（§5.6.4） |
 | 快照可空集合的线上形态 | **`[]` ／ `{}`**（不得为 `null`） | `internal/store/snapshot.go` 的 `normalizeCollections`（唯一快照出口）+ 前端 `appState.applySnapshot` 逐字段兜空；用例 `TestBuildSnapshot_NoNullCollections`（§5.6.3） |
 | 镜像缓存槽位数 | **2**（基座 `image.tar` ／ 扩展固化 `image-extensions.tar`，各一条清单记录） | `internal/config/offline.go` 的 `OfflineImageTar` / `OfflineExtImageTar` + `manifest.image` / `manifest.extensions_image`（§5.14.2） |
+| 扩展包缓存族数 | **2**（`pecl` 的 `.tgz` 本体 ／ Alpine 构建依赖的 `.apk`） | `internal/cache/lookup.go` 的 `LookupExtPackage`（按**扩展名前缀**匹配、多份取版本序最大）/ `ListExtPackages` + `config/offline.go` 的 `ExtTypeAPK` / `ExtTypePECL`（§5.14.3） |
+| 容器内扩展暂存目录 | **`/tmp/phpo-ext/{apk,pecl}`**（宿主临时目录 `./php/{ver}/ext/{apk,pecl}` 的对端；**`docker commit` 前必须清空**） | `internal/config/extensions.go` 的 `ExtStagingRoot` / `ExtStagingAPK` / `ExtStagingPECL` / `ExtStagingCleanupCmd`；双向搬运经 `internal/engine/copy.go` 的 `CopyTo` / `CopyFrom`（Docker archive API，唯一宿主⇄容器字节通道） |
+| 基座包管理器判定数 | **3**（`apk` ／ `deb` ／ `none`；**仅 `apk` 产生可离线的系统包文件**） | `internal/config/extensions.go` 的 `PkgManager*` + `ExtPkgProbeCmd`（判据 `/lib/apk/db/installed`，与官方 `docker-php-ext-install` 同源）（§5.16.3） |
 | 缺失态类别数 | **3**（`container` ／ `image` ／ `extensions_image`） | `internal/model/resource.go` 的 `GapContainer` / `GapImage` / `GapExtImage`（§5.19）；不落库，随快照 `Gaps` 派生广播 |
 | 「同步状态」口径分档 | **2**（每任务后与启动＝轻量，只判容器存在性；手动「同步状态」＝全量，再核基座镜像与扩展固化镜像） | `internal/service/lifecycle_service.go` 的 `Calibrate` / `SyncAll` → `calibrate(ctx, auditImages)`（§5.19） |
 | phpo 产出物权限 | **0777**（目录与文件一律；显式 `chmod` 归一，不靠 `MkdirAll`/`WriteFile` 入参） | `internal/util/fs.go` 的 `DirPerm` / `FilePerm`（§5.20）；`internal/config/password_test.go` 锁死 `config.yaml` 为 0777、`internal/store/store_test.go#TestDBFilePermNormalized` 锁死 `phpo.db` |
@@ -265,7 +269,7 @@
 | 端口策略 | 站点端口默认 80、用户可指定任意端口；新建站点占用只告警 + 降级（不改用户所填端口、不阻断建站）；改站点端口占用才顺延；服务端口占用报错 |
 | 限制策略 | 最小限制；仅 8 条硬红线；警告代替阻止 |
 | Docker 清洁策略 | 所有操作幂等、原子、可回滚、可清理 |
-| 离线缓存策略 | 装任何镜像/扩展必先查缓存（**在用户选定的缓存根下**，默认 `./offline/`）；命中零网络；镜像未命中先探本机镜像库、已有即零网络重建缓存，否则下载编译；成功后提升到缓存；支持**手工导入任意文件**为缓存条目；无论成败均清空临时目录 |
+| 离线缓存策略 | 装任何镜像/扩展必先查缓存（**在用户选定的缓存根下**，默认 `./offline/`）；命中零网络；镜像未命中先探本机镜像库、已有即零网络重建缓存，否则下载编译；扩展未命中先**取包文件本体**（`pecl download` / Alpine `apk add --cache-dir`）到容器暂存目录 → 取回 → 提升，再从该文件编译，命中即把包**回填容器暂存目录**；成功后提升到缓存；支持**手工导入任意文件**为缓存条目；无论成败均清空临时目录 |
 
 ### 1.2 原型资产盘点
 
@@ -413,26 +417,32 @@
 **安装 PHP 8.4 的 redis 包括任何扩展（apk/pecl）(包括任何扩展，按扩展类型分类不同的文件夹)**：
 
 ```
-1. 检查 ./offline/php/8.4/pecl/redis-6.0.2.tgz
+0. 基座构建依赖预取（仅 Alpine；本版本有待启用项时执行一次）
+   → 探基座包管理器（/lib/apk/db/installed → apk；/etc/debian_version → deb；否则 none）
+   ├─ apk：把 ./offline/php/8.4/apk/ 已有的 .apk 回填进容器 /tmp/phpo-ext/apk（零网络）
+   │        → apk add --cache-dir /tmp/phpo-ext/apk --virtual .phpo-ext-deps $PHPIZE_DEPS
+   │        → 取回宿主 ./php/8.4/ext/apk/ → 逐份提升进 ./offline/php/8.4/apk/ + 登记 manifest
+   └─ deb / none：一行 dim 说明「构建依赖不产生可离线包文件」，跳过（不造 deb 槽位）
+1. 按「扩展名前缀」查 ./offline/php/8.4/pecl/redis*.tgz（pecl 产物永远带版本号，精确名等于永不命中）
    ├─ 存在 + SHA256 通过
-   │   → 复制到 ./php/8.4/ext/pecl/
-   │   → 编译安装
-   │   → 清空 ./php/8.4/ext/
+   │   → 回填容器 /tmp/phpo-ext/pecl/redis-6.0.2.tgz（零网络）
+   │   → pecl install <该文件> + docker-php-ext-enable redis
    │   → 发射 cache:hit 事件
-   └─ 不存在 / SHA256 失败
-       → 下载到 ./php/8.4/ext/pecl/redis-6.0.2.tgz（网络）
-       → 编译安装
-       ├─ 成功
-       │   → mv ./php/8.4/ext/pecl/redis-6.0.2.tgz ./offline/php/8.4/pecl/
-       │   → mv ./php/8.4/ext/apk/bzip2-dev-1.0.8-r6.apk ./offline/php/8.4/apk/
+   └─ 不存在 / SHA256 失败（损坏先发 cache:corrupted）
+       → pecl download redis 只取包不编译（网络，cache:miss action=download）
+       → CopyFrom 取回 ./php/8.4/ext/pecl/redis-6.0.2.tgz
+       → 编译改用该包文件（不是 `pecl install redis`）
+       ├─ 取回成功
+       │   → mv ./php/8.4/ext/pecl/*.tgz ./offline/php/8.4/pecl/
+       │   → mv ./php/8.4/ext/apk/*.apk ./offline/php/8.4/apk/
        │   → mv 例如：其他类型扩展/更多扩展……，使用不同的文件夹 ./php/8.4/ext/{apk,pecl……，……}/
        │   → 更新 ./offline/php/8.4/manifest.json
-       │   → **清空 ./php/8.4/ext/**（防污染下次使用）
-       │   → 发射 cache:miss + cache:promote 事件
-       └─ 失败
-           → **清空 ./php/8.4/ext/**（防污染下次使用）
-           → 报错
-2. 重建镜像 + 重启容器
+       │   → 发射 cache:promote 事件
+       └─ 取回/提升失败
+           → 一行 dim 说明后退回在线编译（缓存是加速手段，不是新增的失败面）
+2. 清空容器暂存目录 /tmp/phpo-ext（**必须在 docker commit 之前**，否则包文件被固化进镜像层）
+3. 清空宿主 ./php/8.4/ext/（防污染下次使用；无论成败取消都做）
+4. 重建镜像 + 重启容器
 ```
 
 #### 1.13.3 目录结构总览
@@ -758,9 +768,10 @@ phpo/
 │   │       ├── 0007_drop_dir_ready.sql    # dirReady 改快照派生，表下线
 │   │       └── 0008_add_task_ledger.sql   # 任务账本：给 operations 加 task_id / label / logs 三列（不另立表）
 │   │
-│   ├── engine/                      # Docker 引擎层（17 文件）
+│   ├── engine/                      # Docker 引擎层（18 文件）
 │   │   ├── client.go  container.go  image.go  registry.go
 │   │   ├── network.go  volume.go  mount.go  inspect.go  exec.go
+│   │   ├── copy.go                  # 宿主 ⇄ 容器唯一字节通道（CopyTo/CopyFrom，Docker archive API）：扩展包回填与取回
 │   │   ├── calibrate.go  health.go
 │   │   └── cleaner.go  orphan.go  idempotent.go  verify.go  trash.go  audit.go
 │   │
@@ -918,7 +929,7 @@ phpo/
 │       ├── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
 │       ├── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
 │       └── g5_v2914_live_test.go             # 真机取证 v2.9.14：两缓存槽位互不覆盖 · 产出物 0777 · 外部删除的缺失态点名 · 零网络恢复固化镜像
-│       # 单元测试与包同目录（81 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       # 单元测试与包同目录（83 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -1491,30 +1502,35 @@ CI 无人值守支持。
 **安装 PHP 扩展或重新构建（apk/pecl）**：
 
 ```
+0. 基座构建依赖预取（仅本版本有待启用项时执行一次；安装与重新编译同一条路）
+   → 探基座包管理器（判据同官方 docker-php-ext-install：/lib/apk/db/installed → apk）
+   ├─ apk：ListExtPackages(version,"apk") 有货 → CopyTo 回填容器 /tmp/phpo-ext/apk（零网络）
+   │        → apk add --cache-dir /tmp/phpo-ext/apk --virtual .phpo-ext-deps $PHPIZE_DEPS
+   │        → CopyFrom 取回 ./php/{version}/ext/apk/ → 逐份提升 + 登记 manifest + cache:promote
+   └─ deb / none / 探测失败：一行 dim 说明后跳过（**不为此造 deb 槽位**）
 1. 判断扩展类型（apk / pecl）
-2. 检查 ./offline/php/{version}/{type}/{package}
+2. **按扩展名前缀**查 ./offline/php/{version}/{type}/（pecl 产物永远叫 {name}-{版本}.tgz，精确名匹配等于永不命中；多份命中取版本序最大）
    ├─ 存在
    │   ├─ 校验 SHA256（对比 manifest.json 中的值）
-   │   │   ├─ 通过 → 从缓存复制到临时目录 ./php/{version}/ext/{type}/
-   │   │   │         → 编译安装
-   │   │   │         → **清空临时目录**（防污染下次使用）
-   │   │   │         → 发射 cache:hit + cache:tempdir-cleared 事件
-   │   │   └─ 失败 → 标记缓存损坏
-   │   │              → 回退到网络
+   │   │   ├─ 通过 → CopyTo 把**包文件本体**回填容器暂存目录 /tmp/phpo-ext/{type}/（零网络）
+   │   │   │         → **从该文件**编译安装（`pecl install /tmp/phpo-ext/pecl/redis-6.0.2.tgz`）
+   │   │   │         → 发射 cache:hit 事件
+   │   │   └─ 失败 → 标记缓存损坏（cache:corrupted）→ 回退到网络
    │   └─ （损坏则走网络）
    └─ 不存在
-       → 下载到 ./php/{version}/ext/{type}/（网络）
-       → 编译安装
-       │   ├─ 成功
-       │   │   → mv ./php/{version}/ext/{type}/{package} ./offline/php/{version}/{type}/
-       │   │   → 更新 ./offline/php/{version}/manifest.json
-       │   │   → **清空 ./php/{version}/ext/**（防污染下次使用）
-       │   │   → 发射 cache:miss + cache:promote + cache:tempdir-cleared 事件
-       │   └─ 失败
-       │       → **清空 ./php/{version}/ext/**（防污染下次使用）
-       │       → 发射 cache:tempdir-cleared 事件（reason: "compile_failed"）
-       │       → 报错
-3. 重建镜像 + 重启容器
+       → 先**只取包不编译**到容器暂存目录（pecl download {name}；网络，cache:miss action=download）
+       → CopyFrom 取回宿主临时目录 ./php/{version}/ext/{type}/
+       → **从该文件**编译安装
+       │   ├─ 取回成功
+       │   │   → mv ./php/{version}/ext/{type}/*.{tgz,apk} ./offline/php/{version}/{type}/
+       │   │   → 更新 ./offline/php/{version}/manifest.json（每份各一条 SHA256 条目）
+       │   │   → 发射 cache:promote 事件
+       │   └─ 取回/提升任一步失败
+       │       → 一行 dim 说明 → **退回在线编译**（`pecl install {name}`）
+       │       → 缓存失败**不得判死整单**（§0.2 规则 16）
+3. **清空容器暂存目录 /tmp/phpo-ext（必须在 docker commit 之前）**——留在容器层就被固化进 phpo/php:{version}
+4. **清空宿主临时目录 ./php/{version}/ext/**（防污染下次使用；成功/失败/取消共用一份，只发一次 cache:tempdir-cleared，reason 为 compile_ok / compile_failed）
+5. 重建镜像 + 重启容器
 ```
 
 #### 5.14.4 临时目录生命周期（严格）
@@ -1655,6 +1671,13 @@ type OfflineService interface {
 - ❌ 用户已自定义缓存根，安装链路却仍去读默认的 `./offline/`（或反之）——同一类路径**只允许一个生效根**（§0.2 规则 24）。
 - ❌ 手工导入时移动/删除用户的源文件（导入是**复制**，原件保留；只有自动提升才搬走临时目录里的文件）。
 - ❌ 把扩展固化镜像 `phpo/php:{version}` 提升到基座槽位 `image.tar`（或反之）——两个槽位各一条清单记录（`image` / `extensions_image`），共用即每次「应用扩展」覆盖基座、下次装基座 load 到内容不符的镜像（§5.14.2）。
+- ❌ **只把编译结果（`.so` / 固化镜像）当缓存，而不缓存扩展的包文件本体**——「装过即缓存过」如果只落在镜像层，换机/断网时 pecl 与 apk 依赖仍然必须拨网络，画像 F 的离线能力是假的（§0.2 规则 36）。
+- ❌ 用**精确扩展名**查扩展包缓存（`pecl install redis` 的产物永远叫 `redis-6.0.2.tgz`，精确名匹配等于永不命中）——必须按 `{name}-` 前缀匹配，多份命中取版本序最大。
+- ❌ Alpine 基座上用 `apk add --no-cache` 装构建依赖（官方脚本就是这么写的）——用完即弃，永远拿不到可离线的 `.apk`；必须 `--cache-dir <容器暂存目录>` 才有包文件可取回。
+- ❌ 命中缓存后不去 `pecl install <回填的包文件>` 却去 `pecl install {name}`（等于命中仍拨网络）。
+- ❌ 容器暂存目录 `/tmp/phpo-ext` 不在 `docker commit` **之前**清空——包文件被固化进 `phpo/php:{version}` 镜像层，成为永远清不掉的镜像垃圾。
+- ❌ 基座不是 Alpine（`deb` / `none`）时凭空造 deb 包槽位，或因此判死扩展编译（只有一行 `dim` 的份）。
+- ❌ 缓存链任一环节（查询/回填/下载/取回/提升）失败即判死整单——只 `dim` 并退回在线编译（§0.2 规则 16）。
 - ❌ `LoadExtImage` 命中后不发 `cache:hit`、损坏后不发 `cache:corrupted`（零网络恢复路径也要留下证据行）。
 
 #### 5.14.13 与 Docker 清洁机制的协同
@@ -1769,6 +1792,8 @@ type OfflineService interface {
 |------|--------------|
 | 写扩展清单 `extensions.env` | `cmd` 行：路径 → 目标扩展集全文 |
 | 准备基座镜像（缓存优先） | `cmd` 行 + `cache:hit`／`cache:miss` 的既有徽标链路 |
+| 包文件离线化（**安装与重新编译都必须做**，§5.14.3） | **pecl**：命中 → 一行 `ok`「命中扩展包缓存（零网络）: {缓存内包全路径} → /tmp/phpo-ext/pecl/{name}-{版本}.tgz」+ `cache:hit`；未命中 → `cache:miss`（`action=download`）+ 一行 `cmd`「取扩展包到容器暂存目录: …pecl download {name}」→ 取回后逐份一行 `ok`「已缓存扩展包: pecl/{f} → {缓存根/php/{ver}/pecl}」+ `cache:promote`。<br>**apk（仅 Alpine）**：一行 `cmd`「预取构建依赖: …apk add --cache-dir /tmp/phpo-ext/apk --virtual .phpo-ext-deps $PHPIZE_DEPS」；既有缓存命中 → 一行 `ok`「命中 apk 构建依赖缓存（零网络）: N 份 → /tmp/phpo-ext/apk」；取回后逐份一行 `ok`「已缓存构建依赖包: apk/{f} → {缓存根/php/{ver}/apk}}」。<br>**降级一律 `dim` 不得静默**：「扩展包缓存查询失败，本次走网络」「扩展包缓存校验失败，回退网络」（另发 `cache:corrupted`）「扩展包回填容器失败，本次走网络」「pecl download 失败，退回在线编译」「扩展包取回宿主失败（本次不提升缓存）」「扩展包提升失败（不影响本次编译）」「暂存目录内无 {name}-*.tgz，退回在线编译」「基座包管理器为 {deb\|none}，构建依赖不产生可离线包文件」「基座包管理器探测失败，跳过构建依赖预取」 |
+| 清空容器暂存目录 | 有待启用项时，编译段尾一行 `cmd`「清空容器暂存目录: rm -rf /tmp/phpo-ext」——**必须在 commit 之前**，否则包文件被固化进 `phpo/php:{version}` 镜像层 |
 | 容器内编译扩展 | `meta` 行「待启用 N 项 / 待停用 N 项」→ 基座退回支另起一行 `dim`（§5.16.2）→ 每条命令一行 `cmd`（含 argv 全文）→ **命令的 stdout/stderr 逐行**（stdout 为 `meta`、stderr 为 `dim`）→ 每项成功一行 `ok` |
 | 固化镜像 `phpo/php:{version}` | `docker commit →` 与「已固化镜像」`cmd`／`ok` 行；`导出扩展镜像到临时目录 {tmp}` `cmd` 行；**提升成功一行 `ok` 必须点名缓存槽位**（`已提升到离线缓存: {committedRef} → {extTar}`，`extTar` 即 `env.OfflineExtImageTar` 派生的 `image-extensions.tar` 全路径）——需求 ③ 的核对落点，只说「已提升」等于没答「提升到哪儿了」（§5.14.2 两槽位） |
 | 从扩展镜像重建容器 | `cmd` 行「以扩展镜像重建容器 ← ref」+ `ok` 行「容器已运行于固化镜像」 |
@@ -1803,6 +1828,11 @@ rm -f /usr/local/etc/php/conf.d/docker-php-ext-<name>.ini
 - ❌ 管理扩展弹窗的默认勾选取自本地状态、上次会话残留或空清单——只认权威快照 `phpExtensions[version]`。
 - ❌ 因 nginx 未接入/未安装/未运行而判死扩展整单，或重载失败后 `return err` 把已编译生效的扩展工作整单回滚（§5.16.3）。
 - ❌ 提升固化镜像后日志不点名缓存槽位（只说「已提升」，用户无法核对是否写进了 `image-extensions.tar`）。
+- ❌ **安装或重新编译时不把扩展包本体（`.tgz` / Alpine 的 `.apk`）落进缓存根**——只留固化镜像等于只缓存了「结果」，换机/断网时 pecl 与构建依赖仍必拨网络（§0.2 规则 36）。
+- ❌ 按精确扩展名查扩展包缓存，或命中后仍执行 `pecl install {name}`（在线解析）而不是 `pecl install {回填后的包文件}`。
+- ❌ Alpine 上用 `apk add --no-cache` 装 `$PHPIZE_DEPS`（拿不到 `.apk` 文件即永远无法离线）；或为 Debian/认不出的基座凭空造 deb 槽位。
+- ❌ `docker commit` **之前**不清空容器暂存目录 `/tmp/phpo-ext`（包文件被固化进 `phpo/php:{version}` 镜像层，成为清不掉的镜像垃圾）。
+- ❌ 缓存链某一步失败即判死整单——必须一行 `dim` 说明后退回在线编译。
 
 ### 5.17 备份归档：读不动即跳过并告警 + 数据服务逻辑导出（v2.9.9 新增，需求 ④）
 
@@ -2343,6 +2373,7 @@ const (
 | **R101** | **扩展固化镜像与基座镜像争用同一个缓存槽位（后写覆盖先写），或提升后用户无法核对到底进了哪个文件** | **每版本两槽位：`image.tar` / `image-extensions.tar` + 清单 `image` / `extensions_image` 各一条（`config/offline.go#OfflineExtImageTar`）；提升日志一行 `ok` 点名 ` committedRef → extTar` 全路径；`check-cache-manifest.go` 锁死字段名；§0.2 规则 35 + §5.14.2 + §5.16.3**（v2.9.14） |
 | **R102** | **phpo 产出物权限被 umask 削成 0755/0644，用户删不掉自己的文件；或反向把容器内进程产物也 chmod 成 777** | **`internal/util/fs.go` 一处收口（`DirPerm`/`FilePerm = 0o777` + 写后显式 `chmod`、`AtomicWrite` 先 Chmod 再 rename、叶子目录总归一以自愈旧装机）；范围**只含 phpo 自己的产出物**，容器内所写文件走 §5.17.1 跳过+告警；§0.2 规则 32 + §5.20**（v2.9.14） |
 | **R103** | **扩展弹窗 `await` 数十秒的后台任务才关闭；或 nginx 重载失败把已编译生效的扩展整单回滚** | **管理扩展弹窗提交即 `emit('close')`，进度/失败由抽屉日志与队列承载、`.then` 里 `await syncState()` 后 toast（§5.16.2）；nginx 缺席/未运行 → `dim` 跳过行、重载失败 → `err` 行 + `return nil` 不判死整单（§5.16.3）；§0.2 规则 34 + §5.16.2 / §5.16.3 / §5.16.5**（v2.9.14） |
+| **R104** | **扩展只缓存「结果」（`.so` / 固化镜像）而不缓存「包本体」，断网/换机时 pecl 与 Alpine 构建依赖仍必拨网络；或命中缓存后因按精确名查而永不命中，每次白拨一次网络** | **`cache.LookupExtPackage` 按 `{name}-` 前缀匹配 + 取版本序最大；命中即 `engine.CopyTo` 回填容器 `/tmp/phpo-ext/{apk,pecl}` 并 `pecl install <包文件>`（零网络）；未命中先 `pecl download` / `apk add --cache-dir` 取包 → `CopyFrom` 取回宿主 → `PromoteExtension` 登记 manifest（SHA256）；`rm -rf /tmp/phpo-ext` 固定在 `docker commit` 之前；缓存任一环节失败只 `dim` 并退回在线编译；用例 `internal/cache/extpkg_test.go`（前缀命中/最大版本/损坏/提升登记）+ `internal/service/extension_service_test.go` 五条（pecl 命中零网络 · Alpine apk 预取 · deb 跳过 · 缓存失败降级 · 损坏回退）；§0.2 规则 36 + §5.14.3 / §5.16.3**（v2.9.14 追加） |
 
 ---
 
@@ -2403,7 +2434,7 @@ const (
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（81 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **11** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（83 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **11** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -2539,7 +2570,7 @@ const (
 - [ ] chmod 失败是否 **best-effort 忽略**（不因此判死写操作）？
 - [ ] 是否**没有**越界去 `chown`/`chmod` 容器内进程写的文件或用户环境里他人的目录？（那是 §5.17.1 的跳过+告警口径）
 
-**扩展弹窗与缓存槽位（§5.16.2 / §5.16.3 / §5.14.2，需求 ③/⑥）**：
+**扩展弹窗 · 缓存槽位 · 扩展包本体离线化（§5.16.2 / §5.16.3 / §5.14.2 / §5.14.3，需求 ③/⑥）**：
 
 - [ ] 管理扩展弹窗是否**提交即 `emit('close')`**（没有 `await` 数十秒的后台任务才关）？
 - [ ] 管理扩展弹窗的默认勾选是否取自**权威快照** `appState.phpExtensions[version]`（不是空清单 / 本地残留）？
@@ -2548,6 +2579,11 @@ const (
 - [ ] 每个 php 版本是否两份镜像缓存各占各的槽位与清单字段（`image` / `extensions_image`）？`PromoteExtImage` 是否**不会**覆盖基座 `image.tar`？
 - [ ] 零网络恢复加载扩展镜像是否发 `cache:hit`、损坏是否发 `cache:corrupted`（不因「走的是扩展槽位」而静默）？
 - [ ] `check-cache-manifest.go`（第 4 项门禁）是否仍锁死两槽位字段名？
+- [ ] **扩展包本体**（pecl 的 `.tgz` ／ Alpine 构建依赖的 `.apk`）是否在**安装**与**重新编译**两条路径上都落进缓存根并登记 `manifest.json`（SHA256）？（§0.2 规则 36）
+- [ ] 查扩展包是否按 `{name}-` **前缀**匹配、多份取版本序最大（精确名等于永不命中）？命中后是否 `pecl install <回填的包文件>` 而**不是** `pecl install {name}`？
+- [ ] Alpine 构建依赖是否用 `apk add --cache-dir`（**不是**官方脚本的 `--no-cache`）+ `--virtual .phpo-ext-deps $PHPIZE_DEPS`？基座为 `deb` / `none` 时是否只一行 `dim`、**不**造 deb 槽位、**不**判死整单？
+- [ ] 容器暂存目录 `/tmp/phpo-ext` 是否在 `docker commit` **之前**清空（否则包文件被固化进 `phpo/php:{version}` 镜像层）？宿主 `./php/{ver}/ext/` 是否由 `Apply` 的 defer 覆盖成败取消、只发一次 `cache:tempdir-cleared`？
+- [ ] 缓存链任一环节（查询/回填/下载/取回/提升）失败是否只 `dim` 并退回在线编译，**绝不**判死整单？
 
 **卸载无保留门禁（§1.11，需求 ⑤）**：
 
@@ -2650,6 +2686,56 @@ const (
 > 反馈两项条款、密码／版本／域名／端口策略、冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`。
 > **一处生产偏离需注明**：§5.20 把 `config.yaml` 权限从 v2.9.0 的 `0600` 改为 `0777`，是用户明确裁决（「目录和文件一律 777」）
 > 的结果，其代价是明文密码世界可读——已在 §5.2、§5.20.1 与本条记载，不是笔误。
+>
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 扩展包本体离线化（安装与重新编译两条路径）**：
+> 用户提出的是离线缓存的一条长期欠账：**「安装和重新编译都要把 apk 和 pecl 给我离线到本地」**，追问下裁决为
+> **「有 apk 和 pecl 就必须做，根据基座选择，但无论如何都必须在安装和重新编译时候离线扩展包」**。审计结论是三处
+> 真实缺口，方向不是「漏了一处调用」而是**这条链路从来没有存在过**：① 生产代码从未查/写扩展包缓存——
+> `extension_service.go` 的旧注释甚至明写「不下载 `.tgz`/`.apk`」，`cache.LookupExtension` / `PromoteExtension`
+> 只挂在 `OfflineService` 门面上给离线缓存页用，「装过即缓存过」因此**只落在固化镜像这一层**；② 旧
+> `LookupExtension` 按**精确扩展名**查，而 pecl 产物永远叫 `{name}-{版本}.tgz`，即便手工放了包也等于永不命中；
+> ③ `config/extensions.go` 没有 apk／包管理器这一层概念，且 php 容器的挂载表里**没有 `ext/` 这一档**
+> （§4.2 挂载只覆盖源码/conf/logs），宿主临时目录与容器之间根本没有字节通道——包取不出来。
+> 现冻结为一条新规则（§0.2 **36**）并重写 §5.14.3 的扩展流程：**缓存对象是包文件本体**（pecl 的 `.tgz` ／
+> Alpine 构建依赖的 `.apk`，各一条 `manifest.json` SHA256 条目），**安装与重新编译走同一条路**——命中即
+> `engine.CopyTo` 零网络回填容器暂存目录 `/tmp/phpo-ext/{apk,pecl}` 并 `pecl install <该文件>`；未命中先
+> **只取包不编译**（`pecl download` ／ `apk add --cache-dir` + `--virtual .phpo-ext-deps $PHPIZE_DEPS`，
+> **不是**官方脚本用完即弃的 `--no-cache`）→ `CopyFrom` 取回宿主临时目录 → `PromoteExtension` 提升 → 再从该文件
+> 编译。三条配套口径：**基座族由运行时探测决定**（判据 `/lib/apk/db/installed`，与官方 `docker-php-ext-install`
+> 同源；`deb` / `none` 不产生可离线的系统包，一行 `dim` 后跳过，**不造 deb 槽位**）；**容器暂存目录必须在
+> `docker commit` 之前清空**（否则包文件被固化进 `phpo/php:{version}` 镜像层，永远清不掉）；**缓存链任一环节失败
+> 只 `dim` 并退回在线编译，绝不判死整单**（§0.2 规则 16）。落地：新增 `internal/engine/copy.go`（Docker archive
+> API 是宿主 ⇄ 容器唯一通道，tar 内只留 basename 使宿主路径不可能穿越进容器）、`config/extensions.go`
+> （`ExtStaging{Root,APK,PECL}` / `PkgManager` 三态 / `ExtPkgProbeCmd` / `ExtApkPrefetchCmd` / `ExtPeclDownloadCmd` /
+> `ExtInstallFromFileCmds` / `ExtStagingCleanupCmd`）、`cache/lookup.go`（`LookupExtPackage` 前缀匹配 + 取版本序
+> 最大、`ListExtPackages`）、`cache/{promote,extension_cache}.go`（提升即登记清单）、
+> `service/extension_service.go`（`peclPackage` / `prefetchBuildDeps` / `emitCacheCorrupted`；宿主临时目录的生命周期
+> 上移到 `Apply` 的 defer，成功/失败/取消共用一份、只发一次 `cache:tempdir-cleared`）。同步落点：头部「PHP 扩展」
+> 与「离线缓存原则」两条、§0.2 规则 **36**、§0.3 **三**行（扩展包缓存族数 **2**／容器内暂存目录
+> `/tmp/phpo-ext/{apk,pecl}`／基座包管理器判定数 **3**）、§1.1 离线缓存策略行、§1.13.2 流程图、§5.14.3
+> 扩展流程整段重写、§5.14.12 与 §5.16.5 各补禁止项、§5.16.3 日志契约补两行、§6 映射表两行、§9 **R104**、
+> §12.10 自查 **六**项、底部摘要一条。派生文档同源（§13 第 4 步）：`docs/{离线缓存机制,缓存清单规范,临时目录生命周期,离线缓存协议,接口契约}.md`。
+> **验真**：`gofmt -l .` 无输出、`go vet ./...`、`go build ./...`、`go test ./... -count=1` 全绿；五项门禁全过
+> （i18n zh-CN / en-US 各 **611** 键且集合相等——本轮无新增文案键、模板 golden 空 diff、Docker 命名、缓存清单
+> 字段含 `extensions_image`、扩展 **73** 项分类对账）。用例：`internal/cache/extpkg_test.go` 三条
+> （`TestLookupExtPackage_PrefixHitAndMaxVersion`／`_CorruptedAndMissingDir`／`TestPromoteExtension_RegistersAndEmits`）
+> + `internal/service/extension_service_test.go` 五条（`_PeclCacheHit_ZeroNetwork`／`_ApkPrefetchOnAlpine`／
+> `_DebBaseSkipsApkPrefetch`／`_CacheFailuresDegrade`／`_ExtPkgCorrupted`）。计数同步：与包同目录的 `*_test.go`
+> **81 → 83**（本轮 +1 `extpkg_test.go`；另校正上一轮 `internal/engine/client_test.go` 未登记造成的既有漂移）、
+> §4.1 引擎层 **17 → 18 文件**（新增 `copy.go`）；`test/integration/` 仍 **11** 个。
+> **明确未做（欠账如实登记）**：**live 取证未跑**——`test/integration/t601_extension_live_test.go` 的「apk/pecl 包
+> 确实落进缓存根」断言需要 Docker + 外网（`pecl download` 与 `apk add` 都要拨网络），本机离线无法取证；
+> **真宿主 GUI 未走查**（本轮纯后端 + 文档，无前端改动）；未 commit（等用户指令）。
+> **一处既有文档漂移随本轮校正**：`docs/临时目录生命周期.md` §2 的清空 reason 原写 `compile_success`，代码常量与
+> `model/cache_entry.go` 注释均为 `compile_ok`（另有 `compile_failed` / `cancelled` / `startup_scan`，触发方
+> `app/di.go` → `ScanAndClearResidue`），因本轮重写了同一张表故一并改正并注明。
+> **明确未改**：8 条硬红线原文、三段式写操作、**17 个事件名一个未增**（复用 `cache:hit`／`cache:miss`
+> 的 `action=download`／`cache:promote`／`cache:corrupted`／`cache:tempdir-cleared`）、后端任务状态 **4** 个、
+> preflight **19** action 与 NEEDS_HOME **17**、`pkg/errs` **27** 码、`App.*` 绑定方法数（`peclPackage` /
+> `prefetchBuildDeps` 是任务内部步骤，**不经** `OfflineService` 门面）、i18n 键集、每版本两镜像槽位、扩展目录
+> **73**／常用 **11**、门禁 **5** 项、临时目录路径规则（`./{kind}/{version}/ext/`，不可自定义）与「四必清」、
+> §5.15 三根互斥唯一、§5.16.1 目录与 §5.16.4 停用=删 ini、冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）
+> 与 `base.css`、前端全部代码。
 >
 > **v2.9.13 变更（新增 §5.6.4「等待期反馈：操作名进抽屉标题条 + 被点按钮禁用」，把「一切耗时操作实时说出在做什么」写成冻结条款）**：
 > 用户提出的最高优先级需求：**「所有的一切全部（操作/点击/变化/请求/反馈/响应/日志/消息…）优先把直观名字放进日志抽屉，
@@ -2924,6 +3010,7 @@ const (
 - 文件权限（v2.9.14）：**phpo 自己的产出物目录与文件一律 `0777`，且必须写后显式 `chmod` 归一（`internal/util/fs.go` 一处收口；写进 `MkdirAll`/`WriteFile` 入参会被 umask 削掉）· 旧装机在下次写入时自愈 · `config.yaml` 不豁免，明文密码因此世界可读 · 容器内进程所写文件不在本条范围（见 §5.20）**
 - 卸载无保留门禁（v2.9.14）：**禁止「至少保留一个 PHP 版本」这类门禁（`pkg/errs` 已删该码，28 → 27）· 站点依赖与最后一个版本一律降级为警告并照常卸载（PHP 与 Nginx 同口径，见 §1.11）**
 - 扩展缓存槽位与弹窗（v2.9.14）：**每个 php 版本两份镜像缓存各占槽位（`image.tar` / `image-extensions.tar`，清单 `image` / `extensions_image`）· 提升日志一行 `ok` 点名落点全路径 · 固化镜像缺席由 `LoadExtImage` 零网络 `docker load` 恢复并发 `cache:hit`/`cache:corrupted` · 管理扩展弹窗提交即关闭、默认勾选取权威快照 · nginx 缺席/未运行 `dim` 跳过、重载失败 `err` 后继续，不判死已生效的扩展（见 §5.14.2 / §5.16.2 / §5.16.3）**
+- 扩展包本体离线化（v2.9.14 追加）：**缓存对象是包文件本体（pecl 的 `.tgz` ／ Alpine 构建依赖的 `.apk`）而不是编译结果——安装与重新编译两条路径都必须落进缓存根并登记 SHA256 · 按 `{name}-` 前缀查（精确名等于永不命中）、命中即 `engine.CopyTo` 零网络回填容器 `/tmp/phpo-ext/{apk,pecl}` 并 `pecl install <该文件>` · 未命中先 `pecl download` / `apk add --cache-dir --virtual`（**不是** `--no-cache`）取包 → `CopyFrom` 取回宿主 → `PromoteExtension` 提升 → 再从文件编译 · 基座非 Alpine（`deb`/`none`）一行 `dim` 跳过、不造 deb 槽位 · 容器暂存目录在 `docker commit` **之前** `rm -rf` · 缓存任一环节失败只 `dim` 退回在线编译、绝不判死整单（见 §0.2 规则 36 / §5.14.3 / §5.16.3）**
 - 等效命令：**全界面不展示 `phpo …` 伪命令行（抽屉头部、三处模态的「将执行」预览、向导与 demo 日志首行；仅保留 `taskStore` 的参数登记，见 §1.4）**
 - 升级：**支持版本检查和自动升级（SHA256 + Ed25519 双校验）**
 - Docker 清洁：**所有操作幂等、原子、隔离、一致、可清理、可恢复**

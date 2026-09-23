@@ -1,6 +1,7 @@
 // T601 · PHP 扩展离线缓存链路：把「启用哪些扩展」落到 phpo 专用镜像并重载 Nginx。
-// 机制（用户裁决）：扩展经容器内「内置编译工具」（docker-php-ext-install / pecl）安装，不下载 .tgz/.apk；
-// 装好后 docker commit 固化出 phpo/php:{version}，重装同配置时经离线缓存零网络加载。
+// 机制：扩展经容器内编译工具（docker-php-ext-install / pecl）装好，docker commit 固化出 phpo/php:{version}；
+// **扩展包文件本身同样必须离线**（§5.14.3 铁律 1/3）——pecl 的 .tgz 与 Alpine 构建依赖的 .apk 先落容器暂存目录，
+// 由宿主取回临时目录 ./php/{ver}/ext/ 再提升进缓存根（默认 ./offline/php/{ver}/{apk|pecl}/），下次命中即零网络回填。
 // 全程三段式（硬红线 5）+ 后端权威广播（硬红线 4）+ 无论成败清空临时目录（硬红线 8）。
 package service
 
@@ -10,11 +11,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync/atomic"
 
+	"phpo/internal/cache"
 	"phpo/internal/config"
 	"phpo/internal/engine"
 	"phpo/internal/model"
@@ -31,15 +34,23 @@ type ExtRuntime interface {
 	CommitContainer(ctx context.Context, name, ref string) error
 	ImageSave(ctx context.Context, ref, dstTar string) error
 	ImageRemove(ctx context.Context, ref string) error
+	// CopyTo / CopyFrom 是宿主临时目录与容器暂存目录之间的唯一字节通道
+	// （PHP 挂载表没有 ext/ 这一档，见 internal/engine/copy.go）
+	CopyTo(ctx context.Context, name, dstDir string, hostFiles ...string) error
+	CopyFrom(ctx context.Context, name, srcDir, dstDir string) ([]string, error)
 }
 
-// ExtImageCache 离线镜像缓存子集（*cache.Manager 满足）
+// ExtImageCache 离线缓存子集（*cache.Manager 满足）：基座镜像 · 固化镜像 · 扩展包文件三类条目
 type ExtImageCache interface {
 	EnsureImage(ctx context.Context, kind, version, ref string) error
 	CachedImageRef(kind, version string) (string, bool)
 	PromoteExtImage(version, ref, tmpTar string) error
 	EnsureTempDir(kind, version string) (string, error)
 	ClearTempDir(ctx context.Context, kind, version, reason string) error
+	// 扩展包（apk / pecl）：装前必查（前缀匹配带版本号的产物名）· 取回后提升登记 manifest
+	LookupExtPackage(phpVersion, extType, name string) (cache.ExtLookup, error)
+	ListExtPackages(phpVersion, extType string) ([]string, error)
+	PromoteExtension(phpVersion, extType, tmpFile string) error
 }
 
 // ExtStore 扩展启停的权威持久化子集（*store.Store 满足）
@@ -163,6 +174,15 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 		prevEnv, hadEnv = b, true
 	}
 
+	// 临时目录 ./php/{ver}/ext/ 覆盖整条链路（扩展包取回 + 固化镜像导出），任务退出必清（§5.14.4）——
+	// 取消与失败也一样清：清的理由随结果变，故 reason 在 Run 之后才定，defer 在此之前先挂上。
+	tmpDir, err := s.cache.EnsureTempDir(string(model.KindPHP), version)
+	if err != nil {
+		return err
+	}
+	reason := configReasonFailed
+	defer func() { _ = s.cache.ClearTempDir(ctx, string(model.KindPHP), version, reason) }()
+
 	// 跨步状态：本次是否已固化新镜像（决定回滚是否需删除 committedRef）
 	var committedNew bool
 
@@ -191,6 +211,9 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 			if err := s.ensureRunning(ctx, name, version, prevRef, log); err != nil {
 				return err
 			}
+			if len(added) > 0 {
+				s.prefetchBuildDeps(ctx, name, version, tmpDir, log)
+			}
 			for _, e := range removed {
 				if !config.ValidateExt(e) {
 					return fmt.Errorf("扩展名不合法: %s", e)
@@ -203,17 +226,17 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 				log.Log(string(model.LogOk), "已停用扩展: "+e)
 			}
 			for _, e := range added {
-				cmds := config.ExtInstallCmds(e)
-				if len(cmds) == 0 {
-					return fmt.Errorf("扩展名不合法: %s", e)
-				}
-				for _, cmd := range cmds {
-					log.Log(string(model.LogCmd), "安装扩展 "+e+": "+strings.Join(cmd, " "))
-					if err := s.runInContainer(ctx, name, log, cmd); err != nil {
-						return extFailed(log, e, "安装", err)
-					}
+				if err := s.installExt(ctx, name, version, tmpDir, e, log); err != nil {
+					return err
 				}
 				log.Log(string(model.LogOk), "已安装扩展: "+e)
+			}
+			if len(added) > 0 {
+				// 暂存目录必须在 commit 之前清掉：包文件留在容器层就会被固化进 phpo/php:{version}
+				log.Log(string(model.LogCmd), "清空容器暂存目录: "+strings.Join(config.ExtStagingCleanupCmd, " "))
+				if err := s.runInContainer(ctx, name, log, config.ExtStagingCleanupCmd); err != nil {
+					return err
+				}
 			}
 			return nil
 		}, RB: func(ctx context.Context) error {
@@ -227,7 +250,7 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 			}
 			committedNew = true
 			log.Log(string(model.LogOk), "已固化镜像: "+committedRef)
-			return s.promoteCommitted(ctx, version, committedRef, log)
+			return s.promoteCommitted(ctx, version, committedRef, tmpDir, log)
 		}},
 		&task.FuncStep{StepName: "从扩展镜像重建容器", Exec: func(ctx context.Context, log task.StepLog) error {
 			log.Log(string(model.LogCmd), "以扩展镜像重建容器: "+name+" ← "+committedRef)
@@ -289,6 +312,9 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 		},
 	}
 	_, err = s.tasks.Run(ctx, t)
+	if err == nil {
+		reason = configReasonOK
+	}
 	return err
 }
 
@@ -349,6 +375,140 @@ func (w *extLogWriter) emit(line string) {
 	}
 }
 
+// installExt 装一项扩展：先让**包文件**离线可得（命中缓存即零网络回填容器暂存目录，未命中则下载 → 取回 → 提升），
+// 再从暂存文件编译；pecl 包文件取不到时退回在线 `pecl install`（缓存是加速手段，不是新增的失败面，§0.2 规则 16）。
+func (s *ExtensionService) installExt(ctx context.Context, ctr, version, tmpDir, ext string, log task.StepLog) error {
+	cmds := config.ExtInstallCmds(ext)
+	if config.ClassifyExt(ext) == config.ExtToolPECL {
+		if staged := s.peclPackage(ctx, ctr, version, tmpDir, ext, log); staged != "" {
+			cmds = config.ExtInstallFromFileCmds(ext, staged)
+		}
+	}
+	return s.runCmds(ctx, ctr, ext, cmds, log)
+}
+
+// runCmds 逐条执行安装命令；失败点名到扩展（toast 直出，§3.2 原则 3）
+func (s *ExtensionService) runCmds(ctx context.Context, ctr, ext string, cmds [][]string, log task.StepLog) error {
+	for _, c := range cmds {
+		log.Log(string(model.LogCmd), "安装扩展 "+ext+": "+strings.Join(c, " "))
+		if err := s.runInContainer(ctx, ctr, log, c); err != nil {
+			return extFailed(log, ext, "安装", err)
+		}
+	}
+	return nil
+}
+
+// peclPackage 让 pecl 的 .tgz 本体进离线缓存，返回容器内可直接 `pecl install` 的包文件路径。
+// 命中：CopyTo 回填暂存目录（零网络）；未命中：`pecl download` 只取包不编译 → 宿主取回临时目录 → 提升登记 manifest。
+// 任一缓存环节（查询/回填/下载/取回/提升）失败都只记一行 dim 并返回 ""，让在线编译继续——
+// 编译才是本单的目的，缓存失败判死整单等于把已做对的工作撤回（§5.16.3）。
+func (s *ExtensionService) peclPackage(ctx context.Context, ctr, version, tmpDir, ext string, log task.StepLog) string {
+	lk, err := s.cache.LookupExtPackage(version, config.ExtTypePECL, ext)
+	switch {
+	case err != nil:
+		log.Log(string(model.LogDim), "扩展包缓存查询失败，本次走网络: "+err.Error())
+	case lk.Corrupted:
+		s.emitCacheCorrupted(version, filepath.Base(lk.Path))
+		log.Log(string(model.LogDim), "扩展包缓存校验失败，回退网络: "+lk.Path)
+	case lk.Hit:
+		staged := path.Join(config.ExtStagingPECL, filepath.Base(lk.Path))
+		if e := s.rt.CopyTo(ctx, ctr, config.ExtStagingPECL, lk.Path); e != nil {
+			log.Log(string(model.LogDim), "扩展包回填容器失败，本次走网络: "+e.Error())
+			return ""
+		}
+		s.emitter.Emit("cache:hit", model.CacheHitEvent{
+			Kind: string(model.KindPHP), Version: version, Source: "offline", Size: lk.Size})
+		log.Log(string(model.LogOk), "命中扩展包缓存（零网络）: "+lk.Path+" → "+staged)
+		return staged
+	}
+
+	s.emitter.Emit("cache:miss", model.CacheMissEvent{
+		Kind: string(model.KindPHP), Version: version, Action: "download"})
+	cmd := config.ExtPeclDownloadCmd(ext)
+	log.Log(string(model.LogCmd), "取扩展包到容器暂存目录: "+strings.Join(cmd, " "))
+	if e := s.runInContainer(ctx, ctr, log, cmd); e != nil {
+		log.Log(string(model.LogDim), "pecl download 失败，退回在线编译: "+e.Error())
+		return ""
+	}
+	files, e := s.rt.CopyFrom(ctx, ctr, config.ExtStagingPECL, filepath.Join(tmpDir, config.ExtTypePECL))
+	if e != nil {
+		log.Log(string(model.LogDim), "扩展包取回宿主失败（本次不提升缓存）: "+e.Error())
+		return ""
+	}
+	dstDir := s.env.OfflineExtDir(string(model.KindPHP), version, config.ExtTypePECL)
+	staged := ""
+	for _, f := range files {
+		if !strings.HasPrefix(f, ext+"-") {
+			continue
+		}
+		if e := s.cache.PromoteExtension(version, config.ExtTypePECL, filepath.Join(tmpDir, config.ExtTypePECL, f)); e != nil {
+			log.Log(string(model.LogDim), "扩展包提升失败（不影响本次编译）: "+e.Error())
+		} else {
+			log.Log(string(model.LogOk), "已缓存扩展包: pecl/"+f+" → "+dstDir)
+		}
+		staged = path.Join(config.ExtStagingPECL, f) // files 已排序，取最后一份即版本序最大
+	}
+	if staged == "" {
+		log.Log(string(model.LogDim), "暂存目录内无 "+ext+"-*.tgz，退回在线编译")
+	}
+	return staged
+}
+
+// prefetchBuildDeps 把 Alpine 基座的构建依赖（$PHPIZE_DEPS：phpize/autoconf/g++ 一类）的 .apk 也离线化：
+// apk add --cache-dir 才有可取回的包文件（官方脚本用的 --no-cache 用完即弃，永远拿不到包）。
+// 命中缓存先把 .apk 回填进容器缓存目录，之后 apk add 即零网络；取回后逐份提升登记。
+// 基座不是 Alpine 时没有这一类包文件（Debian 的 docker-php-ext-install 不下系统包），一行 dim 说明后跳过——
+// 不为此造 deb 槽位（YAGNI，§3.4.2）。本步任何失败都不得判死扩展编译。
+func (s *ExtensionService) prefetchBuildDeps(ctx context.Context, ctr, version, tmpDir string, log task.StepLog) {
+	var out bytes.Buffer
+	if err := s.rt.ExecStream(ctx, ctr, config.ExtPkgProbeCmd, &out, io.Discard); err != nil {
+		log.Log(string(model.LogDim), "基座包管理器探测失败，跳过构建依赖预取: "+err.Error())
+		return
+	}
+	if pm := config.PkgManager(strings.TrimSpace(out.String())); pm != config.PkgManagerAPK {
+		log.Log(string(model.LogDim), "基座包管理器为 "+string(pm)+"，构建依赖不产生可离线包文件")
+		return
+	}
+
+	cached, err := s.cache.ListExtPackages(version, config.ExtTypeAPK)
+	if err != nil {
+		log.Log(string(model.LogDim), "apk 缓存查询失败，本次走网络: "+err.Error())
+	} else if len(cached) > 0 {
+		if e := s.rt.CopyTo(ctx, ctr, config.ExtStagingAPK, cached...); e != nil {
+			log.Log(string(model.LogDim), "apk 缓存回填失败，本次走网络: "+e.Error())
+		} else {
+			log.Log(string(model.LogOk), fmt.Sprintf("命中 apk 构建依赖缓存（零网络）: %d 份 → %s", len(cached), config.ExtStagingAPK))
+		}
+	}
+
+	cmd := config.ExtApkPrefetchCmd()
+	log.Log(string(model.LogCmd), "预取构建依赖: "+strings.Join(cmd, " "))
+	if err := s.runInContainer(ctx, ctr, log, cmd); err != nil {
+		log.Log(string(model.LogDim), "构建依赖预取失败（不影响扩展编译）: "+err.Error())
+		return
+	}
+
+	files, err := s.rt.CopyFrom(ctx, ctr, config.ExtStagingAPK, filepath.Join(tmpDir, config.ExtTypeAPK))
+	if err != nil {
+		log.Log(string(model.LogDim), "apk 取回宿主失败（本次不提升缓存）: "+err.Error())
+		return
+	}
+	dstDir := s.env.OfflineExtDir(string(model.KindPHP), version, config.ExtTypeAPK)
+	for _, f := range files {
+		if e := s.cache.PromoteExtension(version, config.ExtTypeAPK, filepath.Join(tmpDir, config.ExtTypeAPK, f)); e != nil {
+			log.Log(string(model.LogDim), "apk 提升失败（不影响本次编译）: "+e.Error())
+			continue
+		}
+		log.Log(string(model.LogOk), "已缓存构建依赖包: apk/"+f+" → "+dstDir)
+	}
+}
+
+// emitCacheCorrupted 缓存条目 SHA256 不匹配的取证行（§5.14.5）
+func (s *ExtensionService) emitCacheCorrupted(version, entry string) {
+	s.emitter.Emit("cache:corrupted", model.CacheCorruptedEvent{
+		Kind: string(model.KindPHP), Version: version, Entry: model.ManifestPackage{Name: entry}})
+}
+
 // phpExtConfDir 官方 php 镜像的扩展 ini 目录：docker-php-ext-enable 即往此处写 docker-php-ext-<name>.ini
 const phpExtConfDir = "/usr/local/etc/php/conf.d"
 
@@ -387,14 +547,9 @@ func (s *ExtensionService) recreate(ctx context.Context, name, version, image st
 	return s.rt.StartContainer(ctx, name)
 }
 
-// promoteCommitted 把固化镜像 docker save 到临时目录并提升到离线缓存；无论成败清空临时目录
-func (s *ExtensionService) promoteCommitted(ctx context.Context, version, committedRef string, log task.StepLog) error {
-	tmpDir, err := s.cache.EnsureTempDir(string(model.KindPHP), version)
-	if err != nil {
-		return err
-	}
-	reason := configReasonFailed
-	defer func() { _ = s.cache.ClearTempDir(ctx, string(model.KindPHP), version, reason) }()
+// promoteCommitted 把固化镜像 docker save 到临时目录并提升到离线缓存的空闲槽位 image-extensions.tar。
+// 临时目录由 Apply 统管（整条链路共用一份，任务退出必清），此处只借用不再另建另清。
+func (s *ExtensionService) promoteCommitted(ctx context.Context, version, committedRef, tmpDir string, log task.StepLog) error {
 	tmpTar := filepath.Join(tmpDir, "image.tar")
 	extTar := s.env.OfflineExtImageTar(string(model.KindPHP), version)
 	log.Log(string(model.LogCmd), "导出扩展镜像到临时目录: "+tmpTar)
@@ -406,7 +561,6 @@ func (s *ExtensionService) promoteCommitted(ctx context.Context, version, commit
 	}
 	// 提升落点必须点名到缓存槽位：与基座 image.tar 各占一份，用户据此核对「扩展装进缓存了没有」
 	log.Log(string(model.LogOk), "已提升到离线缓存: "+committedRef+" → "+extTar)
-	reason = configReasonOK
 	return nil
 }
 

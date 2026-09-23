@@ -4,6 +4,8 @@ package cache
 import (
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"phpo/internal/model"
 )
@@ -97,6 +99,70 @@ func manifestExtSha(mf *model.CacheManifest, extType, name string) string {
 		}
 	}
 	return ""
+}
+
+// LookupExtPackage 按「扩展名前缀」查缓存包文件：pecl 产物名带版本号（redis-6.0.2.tgz），
+// 精确名永远查不到，等于每次应用扩展都白拨一次网络。多份命中取版本序最大的一份；
+// 存在但 SHA256 与清单不符即 Corrupted（按未命中回退网络，§5.14.5）。
+func (m *Manager) LookupExtPackage(phpVersion, extType, name string) (ExtLookup, error) {
+	dir := m.env.OfflineExtDir("php", phpVersion, extType)
+	fis, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ExtLookup{}, nil
+		}
+		return ExtLookup{}, err
+	}
+	var best string
+	for _, fi := range fis {
+		if fi.IsDir() {
+			continue
+		}
+		n := fi.Name()
+		if n != name && !strings.HasPrefix(n, name+"-") {
+			continue
+		}
+		if n > best { // 稳定序取最大版本后缀
+			best = n
+		}
+	}
+	if best == "" {
+		return ExtLookup{}, nil
+	}
+	pkg := filepath.Join(dir, best)
+	var want string
+	if mf, err := m.LoadManifest("php", phpVersion); err == nil {
+		want = manifestExtSha(mf, extType, best)
+	}
+	got, err := FileSHA256(pkg)
+	if err != nil {
+		return ExtLookup{}, err
+	}
+	if want == "" || !matches(got, want) {
+		return ExtLookup{Path: pkg, Corrupted: true}, nil
+	}
+	return ExtLookup{Hit: true, Path: pkg, Size: fileSize(pkg)}, nil
+}
+
+// ListExtPackages 列出某类型缓存目录内的全部包文件绝对路径（apk 回填容器缓存目录时用）
+func (m *Manager) ListExtPackages(phpVersion, extType string) ([]string, error) {
+	dir := m.env.OfflineExtDir("php", phpVersion, extType)
+	fis, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, fi := range fis {
+		if fi.IsDir() {
+			continue
+		}
+		out = append(out, filepath.Join(dir, fi.Name()))
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // CachedImageRef 返回基座镜像缓存 tar 所对应的镜像引用（manifest.image.name）；未命中或无记录返回 ("", false)。

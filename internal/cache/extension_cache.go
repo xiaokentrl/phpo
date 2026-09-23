@@ -51,12 +51,11 @@ func (m *Manager) InstallExtension(ctx context.Context, phpVersion, extType, nam
 	}
 	reason = ReasonCompileOK
 
-	// 命中无需再提升；未命中成功后提升进缓存
+	// 命中无需再提升；未命中成功后提升进缓存（cache:promote 由 PromoteExtension 发）
 	if !lookup.Hit {
 		if err := m.PromoteExtension(phpVersion, extType, srcPath); err != nil {
 			return err
 		}
-		m.emitPromote("php", phpVersion, []model.ManifestPackage{{Name: name}})
 	}
 	return nil
 }

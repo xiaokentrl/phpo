@@ -82,6 +82,8 @@ Step 五接口：`Name / Execute / Rollback / Cleanup / Cancelable`（[任务取
 
 Docker exec attach 流每帧带 **8 字节二进制帧头**，直读原始流即把垃圾打进日志。唯一出口是 `engine.ExecStream(ctx, name, argv, stdout, stderr io.Writer)`（内部 `stdcopy.StdCopy` 去帧并分流）；扩展编译与备份逻辑导出共用它。无换行的超长进度条按 **4 KiB** 强制断行——攒成整串等于让用户盯着一段时长未知的「执行中」。
 
+**宿主 ⇄ 容器的唯一字节通道是 `engine/copy.go`**（§5.14.3 / 总纲 v2.9.14 追加）：`CopyTo(ctx, name, dstDir, hostFiles...)` 把宿主的扩展包文件送进容器、`CopyFrom(ctx, name, srcDir, dstDir)` 把容器内下载/编译产物取回宿主，两者都走 **Docker archive API**（`CopyToContainer` / `CopyFromContainer`）——不经 shell、不依赖容器内装有 `scp`/`tar` 之类工具，因此基座是 Alpine 还是 Debian 都能用（php 容器的挂载表**不含** `ext/` bind，除这条通道外宿主与容器之间没有别的路径可搬字节）。tar 条目**只保 basename**：宿主侧的绝对路径与 `..` 不可能被带进容器（硬红线 3）。用途即扩展包本体离线化的两条腿——命中缓存时回填 `/tmp/phpo-ext/{apk,pecl}/`，未命中时把容器内 `pecl download` / `apk add --cache-dir` 的产物取回归档到缓存根。
+
 ### 6.3 全量同步与缺失态（§5.19，总纲 v2.9.14 需求 ①/④）
 
 用户用 Docker Desktop / `docker rm` / `docker rmi` 把容器和镜像清掉后，phpo 的服务列表不能照旧只说「已安装」。现按两档核查：

@@ -63,9 +63,13 @@ func (m *Manager) commitImage(kind, version, ref, src string, keepSrc bool, dst 
 	return m.SaveManifest(mf)
 }
 
-// PromoteExtension 把临时扩展包提升到离线缓存并登记 manifest.apk/pecl
+// PromoteExtension 把临时扩展包提升到离线缓存并登记 manifest；与镜像提升同样发 cache:promote
 func (m *Manager) PromoteExtension(phpVersion, extType, tmpFile string) error {
-	return m.commitExtension(phpVersion, extType, tmpFile, false)
+	if err := m.commitExtension(phpVersion, extType, tmpFile, false); err != nil {
+		return err
+	}
+	m.emitPromote("php", phpVersion, []model.ManifestPackage{{Name: filepath.Base(tmpFile)}})
+	return nil
 }
 
 // ImportExtension 把手工选定的扩展包（apk/pecl）复制进离线缓存并登记 manifest
