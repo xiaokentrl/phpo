@@ -144,7 +144,10 @@ jobs:
       # 模板变量），故此处 export 即等于把版本交给 package:windows 的 -DAPP_VERSION。
       - name: Package ${{ matrix.target }}
         run: |
-          export VERSION="$(bash scripts/version.sh)"
+          # 先赋值再 export：`export VERSION="$(…)"` 会让 shellcheck SC2155 警告
+          # 「声明即赋值会吞掉命令替换的返回码」——分开写才拿得到 version.sh 的退出状态。
+          VERSION="$(bash scripts/version.sh)"
+          export VERSION
           if [ -z "$VERSION" ]; then
             echo "::error::scripts/version.sh 未从 wails.json 取到版本号"
             exit 1

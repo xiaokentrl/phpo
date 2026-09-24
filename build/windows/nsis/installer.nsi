@@ -37,7 +37,7 @@ Unicode true
   !define ICON "build/windows/icon.ico"
 !endif
 !ifndef LICENSE
-  ; 无许可文件时不阻断打包
+  ; 兜底成空串：无许可文件时不阻断打包（仓库内暂无 LICENSE 文件）
   !define LICENSE ""
 !endif
 
@@ -62,7 +62,9 @@ VIAddVersionKey /LANG=2052 "FileVersion" "${APP_VERSION}"
 !define MUI_ABORTWARNING
 
 !insertmacro MUI_PAGE_WELCOME
-!ifdef LICENSE
+; 判据必须是「值为空」而非「符号是否定义」：上面的兜底总把 LICENSE 定义成 ""，
+; 用 !ifdef 即永真 → makensis 以 `LicenseData: open failed ""` 中止建包（run #3 第 10 步）。
+!if "${LICENSE}" != ""
   !insertmacro MUI_PAGE_LICENSE "${LICENSE}"
 !endif
 !insertmacro MUI_PAGE_DIRECTORY
