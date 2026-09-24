@@ -116,8 +116,24 @@ jobs:
 
       - name: Install NSIS (Windows)
         if: matrix.target == 'windows'
-        run: choco install nsis -y
         shell: pwsh
+        run: |
+          choco install nsis -y
+          # choco 只把 NSIS 装到 Program Files，不会让后续步骤寻到 makensis：Actions 的每一步
+          # 用的是作业开始时的 PATH 快照（＋各步写入的 GITHUB_PATH），机器 PATH 的改动不随之外溢。
+          # 故此处显式把该目录写进 GITHUB_PATH，并在本步自证可执行 —— 否则要到 Package 步
+          # 才以「executable file not found in $PATH / exit status 127」暴露（run #2 即此形状）。
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\NSIS",
+            "$env:ProgramFiles\NSIS",
+            "$env:ChocolateyInstall\lib\nsis\tools"
+          )
+          $nsis = $candidates | Where-Object { Test-Path (Join-Path $_ 'makensis.exe') } | Select-Object -First 1
+          if (-not $nsis) {
+            throw "choco 已安装 nsis，但候选目录内均无 makensis.exe：$($candidates -join ' | ')"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsis
+          & (Join-Path $nsis 'makensis.exe') /VERSION
 
       - name: Install frontend deps
         run: pnpm -C frontend install --frozen-lockfile
