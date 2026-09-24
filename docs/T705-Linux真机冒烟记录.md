@@ -36,7 +36,7 @@
 - **Windows**：NSIS `phpo-setup-x64.exe` 装/卸/升/回滚 + 代码签名 —— 需 windows runner（本机无 `makensis`）。
 - **macOS**：`.dmg` 装/卸/升/回滚 + Developer ID 签名/公证 —— 需 mac runner。
 - **Linux rpm**：`phpo-x86_64.rpm` 装卸 —— 本机无 `rpmbuild`（nfpm 纯 Go 可出包，但装/卸需 rpm 系发行版）。
-- **升级包签名**：`internal/updater/signing/public.key` 为占位，T703/release.yml 发布时换真私钥签名；真机「下载→双校验→安装→下次启动确认/回滚」端到端需 CI 出包后跑。
+- **升级包签名**：本记录当次（2026-09 的 Linux 冒烟）`internal/updater/signing/public.key` 为占位；**2026-09-24 已由持钥者配钥替换为真实公钥**（见 `docs/CHANGELOG.md` 与 `docs/应用升级.md` §3），T703/release.yml 发布前仍需把私钥导入仓库 secret `PHPO_SIGNING_KEY`（该项**尚未导入**）。真机「下载→双校验→安装→下次启动确认/回滚」端到端仍需 CI 出包后跑。
 - 上述由 CI matrix（native runner）或用户本机补齐；口径与 PHPO_LIVE 门禁一致——不编造未执行的结果。
 
 ## 相关文档

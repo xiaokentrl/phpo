@@ -1,5 +1,7 @@
 // 发布公钥嵌入（硬红线 6）：go:embed 随包分发，用于校验升级包 Ed25519 签名
-// 当前为占位公钥。配钥流程（一次性，离线）：scripts/sign-release.sh genkey 生成私钥 →
+// 本文件已是**真实公钥**（2026-09-24 配钥，一次性），不再是占位；配钥流程即下述三步，
+// 换钥等于让所有已分发客户端永久无法验签，故私钥须长期保管在持钥者处（本仓库不入库）。
+// 配钥流程（一次性，离线）：scripts/sign-release.sh genkey 生成私钥 →
 // 私钥存 CI secret PHPO_SIGNING_KEY → sign-release.sh pubkey 导出真实公钥写入本文件并提交；
 // release.yml 在签名前反推公钥并与本文件比对，不匹配（占位未替换）即拒绝发布，杜绝客户端验签全失败。
 package updater
