@@ -23,14 +23,30 @@ type NopEmitter struct{}
 
 func (NopEmitter) Emit(string, any) {}
 
+// Asset 发布清单里的一条平台安装包（多平台各一份，由 resolvePlatform 按本机选出一颗）
+type Asset struct {
+	OS        string `json:"os"`        // linux / windows / darwin（runtime.GOOS 同词表）
+	Format    string `json:"format"`    // 仅 linux 有意义：deb / rpm / appimage
+	URL       string `json:"url"`       //
+	Size      int64  `json:"size"`      //
+	SHA256    string `json:"sha256"`    //
+	Signature string `json:"signature"` //
+}
+
 // Release 一条远端发布信息（含下载与完整性元数据）
+// URL/Size/SHA256/Signature 是「本次要装的那一颗」：来自顶层（旧式单包清单）或由 Assets 按本机平台解析而来。
 type Release struct {
-	Version   string `json:"version"`
-	Changelog string `json:"changelog"`
-	Size      int64  `json:"size"`
-	URL       string `json:"url"`
-	SHA256    string `json:"sha256"`    // 期望校验值（小写 hex）
-	Signature string `json:"signature"` // base64(Ed25519 over SHA256 hex)
+	Version      string  `json:"version"`
+	Changelog    string  `json:"changelog"`
+	DownloadPage string  `json:"download_page,omitempty"` // 「打开下载页」按钮的目标地址（发布页）；清单不写即无此按钮
+	Size         int64   `json:"size"`
+	URL          string  `json:"url"`
+	SHA256       string  `json:"sha256"`    // 期望校验值（小写 hex）
+	Signature    string  `json:"signature"` // base64(Ed25519 over SHA256 hex)
+	Assets       []Asset `json:"assets,omitempty"`
+
+	// Source 命中本清单的发布源名（github / gitee / …）；清单里不写，由 Sources 探测成功后回填，供界面显示「更新源」
+	Source string `json:"-"`
 }
 
 // ReleaseSource 发布清单来源；HTTPSource 为默认实现
@@ -101,9 +117,11 @@ func (c *Checker) Check(ctx context.Context) (*Release, bool, error) {
 		return r, false, nil
 	}
 	c.em.Emit("update:available", model.UpdateAvailable{
-		Version:   r.Version,
-		Changelog: r.Changelog,
-		Size:      r.Size,
+		Version:      r.Version,
+		Changelog:    r.Changelog,
+		Size:         r.Size,
+		Source:       r.Source,
+		DownloadPage: r.DownloadPage,
 	})
 	return r, true, nil
 }

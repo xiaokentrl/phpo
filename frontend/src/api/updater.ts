@@ -12,11 +12,11 @@ export async function currentVersion(): Promise<string> {
 }
 
 // checkUpdate 拉取发布清单，返回可用更新信息；无更新或无宿主返回 null
+// 整体透出后端 DTO（含 source / download_page）：徽标的「更新源」与「打开下载页」不再只依赖 update:available 事件到达的先后
 export async function checkUpdate(): Promise<UpdateAvailable | null> {
   if (!hasBackend()) return null
   const [info, newer] = await app.UpdateCheck()
-  if (!newer) return null
-  return { version: info.version, changelog: info.changelog, size: info.size }
+  return newer ? info : null
 }
 
 // applyUpdate 经后端任务引擎执行一次升级；进度/结果由 update:progress/done 事件回流

@@ -19,6 +19,7 @@ import CmdPalette from '@/components/business/CmdPalette.vue'
 import TaskDrawer from '@/components/business/TaskDrawer.vue'
 import AppTrayMenu from '@/components/business/AppTrayMenu.vue'
 import DockerGate from '@/components/business/DockerGate.vue'
+import UpdateBadge from '@/components/business/UpdateBadge.vue'
 
 const { t } = useI18n()
 const app = useAppState()
@@ -85,6 +86,7 @@ async function resync(): Promise<void> {
   <div class="app-shell">
     <aside class="app-sidebar">
       <div class="app-brand">phpo</div>
+      <UpdateBadge />
       <nav>
         <section v-for="s in sections" :key="s.titleKey">
           <h3 class="nav-section">{{ t(s.titleKey) }}</h3>

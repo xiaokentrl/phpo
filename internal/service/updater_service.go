@@ -37,7 +37,13 @@ func (s *UpdateService) Check(ctx context.Context) (model.UpdateAvailable, bool,
 	if !newer {
 		return model.UpdateAvailable{Version: s.updater.Current()}, false, nil
 	}
-	return model.UpdateAvailable{Version: rel.Version, Changelog: rel.Changelog, Size: rel.Size}, true, nil
+	return model.UpdateAvailable{
+		Version:      rel.Version,
+		Changelog:    rel.Changelog,
+		Size:         rel.Size,
+		Source:       rel.Source,
+		DownloadPage: rel.DownloadPage,
+	}, true, nil
 }
 
 // Apply 经任务引擎执行一次升级（串行 FIFO；前面有任务则排队，同标签重复提交返回 ErrQueued）

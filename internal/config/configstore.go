@@ -38,15 +38,32 @@ type SvcSetting struct {
 	DataDir  string `yaml:"data_dir,omitempty"`
 }
 
-// FileConfig config.yaml 的完整磁盘形态（唯一配置真相）：两个工作根 + 自定义缓存/备份根 + 每服务版本设置；
+// UpdateSource 一个升级检测发布源（§5.9）：名字进界面「更新源」显示，清单地址匿名读取（不存任何凭据，§1.5）
+type UpdateSource struct {
+	Name        string `yaml:"name"`
+	ManifestURL string `yaml:"manifest_url"`
+}
+
+// DefaultUpdateSources 未配置 update_sources 时的发布源：本项目的 GitHub Releases。
+// 国内镜像（如 Gitee）由用户在 config.yaml 的 update_sources 数组里自行追加——全部源并发探测、取版本最新的一份，
+// 数组顺序只在版本并列时决定取哪一份（镜像源常滞后于原始发布，先命中即返会漏掉更新的版本）。
+func DefaultUpdateSources() []UpdateSource {
+	return []UpdateSource{{
+		Name:        "github",
+		ManifestURL: "https://github.com/xiaokentrl/phpo/releases/latest/download/manifest.json",
+	}}
+}
+
+// FileConfig config.yaml 的完整磁盘形态（唯一配置真相）：两个工作根 + 自定义缓存/备份根 + 每服务版本设置 + 升级发布源；
 // 其余派生路径（PHP_ROOT/…）不落盘、由 DerivePaths 现算，杜绝不同步。
 // 自定义根与默认根互斥且唯一：非空即完全取代 ./offline、./backups。
 type FileConfig struct {
-	PHPOHome    string                           `yaml:"phpo_home,omitempty"`
-	WWWRoot     string                           `yaml:"www_root,omitempty"`
-	OfflineRoot string                           `yaml:"offline_root,omitempty"`
-	BackupRoot  string                           `yaml:"backup_root,omitempty"`
-	Services    map[string]map[string]SvcSetting `yaml:"services,omitempty"` // kind -> version -> 设置
+	PHPOHome      string                           `yaml:"phpo_home,omitempty"`
+	WWWRoot       string                           `yaml:"www_root,omitempty"`
+	OfflineRoot   string                           `yaml:"offline_root,omitempty"`
+	BackupRoot    string                           `yaml:"backup_root,omitempty"`
+	UpdateSources []UpdateSource                   `yaml:"update_sources,omitempty"` // 全部并发探测，顺序只作并列版本的裁决与点名次序
+	Services      map[string]map[string]SvcSetting `yaml:"services,omitempty"`       // kind -> version -> 设置
 }
 
 // ConfigStore 配置唯一读写门面：内存缓存 FileConfig + 原子落盘（0777，phpo 产出物统一权限）；写操作在任务串行下调用，加锁仅作兜底。
@@ -256,6 +273,18 @@ func (c *ConfigStore) BackupRoot() string { return c.ExpandedEnv().BackupRoot }
 // DataDir 某服务版本当前数据目录（展开后绝对路径；未自定义即 {KIND_ROOT}/{version}/data）
 func (c *ConfigStore) DataDir(kind, version string) string {
 	return c.ExpandedEnv().DataDirFor(kind, version)
+}
+
+// UpdateSources 升级检测发布源（§5.9）：全部源并发探测、取版本最新的一份；数组顺序只作并列版本的裁决次序与报错点名次序。
+// 未配置即回落 DefaultUpdateSources()。
+// 只读不写——发布源由用户直接编辑 config.yaml 增删，界面不提供入口。
+func (c *ConfigStore) UpdateSources() []UpdateSource {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.fc.UpdateSources) == 0 {
+		return DefaultUpdateSources()
+	}
+	return c.fc.UpdateSources
 }
 
 // RootOverrides 对象图重绑指纹的组成部分：三个可自定义面的原始值（缓存根 + 备份根 + 各版本数据目录）

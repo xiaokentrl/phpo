@@ -179,6 +179,17 @@ jobs:
       - name: Generate checksums.txt
         run: BIN_DIR=out bash scripts/gen-checksums.sh
 
+      # 发布清单 manifest.json：应用内「检查更新」并发拉取 config.yaml 的 update_sources 里每一个源上的这份 JSON（§5.9）。
+      # 只在真签名时生成——无 .sig 的包客户端必然验签失败（硬红线 6），宁可不发布这版更新也不发一份装不上的清单。
+      # download_page 给发布页地址（客户端「打开下载页」按钮的目标）；tag 由版本号推出，
+      # 因手动 dispatch 时 github.ref_name 是分支名而非标签。
+      - name: Generate release manifest
+        if: env.PHPO_SIGNING_KEY != ''
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          DOWNLOAD_PAGE: ${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ steps.ver.outputs.version }}
+        run: bash scripts/gen-release-manifest.sh
+
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v3
         with:

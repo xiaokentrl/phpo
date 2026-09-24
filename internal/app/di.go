@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -30,7 +31,6 @@ type Container struct {
 	Lifecycle      *Lifecycle
 	Env            config.Env
 	CurrentVersion string // 应用当前版本（升级比较基准）
-	UpdateURL      string // 发布清单地址；为空则不启用自动检查
 
 	// M3 真实对象图：于启动钩子内构造（避免 Build 期产生文件/连接，保持单测纯净）
 	AppService  *service.AppService  // 前端绑定的写/读门面；启动后非 nil
@@ -103,15 +103,14 @@ func (c *Container) Build() *Assembly {
 		c.graphKey = rootsKey(cfg)
 		return nil
 	})
-	// §5.9 升级检查：启动时 + 每 24 小时（仅当配置了发布清单地址）
-	if c.UpdateURL != "" {
-		c.Lifecycle.AddStartupHook("updater-scheduler", func(ctx context.Context) error {
-			src := updater.HTTPSource{URL: c.UpdateURL}
-			chk := updater.NewChecker(c.CurrentVersion, src, c.Emitter)
-			updater.NewScheduler(chk, updater.DefaultInterval).Start(ctx)
-			return nil
-		})
-	}
+	// §5.9 升级检查：启动时 + 每 24 小时。发布源取自 config.yaml 的 update_sources（未配置即默认的 GitHub 一条），
+	// 自行读配置而不依赖 object-graph 钩子的局部变量：Rebind 只换对象图，不该重复注册调度器。
+	c.Lifecycle.AddStartupHook("updater-scheduler", func(ctx context.Context) error {
+		srcs := updater.NewSources(updaterSources(loadUpdateSources()))
+		chk := updater.NewChecker(c.CurrentVersion, srcs, c.Emitter)
+		updater.NewScheduler(chk, updater.DefaultInterval).Start(ctx)
+		return nil
+	})
 	// M1 开发期事件联调：显式开启时以 mock 定时器全量发射 §5.6 事件，前端只订阅
 	if os.Getenv("PHPO_MOCK_EVENTS") == "1" {
 		c.Lifecycle.AddStartupHook("mock-events", func(ctx context.Context) error {
@@ -269,16 +268,13 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 
 	// dirReady 不再落库：快照按「config.yaml 已持久化 + 目录实际存在」实时派生（首启两根为空 → 双 false → 前端弹装机向导并阻断写操作）
 
-	// M6 升级门面（T604 / 硬红线 5/6）：编排器 + 三段式 UpdateService；无发布源时 Check 返回错误而非 panic
+	// M6 升级门面（T604 / 硬红线 5/6）：编排器 + 三段式 UpdateService；发布源取自 config.yaml 的 update_sources
 	// §5.9 中断升级下次启动自动回滚：pending 标记存在且运行版本≠目标 → 恢复旧二进制（失败不阻断 GUI）
 	if updatesDir, uerr := config.UpdatesDir(); uerr == nil {
 		rb := updater.NewRollback(updatesDir)
 		downloads, _ := config.UpdatesSub("downloads")
 		backups, _ := config.UpdatesSub("backups")
-		var src updater.ReleaseSource
-		if c.UpdateURL != "" {
-			src = updater.HTTPSource{URL: c.UpdateURL}
-		}
+		src := updater.NewSources(updaterSources(cfg.UpdateSources()))
 		up := updater.New(c.CurrentVersion, downloads, backups, src, nil, nil, rb, c.Emitter)
 		c.UpdateService = service.NewUpdateService(up, tm)
 		if _, rerr := rb.RecoverOnStartup(c.CurrentVersion, up.Restore); rerr != nil {
@@ -300,6 +296,29 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 		return st.Close()
 	}
 	return nil
+}
+
+// updaterSources 把配置层的发布源换成 updater 层的源列表（跨层桥接只在装配层发生，§0.2 规则 12）；
+// name 缺席时按序号补一个可辨识名字——源名要进界面「更新源」显示，全空等于让用户看不出是哪一条。
+func updaterSources(list []config.UpdateSource) []updater.Source {
+	out := make([]updater.Source, 0, len(list))
+	for i, s := range list {
+		name := s.Name
+		if name == "" {
+			name = fmt.Sprintf("source%d", i+1)
+		}
+		out = append(out, updater.Source{Name: name, ManifestURL: s.ManifestURL})
+	}
+	return out
+}
+
+// loadUpdateSources 启动钩子用的发布源读取：与 residueEnv 同一口径（钩子内自行载入配置，读不到即回落默认源）
+func loadUpdateSources() []config.UpdateSource {
+	cfg, err := config.LoadConfigStore()
+	if err != nil {
+		return config.DefaultUpdateSources()
+	}
+	return cfg.UpdateSources()
 }
 
 // residueEnv 启动残留扫描用的工作根：按已持久化的 config.yaml 展开；读不到配置即回落默认根（展开后仍是合法绝对路径）

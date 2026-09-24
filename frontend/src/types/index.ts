@@ -43,6 +43,8 @@ export interface UpdateAvailable {
   version: string
   changelog: string
   size: number
+  source?: string
+  download_page?: string
 }
 export type UpdateStage = 'download' | 'verify' | 'install'
 export interface UpdateProgress {

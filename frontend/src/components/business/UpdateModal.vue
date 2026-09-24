@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // 升级弹窗（T604 / §5.9）：应用版本检查 + 三段式升级（下载→SHA256+Ed25519 双校验→备份→安装，失败自动回滚）。
 // 硬红线 4/6：可用版本/进度/结果全部来自后端 update:* 事件（App.vue 已全局订阅）；双校验缺一即拒绝安装。
+// 发现新版本给三条去处（需求 ②）：忽略此版本（localStorage 偏好）／打开下载页（清单给了才出这颗）／后台下载
+// （提交即关窗，等待期由左上角「更新中心」徽标与抽屉日志承载，同 §5.6.4 的「不让瞬时弹窗替后台任务守门」）。
 import { computed, onMounted, ref } from 'vue'
 import ModalShell from '@/components/common/ModalShell.vue'
 import { useI18n } from '@/composables/useI18n'
@@ -10,13 +12,25 @@ import type { UpdateStage } from '@/types'
 
 const emit = defineEmits<{ close: [] }>()
 const { t } = useI18n()
-const { store, percent, stage, busy, check, apply } = useUpdater()
+const { store, percent, stage, busy, downloadPage, check, apply, dismiss, openPage } = useUpdater()
 const cur = ref('')
 
 onMounted(async () => {
   cur.value = await currentVersion()
   if (!store.available) check()
 })
+
+// download 后台下载：不 await——UpdateApply 是数十秒级的同步链路，await 会把弹窗挂到任务结束
+function download(): void {
+  void apply()
+  emit('close')
+}
+
+// ignore 忽略此版本并关窗
+function ignore(): void {
+  dismiss()
+  emit('close')
+}
 
 const sizeLabel = computed(() => {
   const b = store.available?.size ?? 0
@@ -59,10 +73,11 @@ const canApply = computed(() => !!store.available && !busy.value && !doneOk.valu
           <div class="upd-pct">{{ percent }}%</div>
         </div>
 
-        <!-- 有更新：版本 + 变更 + 体积 + 双校验说明 -->
+        <!-- 有更新：版本 + 变更 + 体积 + 命中源 + 双校验说明 -->
         <div v-else-if="store.available" class="upd-info">
           <div class="upd-row"><span class="upd-k">{{ t('update.newVersion') }}</span><b>{{ store.available.version }}</b></div>
           <div class="upd-row"><span class="upd-k">{{ t('update.size') }}</span><span>{{ sizeLabel }}</span></div>
+          <div v-if="store.available.source" class="upd-row"><span class="upd-k">{{ t('update.source') }}</span><span>{{ store.available.source }}</span></div>
           <pre v-if="store.available.changelog" class="upd-changelog">{{ store.available.changelog }}</pre>
           <p class="upd-verify">{{ t('update.verifyNote') }}</p>
         </div>
@@ -73,8 +88,9 @@ const canApply = computed(() => !!store.available && !busy.value && !doneOk.valu
     </template>
     <template #foot>
       <button class="btn" type="button" :disabled="store.checking || busy" @click="check()">{{ t('update.check') }}</button>
-      <button class="btn btn-primary" type="button" :disabled="!canApply" @click="apply()">{{ t('update.apply') }}</button>
-      <button class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
+      <button v-if="store.available" class="btn" type="button" :disabled="busy" @click="ignore()">{{ t('update.dismiss') }}</button>
+      <button v-if="downloadPage" class="btn" type="button" @click="openPage()">{{ t('update.page') }}</button>
+      <button v-if="canApply" class="btn btn-primary" type="button" @click="download()">{{ t('update.background') }}</button>
     </template>
   </ModalShell>
 </template>

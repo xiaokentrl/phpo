@@ -2,9 +2,11 @@
 package model
 
 type UpdateAvailable struct {
-	Version   string `json:"version"`
-	Changelog string `json:"changelog"`
-	Size      int64  `json:"size"`
+	Version      string `json:"version"`
+	Changelog    string `json:"changelog"`
+	Size         int64  `json:"size"`
+	Source       string `json:"source"`        // 命中的发布源名（github / gitee / …）
+	DownloadPage string `json:"download_page"` // 发布页地址；清单未给即无「打开下载页」入口
 }
 
 type UpdateProgress struct {

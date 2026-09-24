@@ -50,7 +50,7 @@ export interface ServiceChangedPayload { kind: string; version: string; running:
 export interface TaskLogPayload { id: string; level: string; text: string }
 export interface TaskProgressPayload { id: string; step: number; total: number }
 export interface TaskDonePayload { id: string; status: string; duration: number }
-export interface UpdateAvailablePayload { version: string; changelog: string; size: number }
+export interface UpdateAvailablePayload { version: string; changelog: string; size: number; source?: string; download_page?: string }
 export interface UpdateProgressPayload { stage: string; percent: number; speed: number }
 export interface UpdateDonePayload { status: string; version?: string; error?: string }
 export interface DockerCleanupPayload { stage: string; resource: string; action: string }

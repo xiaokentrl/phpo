@@ -12,6 +12,17 @@ www_root: ~/www     # WWW_ROOT：站点根目录，默认 ~/www
 offline_root: ""    # 离线缓存根，默认 {phpo_home}/offline
 backup_root: ""     # 备份归档根，默认 {phpo_home}/backups
 
+# 升级发布源（总纲 §5.9）：全部源**并发**探测（各自独立 15s 超时，超时即判该源不可用），取版本序最新的一份；
+# 全部不可用才报错并逐项点名。数组顺序决定「版本并列时取哪一份」与报错点名的顺序。
+# 只匿名读取发布清单，不存放任何凭据（§1.5）。清空或不写即回落内置的默认源（github 一条）。
+# 清单需含 version 与按平台分列的 assets（os/format/url/size/sha256/signature）。
+update_sources:
+  - name: github
+    manifest_url: https://github.com/xiaokentrl/phpo/releases/latest/download/manifest.json
+  # 追加一条即多探测一个源（镜像源常滞后，故并发取版本最大而不是先命中先返）；name 仅用于日志与界面显示「更新源」
+  # - name: gitee
+  #   manifest_url: https://gitee.com/your-name/phpo/releases/latest/download/manifest.json
+
 # 每服务版本的可配置项（按需出现；未列出的版本回落注册表默认端口与默认密码）
 # 密码策略：明文、默认 123456、可为空、长度不校验（总纲 §1.5）。
 # data_dir 同样互斥：写了即用该目录，未写回落默认 {phpo_home}/{kind}/{version}/data。
