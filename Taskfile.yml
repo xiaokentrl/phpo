@@ -2,9 +2,13 @@ version: '3'
 
 vars:
   BINARY: phpo
-  VERSION:
-    sh: >-
-      grep -oE '"productVersion"[^0-9]*[0-9][0-9.]*' wails.json | grep -oE '[0-9][0-9.]*'
+  # 这里**不得**再声明带 `sh:` 的全局动态变量（原先的 VERSION 就是）：task 在编译期无条件
+  # 求值全局 vars（internal/compiler/compiler.go 的 TaskfileVars.Range），且求值用的是纯 Go
+  # 的 mvdan.cc/sh（internal/execext/exec.go，强制 set -e）——一旦这条管道在某个 runner 上
+  # 跑不起来（POSIX 工具缺席 / 管道末位退出非 0），整次 `wails3 task <任意任务>` 会在
+  # `deps:` 之前直接退出，连编译都不开始；命令行传 `VERSION=x.y.z` 也绕不过（call.Vars 在
+  # 全局 vars 之后才应用）。版本改由进程环境变量提供（compiler.go 的 GetEnviron 会把环境
+  # 变量并入模板变量），见 release.yml 的 Package 步骤与 package:windows。
 
 tasks:
   default:
@@ -77,7 +81,10 @@ tasks:
       - mv -f build/bin/{{.BINARY}}.rpm build/bin/{{.BINARY}}-$(bash scripts/version.sh).x86_64.rpm
 
   package:windows:
-    desc: Windows NSIS 安装包（需在 windows runner / 装有 makensis 的环境执行）
+    # 版本号取自环境变量 VERSION（task 的 GetEnviron 把它并入模板变量），不在这里跑 grep/管道：
+    # 见顶部 vars 的注。取不到值时 installer.nsi 的 APP_VERSION 检查会中止打包，不会产出
+    # 版本号写错的安装包。
+    desc: Windows NSIS 安装包（需在 windows runner / 装有 makensis 的环境执行，且环境里要有 VERSION）
     deps: [build]
     cmds:
       - makensis -DAPP_NAME={{.BINARY}} -DAPP_VERSION={{.VERSION}} -DBINARY_NAME={{.BINARY}} -DEXE_NAME=build/bin/{{.BINARY}}-setup-x64.exe -DBUILD_DIR=build/bin -DICON=build/windows/icon.ico build/windows/nsis/installer.nsi

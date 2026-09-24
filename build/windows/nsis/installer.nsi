@@ -1,6 +1,6 @@
 ; phpo Windows 安装包（NSIS / MUI2）
-; 由 `wails3 package -platform windows` 调用 makensis 时注入 -D 宏；
-; 亦可 standalone 编译：所有宏均有 !ifndef 默认值兜底。
+; 由 release.yml 的 `wails3 task package:windows` 调用 makensis 时注入 -D 宏；
+; 除 APP_VERSION 外所有宏均有 !ifndef 默认值兜底（standalone 编译时用它）。
 Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
@@ -9,8 +9,14 @@ Unicode true
 !ifndef APP_NAME
   !define APP_NAME "phpo"
 !endif
+; APP_VERSION **不给兜底值**：它同时决定 VIProductVersion / FileVersion 与注册表 DisplayVersion，
+; 兜底成某个字面量等于安静产出一份版本号写错的安装包（升级检查与「关于」都会照着它显示）。
+; 缺失或为空即在此中止打包，由发布链路把真实版本传进来。
 !ifndef APP_VERSION
-  !define APP_VERSION "0.1.0"
+  !error "APP_VERSION 未传入：需在 windows runner 上把 wails.json 的 productVersion 导出为环境变量 VERSION（见 .github/workflows/release.yml 的 Package 步骤）"
+!endif
+!if "${APP_VERSION}" == ""
+  !error "APP_VERSION 为空：VERSION 环境变量未取到版本号，安装包版本必须与 wails.json 的 productVersion 一致"
 !endif
 !ifndef BINARY_NAME
   !define BINARY_NAME "phpo"
