@@ -3,7 +3,7 @@
 name: phpo
 arch: amd64
 platform: linux
-version: 0.1.37
+version: 0.1.38
 section: default
 priority: optional
 maintainer: phpo <kentrl@qq.com>

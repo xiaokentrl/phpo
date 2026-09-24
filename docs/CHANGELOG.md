@@ -1,6 +1,6 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.37`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.38`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
@@ -47,6 +47,13 @@
   - **验真（全部本地，未推送即无法真跑）**：以 `/tmp/resolve.sh` 逐字复刻该 run 块，在 HEAD=`130d0b8`、`refs/tags/v0.1.37`→注解对象 `1ecaa5d`→commit `130d0b8` 的真实仓库状态下跑 6 个用例——标签 `v0.1.37` 通过（`version=0.1.37 / tag=v0.1.37`）、dispatch 无参数通过、dispatch 传 `0.1.37` 通过、dispatch 传 `0.1.38` 与标签 `v0.1.36` 各判「版本不一致」EXIT=1、`GITHUB_SHA=21c2a98` 的 dispatch 判「标签 v0.1.37 已指向 130d0b8」EXIT=1；`actionlint .github/workflows/*.yml` EXIT=0。**一次真发布未跑**（要推 commit 并触发，均需新指令）。**注意第二条守卫正好命中当前状态**：Windows 修复的 commit 一旦推送，dispatch 出包即因 `v0.1.37` 仍指向 `130d0b8` 而红——可接受形状是定版 `0.1.38` 推新标签（推荐），或明确授权下移动已有标签（破坏性）。
   - **文档同源**：`docs/打包发布.md` §5.2（`ASSET_BASE` 回落口径改为「workflow 总是显式传入」）、§6（发布作业步骤与新增的「版本与标签一处裁决」四条子项）、§6.2 表第 3 行与硬规矩 1（登记该一致性已转 CI 阻断 + 新守卫）、§6.3（run #1 的 Windows 取证与修法，含上述被推翻的 cmd.exe 归因）。上一轮 ① 那句「先发布一个版本到 GitHub Releases（**未执行**）」至此已推进到「tag 已推、Release 未成」。
   - **未 commit / 未 push / 未移动或新推标签 / 未重跑发布**：工作区 4 个改动文件（`Taskfile.yml`、`build/windows/nsis/installer.nsi`、`.github/workflows/release.yml`、`docs/打包发布.md`）与本节文档待一条新的「提交」指令；secret `PHPO_SIGNING_KEY` 仍未导入（未导入时签名与清单两步按 `if` 跳过 ⇒ 产物无 `.sig`、无 `manifest.json`）。
+  > ⚠️ 本条两处已过期：标题的「**未提交**」与末子项的「未 commit / 未 push」——5 个文件（含 `docs/CHANGELOG.md` 本节）已提交为 **`b7ab80a`** 并推送 `origin/main`（用户 L3 门禁选「跳过」）。**本条预告的形状已照此走**：下一条定版 `0.1.38` 就是为了给新推标签腾出可发布点（`v0.1.37` 永久停在 `130d0b8`，按新守卫不能复用）。仍未导入 secret、仍未重跑发布。
+
+- **发布前定版：`0.1.37` → `0.1.38`（`bash scripts/bump-version.sh patch`）**：用户指令「继续」，即上一条末段那个岔路的第 ① 项——**定版 `0.1.38` 推新标签（推荐）而非移动 `v0.1.37`（破坏性）**。
+  - **这一版为什么必须由 bump 起，而不是复用 `v0.1.37`**：上一轮新加的守卫二是硬约束——`release.yml` 会比对 `git rev-list -n1 <tag>` 与 `GITHUB_SHA`，而 `v0.1.37` 指向 `130d0b8`、修复在 `b7ab80a`，用该标签出包必红。**复用旧标签的代价是丢一次 Release，换一个新标签的代价只是 patch +1**，后者是本项目一贯节奏（0.1.35→0.1.36→0.1.37 同为 patch）。
+  - **只改单一真实来源及其镜像**（与 0.1.37 那轮同口径）：`wails.json` 的 `info.productVersion` 与 `build/linux/nfpm.yaml` 的 `version` 各一行；运行时基准仍是构建期 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入，无第三处硬编码。
+  - **本轮未出包**：`package:linux` / `release:local` 均未执行 ⇒ `build/bin/` 仍是 0.1.36 的旧 deb/rpm（按既往裁定保留未清），`frontend/dist/index.html` 未触碰（无 `pnpm build`）。真机冒烟记录里那份产物不代表 0.1.38。
+  - **发布仍待**：① 用户侧导入仓库 secret `PHPO_SIGNING_KEY`；② 推 `v0.1.38` 标签触发 `release.yml`。**但推标签前有一处必须先裁决**：`release` 作业是 `needs: build`，而 `build` 是 `fail-fast: false` 的三平台 matrix——**任一 matrix 失败即 `build` 失败 ⇒ `Sign & Release` 整个跳过 ⇒ GitHub 上仍然只有标签没有 Release**（run #1 正是这个形状）。darwin 侧本轮**未改**且失败原因与 Windows 无关（§6.3 末段已确证：该 runner 上 `vars` 那条没有致命，日志里 `task: [bindings]` 与 `vite build` 正常跑完；失败在 `package:darwin` 只调 `wails3 tool package -format dmg` 而 beta.23 要求 `.app` bundle 先存在），所以照现状推 `v0.1.38` 可预期**必然再次拿不到 Release**。三条出路都需新指令：修 darwin 的 `.app` 链、把 darwin 暂时从 matrix 摘掉（最快，但 Windows 仍未真机验证，若它也红则同样卡住）、或改 `release` 作业的依赖形状。
 
 - **静态检查历史欠账一次性清零，`golangci-lint` 转为阻断门禁（同时更正上一条登记的「31 项」）**：用户指令两步——①「先清空 actions 下面的 All workflows」，②「然后处理报错」并贴回 run #44（head `d29efd8`、`Success`、1m45s、**同样是那 10 条 errcheck annotation**）。第②步的实质是上一条留下的那句「31 项清零后才删 `continue-on-error`」，本轮把它做完了；第①步见本条末段。
   - **先推翻一个自己登记的数字**：上一条通篇的「**31 项**」是**被截断的显示数**。`golangci-lint` 默认 `--max-same-issues=3`／`--max-issues-per-linter=50` 会把相同消息折叠，于是完整基线 **42 项**（errcheck **27** + goimports **5** + staticcheck **6** + unused **4**）被显示成 31——真实判据是 `golangci-lint run ./... --max-issues-per-linter=0 --max-same-issues=0`。**因此上一条 line 15 那条「行号更正」本身是错的**：它对着截断输出把 `internal/engine/trash_test.go:13,14` 与 `internal/vhost/hosts/hosts_test.go:57` 判成「初稿多列的旧稿残留」并删掉，而这三处在完整清单里**真实存在**（另漏列的是 `site_service_test.go` 的 3 处与 `engine/{container_test,verify}.go` 的 goimports 2 处）。本轮已按完整输出**回滚该更正并实际修掉**这两处；分组数从 18/6/4/3 改为 27/6/4/5，errcheck 内 6 产品码 + 21 用例（上一条的「用例 12」同样只是显示数）。
