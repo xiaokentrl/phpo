@@ -49,7 +49,11 @@ tasks:
     desc: 构建当前平台桌面二进制（Linux 上为 CGO + GTK4 / webkitgtk-6.0）
     deps: [frontend:build]
     cmds:
-      - go build -trimpath -ldflags "-s -w -X phpo/internal/app.Version=$(bash scripts/version.sh)" -o build/bin/{{.BINARY}} .
+      # -o 必须自己带上 exeExt：`go build -o <文件>` 不会追加 .exe（实测 GOOS=windows 产出的文件名
+      # 就是 out/app 本身），而 Windows 侧 installer.nsi 的 File 行按 `${BUILD_DIR}\${BINARY_NAME}.exe`
+      # 找文件，产物没有 .exe 即 makensis 报 File not found。Linux / darwin 上 exeExt 渲染为空串，
+      # 产物名与改前逐字一致，故 build/linux/nfpm.yaml（src: build/bin/phpo）与 package:darwin 不受影响。
+      - go build -trimpath -ldflags "-s -w -X phpo/internal/app.Version=$(bash scripts/version.sh)" -o build/bin/{{.BINARY}}{{exeExt}} .
 
   version:bump:
     desc: 递增应用版本号（默认小版本号 patch，可传 minor|major），同步 wails.json 与 nfpm.yaml 安装包版本
@@ -84,16 +88,57 @@ tasks:
     # 版本号取自环境变量 VERSION（task 的 GetEnviron 把它并入模板变量），不在这里跑 grep/管道：
     # 见顶部 vars 的注。取不到值时 installer.nsi 的 APP_VERSION 检查会中止打包，不会产出
     # 版本号写错的安装包。
-    desc: Windows NSIS 安装包（需在 windows runner / 装有 makensis 的环境执行，且环境里要有 VERSION）
+    # 三条路径宏必须是**绝对路径**：makensis 默认会先把当前目录切到 .nsi 文件所在目录
+    # （文档：`/NOCD disables the current directory change to that of the .nsi file`），
+    # 所以从仓库根传相对值会被解析成 `build/windows/nsis/build/bin\phpo.exe` 这类不存在的路径——
+    # File 找不到输入、OutFile 也写不到 build/bin（下游 upload-artifact 按精确名收
+    # `build/bin/phpo-setup-x64.exe`，写不到该处即该 runner 上聚合零匹配而失败）。
+    # joinPath 用宿主原生分隔符（windows runner 上得 `C:\a\phpo\phpo\build\bin`），因此外层
+    # 双引号不能省：反斜杠在裸参数里会被 shell 当转义字符吃掉。
+    desc: Windows NSIS 安装包（需在 windows runner 执行，且环境里要有 VERSION）
     deps: [build]
     cmds:
-      - makensis -DAPP_NAME={{.BINARY}} -DAPP_VERSION={{.VERSION}} -DBINARY_NAME={{.BINARY}} -DEXE_NAME=build/bin/{{.BINARY}}-setup-x64.exe -DBUILD_DIR=build/bin -DICON=build/windows/icon.ico build/windows/nsis/installer.nsi
+      - makensis "-DAPP_NAME={{.BINARY}}" "-DAPP_VERSION={{.VERSION}}" "-DBINARY_NAME={{.BINARY}}" "-DEXE_NAME={{joinPath .ROOT_DIR "build" "bin" (printf "%s-setup-x64.exe" .BINARY)}}" "-DBUILD_DIR={{joinPath .ROOT_DIR "build" "bin"}}" "-DICON={{joinPath .ROOT_DIR "build" "windows" "icon.ico"}}" "{{joinPath .ROOT_DIR "build" "windows" "nsis" "installer.nsi"}}"
 
   package:darwin:
-    desc: macOS .app/.dmg（需在 mac runner 执行；签名/公证见 scripts/sign-release.sh）
+    # .app bundle 必须由本任务自建：wails3 v3.0.0-beta.23 的 `tool package -format dmg` 只把
+    # **已存在**的 `{out}/{name}.app` 打成 dmg（internal/commands/tool_package.go 先 os.Stat，
+    # 缺席即 `application bundle not found`），而 `wails3 package` 只是转发到本 Taskfile 的
+    # `package` 任务（internal/commands/task_wrapper.go）——beta.23 没有内建 bundler。
+    # 版本必须注入 bundle 的 Info.plist：源文件 build/darwin/Info.plist 的两项版本写死 0.1.0，
+    # 不覆写即产出「自报 0.1.0」的 macOS 包——与 package:windows 的 APP_VERSION 同源缺陷，
+    # 因此取不到 VERSION 即中止，覆写完还要回读校验，不匹配同样中止。
+    # 图标名沿用本仓库的 build/darwin/icon.icns（Info.plist 的 CFBundleIconFile 即此名），
+    # 不是 wails 模板里的 icons.icns。签名是 ad-hoc（`--sign -`）：Developer ID + 公证未接入。
+    desc: macOS .app/.dmg（需在 mac runner 执行，且环境里要有 VERSION；正式签名/公证见 scripts/sign-release.sh）
     deps: [build]
     cmds:
+      - cmd: |
+          set -eu
+          if [ -z "${VERSION:-}" ]; then
+            echo 'package:darwin 需要环境变量 VERSION：export VERSION="$(bash scripts/version.sh)"' >&2
+            exit 1
+          fi
+          APP="build/bin/{{.BINARY}}.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp build/darwin/icon.icns "$APP/Contents/Resources/"
+          cp "build/bin/{{.BINARY}}" "$APP/Contents/MacOS/"
+          cp build/darwin/Info.plist "$APP/Contents/Info.plist"
+          plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
+          plutil -replace CFBundleVersion -string "$VERSION" "$APP/Contents/Info.plist"
+          if ! plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" | grep -qxF "$VERSION"; then
+            echo "Info.plist 的 CFBundleShortVersionString 未写入 $VERSION" >&2
+            exit 1
+          fi
+          codesign --force --deep --sign - "$APP"
+        desc: 组装 .app bundle（图标 / 可执行文件 / 注入版本的 Info.plist / ad-hoc 签名）
       - wails3 tool package -format dmg -name {{.BINARY}} -out build/bin
+      # 打完即移除中间产物：`.app` 不是分发物（dmg 里已经有同一份），留在 build/bin 只会让
+      # 本地产物目录与 Release 资产口径不一致。upload-artifact 的白名单本来也不会收它，
+      # 但「靠下游过滤」不等于「上游可以不清」。
+      - cmd: rm -rf "build/bin/{{.BINARY}}.app"
+        desc: 移除 .app 中间产物，build/bin 只留分发物
 
   test:
     desc: 全量 Go 测试（无 Docker 环境必须可跑，M2 门禁）

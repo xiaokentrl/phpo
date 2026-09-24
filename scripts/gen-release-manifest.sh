@@ -57,6 +57,8 @@ size_of() {
 assets=()
 seen=()
 signed=0
+# 遍历顺序固定为 LC_ALL=C：同平台重复时「先出现的一份」不能取决于 runner 的 locale
+# （本机实测：默认 zh_CN.UTF-8 下 `phpo.exe` 排在 `phpo-setup-x64.exe` 之前，C 序相反）。
 while IFS= read -r f; do
   base="$(basename "$f")"
   case "$base" in
@@ -75,10 +77,6 @@ while IFS= read -r f; do
   }
 
   key="${os}/${format}"
-  for s in "${seen[@]+"${seen[@]}"}"; do
-    [ "$s" = "$key" ] && echo "! 同一平台已有一份包，清单只保留先出现的一份（重复: $key）" >&2
-  done
-  seen+=("$key")
 
   sig_file="$f.sig"
   if [ ! -f "$sig_file" ]; then
@@ -89,10 +87,21 @@ while IFS= read -r f; do
   sig="$(tr -d '\r\n' <"$sig_file")"
   [ -n "$sig" ] || { echo "! $base.sig 为空，该包不进清单" >&2; continue; }
 
+  # 同一 (os, format) 只留一份：客户端 resolvePlatform 按 assets 顺序取**第一颗**命中本机平台的
+  # 条目，两份同平台资产等于让它赌顺序。判重放在签名校验**之后**——未签名的那一份本来就不进清单，
+  # 若先登记 seen 会把同平台唯一那份已签名的包也挡掉。
+  for s in "${seen[@]+"${seen[@]}"}"; do
+    if [ "$s" = "$key" ]; then
+      echo "! 同一平台已有一份签名包，本条跳过（重复: $key → $base）" >&2
+      continue 2
+    fi
+  done
+  seen+=("$key")
+
   url="${ASSET_BASE}/${base}"
   assets+=("{\"os\":\"$(json_str "$os")\",\"format\":\"$(json_str "$format")\",\"url\":\"$(json_str "$url")\",\"size\":$(size_of "$f"),\"sha256\":\"$(sha256_of "$f")\",\"signature\":\"$(json_str "$sig")\"}")
   signed=$((signed + 1))
-done < <(find "$BIN_DIR" -maxdepth 1 -type f | sort)
+done < <(find "$BIN_DIR" -maxdepth 1 -type f | LC_ALL=C sort)
 
 if [ "$signed" -eq 0 ]; then
   echo "清单内无一个已签名产物：发布前先跑 scripts/sign-release.sh sign（硬红线 6），否则不生成 $OUT" >&2

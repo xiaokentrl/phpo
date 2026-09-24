@@ -137,11 +137,24 @@ jobs:
           wails3 task package:${{ matrix.target }}
         shell: bash
 
+      # 只收分发物，**不得**写回 `build/bin/*`：`go build` 的裸可执行文件就落在这个目录里
+      # （Linux/darwin 是 `phpo`，windows 自 §6.5 起带 `{{exeExt}}` 即 `phpo.exe`），
+      # 而它匹配 `*.exe` —— 一旦进 `out/`，`gen-checksums.sh` 会把它算进 checksums.txt，
+      # `gen-release-manifest.sh` 会把它认成一颗 `os=windows/format=exe` 的升级资产，
+      # 客户端 `resolvePlatform` 按 assets 顺序取第一颗命中，选中哪一份取决于 runner 的
+      # locale 排序（本机实测：默认 locale 下 `phpo.exe` 排在 `phpo-setup-x64.exe` **之前**）。
+      # 因此 windows 一项按**精确文件名**列，不用 `*.exe`。AGENTS.md §11.1 的分发物清单里也没有裸二进制。
+      # 多行 glob 只在「本次聚合取不到任何文件」时触发 `if-no-files-found: error`（各 runner 上
+      # 不匹配的那几行是常态，不会报错），所以分发物一旦改名会在这一步失败，而不是静默漏发。
       - name: Upload staged artifacts
         uses: actions/upload-artifact@v7
         with:
           name: pkg-${{ matrix.target }}
-          path: build/bin/*
+          path: |
+            build/bin/*.deb
+            build/bin/*.rpm
+            build/bin/*.dmg
+            build/bin/phpo-setup-x64.exe
           if-no-files-found: error
 
   release:
