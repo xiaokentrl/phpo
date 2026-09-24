@@ -1,6 +1,6 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.41`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.42`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
@@ -143,6 +143,13 @@
   - **本机取证到的一条成因**：入库公钥 `j5myowCz…` 由 `21c2a98` 于 **09:14:26** 写入，而本机唯一私钥 `~/.local/share/phpo-signing/phpo-sign.pem` 的 mtime 是 **09:27:27**——公钥入库后 13 分钟该文件被重新生成、把配对的私钥覆盖掉了。按 `sign-release.sh pubkey` 同口径从现存私钥反推得 `3Zalxdz…` ≠ 入库公钥（比对只比公钥，全程未出库外私钥内容）。⇒ 修法两选一：① 找回原私钥重导 secret（本机已无该文件，只有别处留有备份才走通）；② 把入库公钥换成与已导入 secret 配对的那一颗。**确认 secret 到底是哪一把的通道现成且不消耗版本号**：`workflow_dispatch` 勾 `guard_only=true` → 只跑 `Verify signing guard (dry-run)`、复用与真实签名步同一份 `verify-signing-guard.sh`。
   - **取证通道的一条自我订正**：上一条写「这几项**只能由用户贴登录态日志**」偏保守——**作业级结论与产物清单本机无凭据即可查**（`/actions/runs`、`/actions/runs/{id}/jobs`、`/commits/{sha}/check-runs`、`/check-runs/{id}/annotations`），只有**步骤正文**与 zip 是 `403`。本轮的三平台绿／产物字节／`Lint` annotation 全部来自自查，仅签名步正文由用户提供。
   - **标签与版本约束**：`v0.1.41` 已被守卫② 消耗（永久停在 `5f55631`）⇒ 公钥若走修法 ②（改 `internal/updater/signing/public.key`）须随新 commit 定版 **0.1.42** 并推新标签才会被审；**在此之前先用 `guard_only` 干跑确认配对**，避免再白白消耗一次版本号。**验真边界**：本轮未改任何代码或文档以外的东西，`task release:local` 未跑，`frontend/dist/index.html` 产物偏离仍在工作区，真宿主 GUI 未走查。**取证时效**：`keep: 1` 于 **2026-09-27 00:00 UTC** 清窗，故全部判据已当轮落档。文档落点：`docs/打包发布.md` 新增 **§6.11**，并在 §6.10 末「本轮已上 `origin` 的事实」那条下追加 `> ✅` 订正块。
+
+- **公钥已换 + 定版 `0.1.41` → `0.1.42`（2026-09-24，用户指令「恢复后再重新跑一轮发布」）**：上一条「修法 ②」那一格由**本会话之外**落地，本轮把它顶上新标签送进真实 runner 复审。
+  - **公钥这一格的实际过程有两段，不得简化成「已修好」**：`e6fb71f` 声称替换真公钥，但该 commit 落盘的 `internal/updater/signing/public.key` 是**空文件**（0 字节）⇒ 若直接推标签，CI 侧守卫会以「公钥与私钥不匹配」再红一次；`2d7326a` 才把它恢复为 `3ZalxdzBoxSDPkaACGfqwyVk/TvqnCuTW7nmEkdz7DI=`（44 字节、无换行、mode 644），且该值与本机唯一私钥 `~/.local/share/phpo-signing/phpo-sign.pem` 按 `sign-release.sh pubkey` 同口径反推的结果**逐字相等**。
+  - **本机守卫实跑为证**：`bash scripts/verify-signing-guard.sh ~/.local/share/phpo-signing/phpo-sign.pem` → `✓ 内嵌公钥与签名私钥匹配（internal/updater/signing/public.key）`，**exit 0**。这一格只证到「**入库公钥 ≡ 本机这把私钥**」。
+  - **仍未闭合的一格（本轮的真实风险，必须写明）**：CI 的 `Sign artifacts` 步比的是 secret `PHPO_SIGNING_KEY` 里那一份私钥，本机无权读取，**与本机这把是否同一把仍未证**。上一条建议的零成本预检（`workflow_dispatch` + `guard_only=true`，复用同一份 `verify-signing-guard.sh`、不出包不发 Release 不消耗版本号）**用户已明确选择不跑**，改为直接顶版推标签 ⇒ 若两把不是同一把，run #6 仍会在第 7 步红、并**再消耗一个版本号**（`v0.1.42` 此后永久停在本 commit）。
+  - **顺带闭合上一轮登记的工作区偏离**：`frontend/dist/index.html` 按 §4.1 规约还原（`rm -rf frontend/dist/assets && git checkout -- frontend/dist/index.html`），占位哈希回到 `index-BSsKttdu.js` / `index-BdsukLVv.css`；`frontend/dist` 在 `HEAD` 的 tree 里**只有这一颗**（`.gitignore:4 /frontend/dist/*` + `:5 !/frontend/dist/index.html`），它存在的唯一理由是 `main.go:15` 的 `//go:embed all:frontend/dist` 匹配不到文件即编译失败——**真实构建产物不该入库**，每次构建都只会产生伪差异。
+  - **验真**：`bash scripts/version.sh` → `0.1.42`；`wails.json` 的 `info.productVersion`、`build/linux/nfpm.yaml` 的 `version`、本文件页眉三处一致；`gofmt -l .` 无输出，`go vet ./...`、`go build ./...`、`go test ./... -count=1` 全绿；五项门禁全过（i18n zh-CN / en-US 各 **619** 键且集合相等／模板 golden 空 diff／Docker 命名／缓存清单含 `extensions_image`／扩展 **73** 项分类对账）。**本轮无任何 Go／前端代码改动**（仅版本号两行 + 两份文档），故门禁与回归的意义是**证明不回退**。**未跑**：`task release:local`（本轮无出包指令）、真宿主 GUI 走查、windows 装包真机行为（静默安装／卸载注册表／`EstimatedSize`／快捷方式落点）。文档落点：`docs/打包发布.md` 新增 **§6.12**。
 
 - **发布前定版：`0.1.39` → `0.1.40`（`bash scripts/bump-version.sh patch`）**：用户指令「定版 v0.1.40 并推标签」。上一格约束兑现——`v0.1.39` 已被 `release.yml` 守卫② 消耗（永久停在 `e9f01c9`），run #3 的 NSIS 许可页修法与 SC2155 修法只有挂上新标签才会被真实 runner 审。脚本按单一真实来源改写 `wails.json` 的 `info.productVersion` 并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本），本文件首行的「当前应用版本」同步跟到 `0.1.40`。
   - **验真**：`bash scripts/version.sh` → `0.1.40`；`git diff --stat` 只有 `wails.json` + `build/linux/nfpm.yaml` 两行；`grep -rn 0\.1\.39` 在代码 / 配置 / 工作流内已无残留（历史判据文本里的 `0.1.39` 是**那几次运行的事实**，不得改写）。
