@@ -4,6 +4,10 @@
 Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
+; 下方 Section 内的 ${GetSize}（EstimatedSize 注册表项）由这个头文件提供：
+; FileFunc.nsh 末尾把每个命令 define 成 `!define GetSize "!insertmacro _GetSize"`，
+; 不 include 即 ${GetSize} 原样不展开，makensis 把整行当非法指令而中止建包（run #4 取证）。
+!include "FileFunc.nsh"
 
 ; ---- 可由构建系统覆盖的参数（缺省值保证脚本独立可编译）----
 !ifndef APP_NAME
