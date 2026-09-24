@@ -1,6 +1,6 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.39`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.40`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
@@ -113,7 +113,14 @@
   - **顺手修掉 `Lint` 的唯一 warning**：`release.yml` 第 147 行 `export VERSION="$(bash scripts/version.sh)"` 触发 shellcheck **SC2155**（声明即赋值会吞掉命令替换的返回码），拆成 `VERSION="$(…)"` + `export VERSION` 两行。**它不是 windows 红因**——下一行 `[ -z "$VERSION" ]` 已挡住空值，且日志确实印出 `打包版本：0.1.39`；修它只因 `lint.yml` 自转硬门禁后 annotation 也是判据。
   - **本轮新拿到的一条正面证据**：脚本在第 66 行中止 ⇒ 第 45 行 `OutFile` 与第 60–61 行 `MUI_ICON` / `MUI_UNICON` **已跨过且无告警**（ICON 路径失效即报 `Can't open icon file`）。反过来 §6.5 判据的最后一格仍未验：第 79 行 `Section "Install"` 内的 `File "${BUILD_DIR}\…"` **从未执行**，故「产物是否真落到 `build/bin`、`Upload staged artifacts` 白名单能否取到 `phpo-setup-x64.exe`」还得等下一次 runner。
   - **验真边界（如实登记）**：本机 `actionlint` **EXIT=0**、五门禁全绿，但**无 `makensis`、非 Windows** ⇒ `.nsi` 改动无法本地编译验证；**无 `shellcheck`** ⇒ SC2155 是否真消除只能等下一轮 `Lint` 的 annotation 是否为空。darwin / linux 在 run #3 的结论本轮**未取到**（用户只贴了 `Lint` 与 `Build (windows)`）。
-  - **标签与版本约束**：`v0.1.39` 已被守卫② 消耗（永久停在 `e9f01c9`）⇒ 本轮 4 处改动（`build/windows/nsis/installer.nsi`、`.github/workflows/release.yml`、`docs/打包发布.md`、`docs/CHANGELOG.md`）必须定版 **0.1.40** 并推新标签才会被审。文档同源落点：`docs/打包发布.md` 新增 **§6.8**（含判据表、第 10 步日志逐字抄录、五条结论、取证时效），§6.5.4 追加 run #3 判决并就地标注「原判据已被字面输出取代」，§6.7 的「已落工作区但未提交」改为「已随 `eb31159` 提交」。**取证时效**：`cleanup-actions.yml`（`keep: 1`，下次 **2026-09-27 00:00 UTC**）会清掉超窗 run，故全部步骤级判据已当轮抄进 §6.8。
+  - **标签与版本约束**：`v0.1.39` 已被守卫② 消耗（永久停在 `e9f01c9`）⇒ 本轮 4 处改动（`build/windows/nsis/installer.nsi`、`.github/workflows/release.yml`、`docs/打包发布.md`、`docs/CHANGELOG.md`）必须定版 **0.1.40** 并推新标签才会被审。文档同源落点：`docs/打包发布.md` 新增 **§6.8**（含判据表、第 10 步日志逐字抄录、五条结论、取证时效），§6.5.4 追加 run #3 判决并就地标注「原判据已被字面输出取代」，§6.7 的「已落工作区但未提交」改为「已随 `eb31159` 提交」。
+  - **取证时效**：`cleanup-actions.yml`（`keep: 1`，下次 **2026-09-27 00:00 UTC**）会清掉超窗 run，故全部步骤级判据已当轮抄进 §6.8。
+  > 上一条的 4 处改动已提交为 **`378d17c`** 并推送 `origin/main`（2026-09-24，用户指令「提交这 4 个文件」→「推送 main 到 origin」；两轮 L3 门禁均由用户选择「跳过扫描继续」）。本条即其「必须定版 0.1.40」那一格的落地。
+
+- **发布前定版：`0.1.39` → `0.1.40`（`bash scripts/bump-version.sh patch`）**：用户指令「定版 v0.1.40 并推标签」。上一格约束兑现——`v0.1.39` 已被 `release.yml` 守卫② 消耗（永久停在 `e9f01c9`），run #3 的 NSIS 许可页修法与 SC2155 修法只有挂上新标签才会被真实 runner 审。脚本按单一真实来源改写 `wails.json` 的 `info.productVersion` 并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本），本文件首行的「当前应用版本」同步跟到 `0.1.40`。
+  - **验真**：`bash scripts/version.sh` → `0.1.40`；`git diff --stat` 只有 `wails.json` + `build/linux/nfpm.yaml` 两行；`grep -rn 0\.1\.39` 在代码 / 配置 / 工作流内已无残留（历史判据文本里的 `0.1.39` 是**那几次运行的事实**，不得改写）。
+  - **Windows / darwin 侧无版本字面量需跟**：自 `b7ab80a` 起，`package:windows` 的 `-DAPP_VERSION` 与 `package:darwin` 的 `Info.plist` 版本都由 `release.yml` 在运行时 `VERSION="$(bash scripts/version.sh)"` 注入，`build/windows/wails.exe.manifest` 不含硬编码版本，故定版只动这两个文件。
+  - **本轮仍未经本机验证的两格**：无 `makensis` / 非 Windows ⇒ `.nsi` 的 `!if "${LICENSE}" != ""` 只能等真实 runner；无 `shellcheck` ⇒ SC2155 是否消除以下一轮 `Lint` 的 annotation 是否为空为准。
 
 - **发布资产集合收口：`Upload staged artifacts` 改白名单 + 升级清单「真去重 + 定序」（2026-09-24，用户指令「继续」）**：处理上两条末段登记的那处「按 §3.4.3 未顺手改」的开放问题。**动因不是洁癖**——执行中取证出一个发布链上的真实缺陷：windows 的裸可执行文件 `phpo.exe` 会被 `gen-release-manifest.sh` 认成一颗**合法的 `windows/exe` 升级资产**，而客户端 `resolvePlatform`（`internal/updater/source.go`，两轮 `for _, strict := range []bool{true,false}` × 逐 asset、命中即 `return nil`）取的是 assets 里**第一颗**匹配项 ⇒ windows 用户有一半概率去下载一个不是安装器的文件。同时本轮**推翻了自己先前写进文档的两处判断**（见下「两处自我更正」）。
   - **修法压成三层防线，而不是在四处各打补丁**（`docs/打包发布.md` §6.6 全表）：第 1 层让产物根本不出仓——`.github/workflows/release.yml` 的 `Upload staged artifacts` 由 `path: build/bin/*` 改为四行白名单 `*.deb` / `*.rpm` / `*.dmg` / **精确名 `build/bin/phpo-setup-x64.exe`**；第 2 层万一出仓则同 `(os, format)` 只留一份已签名的（`scripts/gen-release-manifest.sh`）；第 3 层「留哪一份」由固定顺序决定而非 locale 决定（遍历改 `find … | LC_ALL=C sort`）。
