@@ -1,6 +1,6 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.36`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.37`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
@@ -30,7 +30,14 @@
   - **一处文件权限自纠**：导出公钥时按习惯 `chmod 600`，与 git 记录的 `100644` 漂移，且**随包分发的公钥必须可读**（`go:embed` 之后是客户端进程去读），已 `chmod 644` 复原并用 `git ls-files -s` 核对模式未变。
   - **注释与文档同源**：`internal/updater/embed.go` 头注释由「当前为占位，待持钥者一次性替换」改为「已是真实公钥（2026-09-24 配钥，一次性）」并保留原配钥三步流程作为**换钥时的操作依据**；`docs/目录规范.md`、`任务工单.md` T604、`docs/应用升级.md` §3 同步「公钥已落地 · **secret 尚未导入** · 未导入时发布作业跳过签名与清单生成 ⇒ 产物无 `.sig`、无 `manifest.json` ⇒ 应用内「检查更新」拿不到可安装的更新」。**未把「已配钥」写成「可发布」**：这两件事在本仓库里是两个独立前提。
   - **发布仍待的两件事**（本条之外，均需新指令）：① 持钥者把 `base64 -w0 ~/.local/share/phpo-signing/phpo-sign.pem` 的整串输出导入仓库 secret `PHPO_SIGNING_KEY`；② 定版本号（`wails.json` 现 `0.1.36`）并推 `v<version>` tag 触发 `release.yml`。build matrix 的 windows/mac runner 未在本机验证过，仅 Linux 打包链有真机记录。
+  > ⚠️ 本条 ② 已由下一轮消掉：版本号已 `bump-version.sh patch` 定为 **`0.1.37`**（`wails.json` 与 `build/linux/nfpm.yaml` 同步），此处「现 `0.1.36`」是当时值。**仍待**的是导入 secret 与推 tag。
   - **验真**：`gofmt -l .` 无输出、`go vet ./...`、`go build ./...`、`go test ./... -count=1` 全绿；五门禁全过（i18n zh-CN / en-US 各 **619** 键且集合相等——本轮无文案键变动／模板 golden 空 diff／Docker 命名／缓存清单含 `extensions_image`／扩展 **73** 项分类对账）。**本轮只动公钥文件 + 注释 + 文档，Go 逻辑一字未改**（`embed.go` 仅注释）。**真宿主 GUI 未走查**（升级链路要真后端 + 真发布产物）。
+
+- **发布前定版：`0.1.36` → `0.1.37`（`bash scripts/bump-version.sh patch`）**：用户指令「先把版本号升一下」，即上一条「发布仍待的两件事」的第 ② 项（定版本号）已做，剩推 `v<version>` tag 触发 `release.yml`。
+  - **口径沿用本仓库既有节奏**：patch 位（脚本默认档）——0.1.35→0.1.36 那轮含 v2.9.14 六项需求同样是 patch，故多源升级 + 配钥这一组不另起 minor。**只改单一真实来源及其镜像**：`wails.json` 的 `info.productVersion` 与 `build/linux/nfpm.yaml` 的 `version` 两行，运行时基准仍由 Taskfile 的 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 在构建时注入，无第三处硬编码版本（`grep` 全仓 `0.1.36` 仅命中本节文档与旧出包留痕）。
+  - **本轮未出包**：`package:linux` 与 `release:local` 均未执行，故 `build/bin/` 里仍是 0.1.36 的旧 deb/rpm（按既往裁定保留未清），`frontend/dist/index.html` 也未触碰（无 `pnpm build`）。真机冒烟记录里的 0.1.36 因此仍是那份产物，不能当作 0.1.37 的验收。
+  - **验真**：`bash scripts/version.sh` → `0.1.37`；`git diff --stat` 除本节文档外恰 2 文件 2 行。Go 侧与前端源码一字未改（版本号是构建期注入，不经任何源码常量），仍按门禁全跑一遍以防 `wails.json` 变动影响构建：`go build ./...` 绿、`go vet ./...` 绿、`go test ./... -count=1` 全绿、五门禁全过（i18n zh-CN / en-US 各 **619** 键且集合相等——本轮无文案键变动／模板 golden 空 diff／Docker 命名／缓存清单含 `extensions_image`／扩展 **73** 项分类对账）。**未出包故无产物级取证**（见上）。
+  - **发布仍待**：① 导入仓库 secret `PHPO_SIGNING_KEY`（上一条 ①，用户侧一次性操作）；② 推送含 bump 的 commit 并推 `v0.1.37` tag。**tag 必须与 `wails.json` 逐字一致**（三处版本量各有来源，只有 tag 是人写的）：二进制内嵌版本 = `wails.json` 经 Taskfile `build` 的 `-ldflags -X phpo/internal/app.Version`，deb/rpm 包内版本 = `build/linux/nfpm.yaml`（bump 脚本已同步），而 `manifest.json` 的 `version` 与 `download_page` 里的 tag **全部由 `release.yml` 从 `GITHUB_REF_NAME` 剥掉 `v` 推出**（`steps.ver.outputs.version`）。推成 `v0.1.36` 或 `v0.1.38` 即等于发一份与包内版本不符的清单——客户端拿内嵌的 `0.1.37` 去比它，要么永不自称有更新、要么升级后又立刻「检测到」同一版。
 
 - **静态检查历史欠账一次性清零，`golangci-lint` 转为阻断门禁（同时更正上一条登记的「31 项」）**：用户指令两步——①「先清空 actions 下面的 All workflows」，②「然后处理报错」并贴回 run #44（head `d29efd8`、`Success`、1m45s、**同样是那 10 条 errcheck annotation**）。第②步的实质是上一条留下的那句「31 项清零后才删 `continue-on-error`」，本轮把它做完了；第①步见本条末段。
   - **先推翻一个自己登记的数字**：上一条通篇的「**31 项**」是**被截断的显示数**。`golangci-lint` 默认 `--max-same-issues=3`／`--max-issues-per-linter=50` 会把相同消息折叠，于是完整基线 **42 项**（errcheck **27** + goimports **5** + staticcheck **6** + unused **4**）被显示成 31——真实判据是 `golangci-lint run ./... --max-issues-per-linter=0 --max-same-issues=0`。**因此上一条 line 15 那条「行号更正」本身是错的**：它对着截断输出把 `internal/engine/trash_test.go:13,14` 与 `internal/vhost/hosts/hosts_test.go:57` 判成「初稿多列的旧稿残留」并删掉，而这三处在完整清单里**真实存在**（另漏列的是 `site_service_test.go` 的 3 处与 `engine/{container_test,verify}.go` 的 goimports 2 处）。本轮已按完整输出**回滚该更正并实际修掉**这两处；分组数从 18/6/4/3 改为 27/6/4/5，errcheck 内 6 产品码 + 21 用例（上一条的「用例 12」同样只是显示数）。
