@@ -715,7 +715,7 @@
 ```
 phpo/
 ├── main.go                          # GUI 入口（embed all:frontend/dist + 注册根 Service）
-├── app.go                           # 根 Service：唯一对前端暴露的门面（68 个绑定方法）
+├── app.go                           # 根 Service：唯一对前端暴露的门面（68 个绑定方法 = 70 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子）
 ├── app_test.go
 ├── go.mod  go.sum                   # module phpo；go 1.27
 ├── wails.json                       # Wails 配置
@@ -879,11 +879,12 @@ phpo/
 │       │   ├── common/              # 9：ModalShell / ModalRoot / ToastHost / PasswordField
 │       │   │                        #   MountList / PathInfoBar / CacheHitBadge / EditablePathBar
 │       │   │                        #   ExtPicker
-│       │   └── business/            # 19：SiteAddModal / SiteConfigModal / RewriteModal / InstallModal
+│       │   └── business/            # 20：SiteAddModal / SiteConfigModal / RewriteModal / InstallModal
 │       │                            #   ConfigModal / PhpExtensionsModal / TaskDrawer / CmdPalette
 │       │                            #   DangerConfirm / HomeSetupWizard / DockerGate / AppTrayMenu
 │       │                            #   ThemePickerModal / UpdateModal / CleanupModal / TrashViewer
-│       │                            #   CacheDetailModal / CacheCleanupModal / CacheImportModal（备份与改端口无独立模态）
+│       │                            #   CacheDetailModal / CacheCleanupModal / CacheImportModal / UpdateBadge
+│       │                            #   （备份与改端口无独立模态）
 │       ├── composables/             # 15：usePreflight / useTask / useStateSync / usePhpSwitch
 │       │                            #   usePortSuggest / useCache / useCleanup / useUpdater / useI18n
 │       │                            #   useModals / useCmdPalette / useDockerPreflight / useToast
@@ -929,7 +930,7 @@ phpo/
 │       ├── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
 │       ├── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
 │       └── g5_v2914_live_test.go             # 真机取证 v2.9.14：两缓存槽位互不覆盖 · 产出物 0777 · 外部删除的缺失态点名 · 零网络恢复固化镜像
-│       # 单元测试与包同目录（83 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       # 单元测试与包同目录（84 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -2434,7 +2435,7 @@ const (
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（83 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **11** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（84 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **11** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -2736,6 +2737,29 @@ const (
 > **73**／常用 **11**、门禁 **5** 项、临时目录路径规则（`./{kind}/{version}/ext/`，不可自定义）与「四必清」、
 > §5.15 三根互斥唯一、§5.16.1 目录与 §5.16.4 停用=删 ini、冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）
 > 与 `base.css`、前端全部代码。
+>
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· §4.1 三处仓库计数校正**：
+> 用户指令「更新 AGENTS.md 修正三处不一致」——写 `README.md` 时对账仓库与总纲，实测三处数字与 §4.1/§11.3 登记不符，
+> 且第三处的性质与前两处不同（**不是文档写错，是口径含糊**）。逐条以命令取证后落文：
+> ① **与包同目录的 `*_test.go` 83 → 84**（§4.1 目录树末注、§11.3 各一处）。多出的一颗是 `internal/updater/source_test.go`，
+> 由提交 `ff05853`（升级检测改多源并发探测）新增，当时未回写总纲计数。判据 `find . -name '*_test.go' -not -path './test/*' | wc -l`。
+> ② **`frontend/src/components/business/` 19 → 20**（§4.1 一处）。缺的那一颗是 `UpdateBadge.vue`（需求 ②-3 的「更新中心」徽标，
+> 同一轮 `ff05853` 新增），原列表逐项枚举了 19 个名字而漏登它；已在列表补 `UpdateBadge` 并把「备份与改端口无独立模态」的括注移到下一行。
+> ③ **`app.go` 的「68 个绑定方法」是对的，不改数**：`grep -o '^func (a \*App) [A-Z]…'` 得 **70** 个导出方法，
+> 而生成的 `frontend/bindings/phpo/app.ts` 得 **68** 个前端方法，`comm` 差集**恰好**是 `ServiceStartup` / `ServiceShutdown`
+> 两颗 Wails v3 服务生命周期钩子——它们由 `application` 调用、不参与前端绑定（`Attach` 则**确实**生成了绑定，
+> 故不可笼统写成「3 个钩子」）。CHANGELOG 此前两处已登记这条口径但 §4.1 未记，于是每轮对账都会把「70 ≢ 68」重新报成一处漂移。
+> 现把 §4.1 该行写成 `68 个绑定方法 = 70 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子`，把减法显式化。
+>
+> **同源同步**（§13 第 4 步）：`docs/目录规范.md` §测试段的 83 → **84**；`docs/界面规格.md` 两处 `business/` 19 → **20**。
+> **验真**：三处数字全部由命令现取现核（`wc -l` ×2 + `comm` 差集），其余 §4.1 前端计数经同批实测仍成立
+> （`views/` **12**、`api/` **17**、`stores/` **8**、`composables/` **15**、`constants/` **9**、`components/common/` **9**）；
+> 冻结口径未动：17 事件名／4 任务状态／preflight **19** action／NEEDS_HOME **17**／`pkg/errs` **27** 码／门禁 **5** 项／
+> 扩展 **73**·**8**·**11**／i18n 两侧各 **619**／live 用例 **11** 个文件／迁移 **8**／docs **32** 篇。
+> **本轮只改这三处**，另两处已核出的漂移**未动、在此登记待裁**：① §4.1 末「尚未落地的规划交付物」仍列 `README.md`，
+> 而根目录 `README.md` 已写出（当前尚未 commit；同段的 `README_EN.md` 与 `LICENSE` 实测**确实不存在**，该两条不动）；
+> ② §4.1 的 `internal/updater/` 一段未登记多源轮新增的 `source.go`，同段 `signing/public.key` 的注释仍写「当前为占位，
+> 待持钥者一次性替换」——真公钥已随 `2d7326a` 入库并经 Release `v0.1.42` 的 CI 守卫验过，该句已是过期事实。
 >
 > **v2.9.13 变更（新增 §5.6.4「等待期反馈：操作名进抽屉标题条 + 被点按钮禁用」，把「一切耗时操作实时说出在做什么」写成冻结条款）**：
 > 用户提出的最高优先级需求：**「所有的一切全部（操作/点击/变化/请求/反馈/响应/日志/消息…）优先把直观名字放进日志抽屉，

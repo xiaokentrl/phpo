@@ -6,6 +6,14 @@
 
 ## [未发布 / M7 收尾]
 
+- **总纲 §4.1 三处仓库计数校正（83→84 · 19→20 · 68 不改数只把口径写清）**：用户指令「**更新 AGENTS.md 修正三处不一致**」——上一轮对账报出的三处「文档 ≢ 仓库」，本轮逐条定性后落文。前两条是**真漏登**，第三条是**伪不一致**。
+  - **① 与包同目录的 `*_test.go` 83 → 84**：多出的是 `internal/updater/source_test.go`，由多源升级那一轮（`ff05853`）新增，当时只回写了 §11.3 之外的位置、漏了 §4.1 末注，于是两处各说一个数。判据 `find . -name '*_test.go' -not -path './test/' | wc -l`。现 §4.1 末注与 §11.3 统一为 **84**（`test/integration/` 的 live 用例仍单列 **11**，不混计）。
+  - **② `components/business/` 19 → 20**：§4.1 那一段是逐字枚举组件名的，枚举列表里少写了一颗 `UpdateBadge.vue`（同轮 `ff05853` 新增的左上角「更新中心」徽标）。计数改成 **20** 并把 `UpdateBadge` 补进列表；「备份与改端口无独立模态」那句括注移到下一行，避免被读成列表的一项。
+  - **③ `app.go` 导出方法 70 vs 前端绑定 68 ——文档没错，不改数**：差额经 `comm` 求差集实测，恰好是 `ServiceStartup` / `ServiceShutdown` 两颗 **Wails 生命周期钩子**（由 `application` 调用，不生成给前端的绑定）。原先只写「68 个绑定方法」而不写为什么是 68，导致每轮对账都把它当成一处漂移重报。现把减法显式写进 §4.1 注释。**一处顺带纠正**：不能笼统写「3 个钩子不生成绑定」——`Attach(app, window)` 实测**有**生成的绑定（`frontend/bindings/phpo/app.ts`），所以只有两颗。
+  - **同源同步（§13 第 4 步）**：`docs/目录规范.md` 的 `*_test.go` 计数 83 → 84；`docs/界面规格.md` 两处「19 业务组件」→ **20** 并在枚举末尾补 `UpdateBadge`。总纲侧在页脚新增一条折叠登记块「v2.9.14 追加（未发布版本内折叠，不另计版本号）· §4.1 三处仓库计数校正」，**未新起 v2.9.15**。
+  - **验真**：三个数字全部现取命令复核（84 / 20 / 70 与 68 的差集），并回归核对§4.1 其余前端计数（`views/` 12、`api/` 17、`stores/` 8、`composables/` 15、`constants/` 9、`components/common/` 9）与冻结数字（docs 32 篇、live 11、迁移 8、i18n 两侧各 619 且集合相等、`pkg/errs` 27 码）——**均仍成立，一字未动**。本轮纯文档，无代码改动，故未跑编译与门禁。
+  - **两处顺带核出、按 §3.4.3 只登记不擅改（待授权）**：① §4.1「尚未落地的规划交付物」仍把 `README.md` 列为未落地，而根目录 `README.md` 已写出（尚未 commit），同段 `README_EN.md` 与 `LICENSE` 实测确实不存在；② §4.1 的 `internal/updater/` 段未登记 `source.go`，且 `signing/public.key` 的注释仍写「当前为占位，待持钥者一次性替换」——真公钥已随 `2d7326a` 入库并经 Release `v0.1.42` 的 CI 守卫验过，该注释已成事实错误。
+
 - **升级检测改为多发布源（`update_sources` 数组）+ 15 秒单源超时（初为逐源切换，同日改为并发探测 + 跨源取版本最新）+ 按平台选包 + 三种处置意图 + 左上角「更新中心」徽标**：用户一条需求两件事——① 「先发布一个版本到 GitHub Releases」（**未执行**：发布/tag/出包均需单独授权，且真公钥仍未提交，见下「遗留」），② 「根据 releases（在配置里添加）和 gitee（在配置里添加）……用数组或更好的方式存储多个可检测路径，升级自动检测最后发布的版本……如果当前连接超时 15 秒自动切换到另一个……检测和下载时按用户操作系统取对应的包和最新版本……升级检测分 3 个：忽略此版本 / 打开下载页 / 后台下载，点击检查更新时如果有版本在左上角显示：更新中心 - 1 项可用更新，更新源 [github/gitee/其他配置]」。
   - **配置面（`internal/config/configstore.go`）**：新增 `UpdateSource{Name, ManifestURL}` 与 `FileConfig.UpdateSources`（`yaml:"update_sources,omitempty"`，**数组顺序即探测优先级**——本条口径已被下方「多源语义改为并发探测」子项覆盖），`ConfigStore.UpdateSources()` 为唯一读出口——空即回落 `DefaultUpdateSources()`（本仓库 GitHub 一条）。**只读不写**：增删源由用户直接编辑 `config.yaml`，界面不提供入口（§1.5 明文密码之外**不引入任何凭据**，两条源都匿名读取，故 `manifest_url` 只能是公开发布页直链）。`config.example.yaml` 补该段并注明「清空或不写即回落内置默认源」。
   - **分层不破（§0.2 规则 12）**：`internal/config` 不 import `internal/updater`，桥接只在装配层——`internal/app/di.go` 新增 `updaterSources()`（`name` 缺席时按序号补 `source%d`，源名要进界面显示，全空等于让用户看不出是哪一条）与 `loadUpdateSources()`（启动钩子自行载配置，与同文件 `residueEnv` 同一口径；**不依赖对象图局部变量**，否则 `Rebind` 换图会重复注册调度器）。同一 `Container.UpdateURL` 字段**删除**：它从未被赋过值（`config.example.yaml` 之前的发布地址全靠手写常量），是 §5.9 的空壳。
