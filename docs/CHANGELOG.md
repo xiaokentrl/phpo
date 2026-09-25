@@ -1,10 +1,17 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.42`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.43`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
 ## [未发布 / M7 收尾]
+
+- **定版 `0.1.42` → `0.1.43` 并本机出包（用户指令「执行打包流程让新文案生效」→「提交、推送、打 tag、发 release」）**：上一轮的中文界面双语后缀（`0f03369`）只改源码，装了旧包的用户看不见，因此本轮把它带进安装包。提问「只本机构建还是走出包」时用户选 **`wails3 task release:local`**，并附口径「只改本地文件，不提交不打 tag」；随后单独下达提交/推送/tag/release 四项授权。
+  - **版本区间内容（`v0.1.42..HEAD` 共 7 个 commit）**：**无任何 Go 代码改动**——`README.md` / `README_EN.md` 两册及其 12 张权重排序截图（`docs/screenshots/`）、总纲 §4.1 的三处计数校正与三处状态标记校正、`docs/CHANGELOG.md` 与派生文档同步，加一颗前端文案（`frontend/src/locales/zh-CN.ts` 的 `nav.settings` = 「设置/Setting」、`settings.language` = 「语言/Language」，各语言侧仅 2 行）。故 `.sig` 守卫、命名、清单、扩展目录这些既有判据本轮的作用是**证明不回退**。
+  - **`frontend/dist/index.html` 已按 §4.1 规约还原**：出包前把 391 字节 tracked 占位备份到 `/tmp`，`release:local` 结束后复制回工作区，`git diff -- frontend/dist/index.html` 为空。真实构建产物（`dist/assets/index-CAdvjzEO.js` 等）不入 `git status`（`.gitignore` 已排除）。
+  - **验真（命令现取）**：`bash scripts/version.sh` → `0.1.43`，与 `wails.json` 的 `info.productVersion`、`build/linux/nfpm.yaml` 的 `version`、本文件页眉**四处一致**。`release:local` exit 0：五项门禁全过（i18n zh-CN / en-US 各 **619** 键且集合相等／模板 golden 空 diff／Docker 命名／缓存清单含 `extensions_image`／扩展 **73** 项分类对账）· `go test ./... -count=1` 全绿（含 `test/integration` 1.435s，live 用例按 `PHPO_LIVE` 守护跳过）· `vue-tsc --noEmit` + `vite build` 绿（214 模块）。
+  - **文案确实进了产物（三级取证，非推断）**：① `dist/assets/index-CAdvjzEO.js` 内「设置/Setting」「语言/Language」各命中 1 处；② 对 `build/bin/phpo` 用 **`grep -a -o`** 各命中 1 处——**注意 `strings -a` 取不到**（GNU strings 默认只输出可打印 ASCII，多字节 UTF-8 被截断，据此判定「二进制里没有」是假阴性）；③ `dpkg-deb -f build/bin/phpo_0.1.43_amd64.deb` 报 `Package: phpo / Version: 0.1.43`。产物为 `phpo` 20,749,632 B、`phpo_0.1.43_amd64.deb` 8,677,320 B、`phpo-0.1.43.x86_64.rpm` 8,817,956 B（`build/bin/` 被 gitignore，不入版本控制）。
+  - **边界如实登记**：以上只到**产物级**——**真宿主 GUI 未走查**（未点窗口确认侧栏与设置页渲染出双语后缀），deb 装包后的实际行为亦未在本机核对。GitHub Release 由推 `v0.1.43` 标签触发 `release.yml`，其三平台出包／签名／Release 判决待 run 结束后按 run id + `head_sha` 取证，不在此预先声称。
 
 - **总纲 §4.1 三处状态标记校正（两册 README 出名单 · 补登 `source.go` · 公钥注释改为真实状态）**：用户指令「**更新一下总纲里的状态标记**」，即上一轮按 §3.4.3 只登记未改、明写「等新一条授权」的那两处，加上根目录树本身的两行漏登。三条全部先取命令判据再落笔：
   - **① `README.md` / `README_EN.md` 从 §4.1 末「尚未落地的规划交付物」删除**（`[ -e ]` 实测两册均在盘上、且已随 `4ab62d6` + `e0f7b6c` 入库推送），同轮把两册补进 §4.1 根目录树。**该名单其余每一项逐条 `[ -e ]` 复核仍不存在**（根 `CHANGELOG.md`／`CONTRIBUTING.md`／`LICENSE`／`configs/`／`assets/`／`data/`／`internal/i18n/`／`pkg/hash`／`pkg/execx`／`pkg/fsutil`／`frontend/public/favicon.svg`／win·mac 签名链），一条不删——`LICENSE` 是名单里唯一还活着的「缺交付物」事实。
@@ -13,6 +20,7 @@
   - **同源同步（§13 第 4 步）**：`docs/目录规范.md` 三处跟改——根目录树补两册、§8 未落地名单的根一栏删两册、`internal/` 分层表的 `updater/` 行补 `source.go` 并注明公钥为真实值（该行原本只列文件名、没写「占位」，故此处是补登而非纠错）。总纲页脚追加折叠块「v2.9.14 追加（未发布版本内折叠，不另计版本号）· §4.1 三处状态标记校正」，**未新起 v2.9.15**。
   - **明确未改**：§11.1 的 `phpo-x64.dmg`「公证未接入」（实测仍成立，不是过期标记）、§4.1 的 `frontend/dist/index.html 占位产物`（仍是 tracked 占位，构建后须还原）、其余各处「占位」字样（队列占位行／demo 占位快照，与状态标记无关），以及全部冻结数字（17 事件名／4 任务状态／preflight 19／NEEDS_HOME 17／`errs` 27 码／门禁 5 项／扩展 73·8·11／i18n 各 619／live 11／迁移 8／docs 32 篇／`app.go` 的 68 = 70 − 两颗钩子）。
   - **验真**：本轮纯文档（两条树注释 + 一段页脚 + 派生文档三处），无代码/前端/配置改动，故未跑编译与门禁；三个状态标记的判据均为命令现取（`[ -e ]` 逐项 ×14、守卫脚本、`git log -1 -- internal/updater/signing/public.key internal/updater/source.go`）。**真宿主 GUI 未走查**（本轮无界面改动）。**未 commit**（等指令）。
+  > ⚠️ 该末句已随本节首条那一轮过期：本轮改动已提交为 **`6ad5610`** 并推送 `origin/main`；同批入库的还有截图一览两册（`ac6f32a`）与中文界面双语后缀（`0f03369`），三者均由 `v0.1.43` 标签送进发布链。
 
 - **根目录中英双语 README（`README.md` + `README_EN.md`，各 12 节）并互设切换入口**：用户指令「说人话，把当前这个项目整理分析清楚后添加一个信息完整的README手册，确保全程说人话」→「把英文的也补齐，然后一起提交并推送」→「README 开头的地方中英文要能切换啊」。三轮做成一件事，登记在同一处。
   - **中文册（`README.md`，307 行 / 12 节）**按「读懂并使用这个项目」的顺序排：这东西是干什么的（含与同类产品逐项差别表）· 装它之前要先有的东西（Linux 上 `usermod -aG docker $USER` 后**必须重新登录**，只开新终端不够）· 下载与安装 · 十分钟跑起来 · 界面都有什么 · 东西放在哪儿 · 联网行为 · 从源码跑 · 代码放在哪儿 · 常见问题 · **还没做到的事（如实说）** · 文档地图。
