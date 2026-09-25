@@ -150,7 +150,7 @@
 | PHP 扩展目录条目数 | **73**（内置 **49** ／ pecl **24**，分 **8** 组） | `frontend/src/constants/ext.ts` 的 `EXT_CATALOG`；与 `internal/config/extensions.go` 的 `peclExts` 由 `scripts/check-ext-catalog.go` 对账（§5.16） |
 | 安装时默认勾选的常用扩展 | **11** | 同文件 `common: true` → `commonExts(version)` |
 | 扩展启用态的唯一判据 | **容器内实测 `php -m`**（后端归一大小写：`PDO`→`pdo`、`Zend OPcache`→`opcache`）→ 回写 `php_extensions` → 随快照回流 | §0.2 规则 37 · §5.16.2「启用态的唯一真值」；前端**不得**直接消费 `php -m` 文本（硬红线 4） |
-| 干净基座里目录扩展的已启用数 | **21**（其中 **19** 项**静态内建**——无 `.so`、无 ini，**停用即无效**；另 **2** 项 = `opcache`／`sodium`，有 `.so` + `conf.d/docker-php-ext-*.ini`，可停用） | 真机只读取证 `docker exec phpo-php-8.4 php -m`（**35** 模块）与 `php -i` 的 `extension_dir`、`ls /usr/local/etc/php/conf.d`（§5.16.2 · §5.16.4） |
+| 干净基座里目录扩展的已启用数 | **21**（其中 **19** 项**静态内建**——无 `.so`、无 ini，**停用即无效**；另 **2** 项 = `opcache`／`sodium`，有 `.so` + `conf.d/docker-php-ext-*.ini`，可停用） | 真机只读取证 `docker exec phpo-php-8.4 php -m`（**35** 行 / 去重后 **34** 个唯一名——`php -m` 会把 `Zend OPcache` 打两遍，拿行数对账前必须 `sort -u`）与 `php -i` 的 `extension_dir`、`ls /usr/local/etc/php/conf.d`；这 **21/19/2** 三档已由 `test/integration/g6_extstatus_live_test.go` 用应用自己的 `Status` 链路在真容器上复现（§5.16.2 · §5.16.4） |
 | 数据服务逻辑导出数 | **3**（mysql ／ pgsql ／ redis） | `internal/service/backup_service.go` 的 `dumpKinds`（§5.17.2） |
 | 归档读不动条目的处置 | **跳过 + 按所在目录聚合告警**（每目录至多列 5 项，另起一行报总数） | `pkg/archive/targz.go` 的 `Skip` + `backup_service.go` 的 `logSkips`（§5.17.1） |
 | 容器启动就绪等待 | **12s**（轮询 300ms；见 running 后复验 2s） | `internal/engine/container.go` 的 `startWait` / `startInterval` / `startHold`（§5.18.3） |
@@ -962,8 +962,9 @@ phpo/
 │       ├── m5_redis_live_test.go  m5_wordpress_live_test.go
 │       ├── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
 │       ├── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
-│       └── g5_v2914_live_test.go             # 真机取证 v2.9.14：两缓存槽位互不覆盖 · 产出物 0777 · 外部删除的缺失态点名 · 零网络恢复固化镜像
-│       # 单元测试与包同目录（84 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       ├── g5_v2914_live_test.go             # 真机取证 v2.9.14：两缓存槽位互不覆盖 · 产出物 0777 · 外部删除的缺失态点名 · 零网络恢复固化镜像
+│       └── g6_extstatus_live_test.go         # 真机取证 §5.16.2 三档显示：跑应用自己的 Status 链路，复现 21/19/2 三档计数 + 名字归一 + 幂等静默 + 容器停用退回「非实时」
+│       # 单元测试与包同目录（85 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -1843,13 +1844,14 @@ type OfflineService interface {
 
 | 要求 | 落点 |
 |------|------|
-| 打开弹窗时由后端现取一次 | `internal/service/extension_service.go` 的 `Status`（三条只读 argv 探针：`ExtLoadedProbeCmd` = `php -m`、`ExtIniListCmd` = `ls -1 conf.d`；一条读失败即整体判「没实测到」）→ 门面 `app.go` 的 `App.ExtStatus` → 前端 `frontend/src/api/extension.ts` 的 `extStatus(version)` |
+| 打开弹窗时由后端现取一次 | `internal/service/extension_service.go` 的 `Status`（**两**条只读 argv 探针：`ExtLoadedProbeCmd` = `php -m`、`ExtIniListCmd` = `ls -1 conf.d`；一条读失败即整体判「没实测到」）→ 门面 `app.go` 的 `App.ExtStatus` → 前端 `frontend/src/api/extension.ts` 的 `extStatus(version)` |
 | 名字归一在后端一处收口 | `internal/config/extensions.go` 的 `NormalizeExtName` / `normalizeExtAlias`（`PDO`→`pdo`、`Zend OPcache`→`opcache`）；**前端不解析 `php -m` 文本** |
 | 可停用性判据 | `conf.d/docker-php-ext-<name>.ini` 是否在（`config.ExtIniFile`）；缺席即进 `ExtStatus.BuiltIn`，前端画成 `on · 内建`（虚线压暗、点不动、不进提交集） |
 | 实测集回写 | 取到实测且与库里不同才 `SetPHPExtensions` + 发 `state:changed`；相同一写都不发（幂等静默，§5.19.4 同口径）。`Apply` 结尾落的也是**重建后实测集**，不是请求的目标集 |
 | 容器没跑 / 探针失败 | 返回库里那份并标 `Live=false`，**不写库、不发事件**；弹窗显示 `ext.nonLive` 一行说明且「应用并重建」禁用（`PhpExtensionsModal.vue` 的 `:disabled="… || !live"`） |
 | 前端只读快照 | `PhpExtensionsModal.vue` 的基线是 `app.phpExtensions[version]`（过滤到「目录内 ∩ 非内建」）；用户手改落 `edits`，未手改则一直跟快照。**旧的「打开时一次性取本地数组」与「提交后本地改写 `app.phpExtensions`」两处已删除**（后者原违反硬红线 4） |
 | 服务卡片计数 | `ServiceView.vue` 的 `extCount` 只数目录内那些（快照是实测全集，含 `Core`／`date` 这类目录管不到的名字，照直数会比弹窗对不上） |
+| **真机取证（不再只有单测假件背书）** | `test/integration/g6_extstatus_live_test.go`（`PHPO_LIVE=1` + Docker 可用双重 skip）跑的是**应用自己的** `Status` 链路：库与目录全在 `t.TempDir()`、容器名用上游不存在的 `phpo-php-9.9`、基座由本机已有标签提供，**全程零网络、不碰用户那份 `<用户数据目录>/`**。四段断言：① 实测到东西且名字已归一（`PDO`→`pdo`、`Zend OPcache`→`opcache`、`[php]` 头行不进集）；② 三档的两半都在——可停用项有 ini（`opcache`／`sodium`），内建项没有（`curl`／`mbstring`）；③ 计数复现 §0.3 的 **21 / 19 / 2**；④ 同一事实不重发事件，容器停用后 `Live=false` + 退回库里 + 不写库不发事件 |
 
 **方法数未变**：本轮用 `App.ExtStatus` 替换原 `App.ExtList`（一进一出），§4.1／§11.3 的「**68 个绑定方法 = 70 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子**」按现产物复测仍成立（`grep -c '^func (a \*App) [A-Z]' app.go` = **70**；`frontend/bindings/phpo/app.ts` 的 `export function` = **68**）。
 
@@ -2451,7 +2453,7 @@ const (
 | **R102** | **phpo 产出物权限被 umask 削成 0755/0644，用户删不掉自己的文件；或反向把容器内进程产物也 chmod 成 777** | **`internal/util/fs.go` 一处收口（`DirPerm`/`FilePerm = 0o777` + 写后显式 `chmod`、`AtomicWrite` 先 Chmod 再 rename、叶子目录总归一以自愈旧装机）；范围**只含 phpo 自己的产出物**，容器内所写文件走 §5.17.1 跳过+告警；§0.2 规则 32 + §5.20**（v2.9.14） |
 | **R103** | **扩展弹窗 `await` 数十秒的后台任务才关闭；或 nginx 重载失败把已编译生效的扩展整单回滚** | **管理扩展弹窗提交即 `emit('close')`，进度/失败由抽屉日志与队列承载、`.then` 里 `await syncState()` 后 toast（§5.16.2）；nginx 缺席/未运行 → `dim` 跳过行、重载失败 → `err` 行 + `return nil` 不判死整单（§5.16.3）；§0.2 规则 34 + §5.16.2 / §5.16.3 / §5.16.5**（v2.9.14） |
 | **R104** | **扩展只缓存「结果」（`.so` / 固化镜像）而不缓存「包本体」，断网/换机时 pecl 与 Alpine 构建依赖仍必拨网络；或命中缓存后因按精确名查而永不命中，每次白拨一次网络** | **`cache.LookupExtPackage` 按 `{name}-` 前缀匹配 + 取版本序最大；命中即 `engine.CopyTo` 回填容器 `/tmp/phpo-ext/{apk,pecl}` 并 `pecl install <包文件>`（零网络）；未命中先 `pecl download` / `apk add --cache-dir` 取包 → `CopyFrom` 取回宿主 → `PromoteExtension` 登记 manifest（SHA256）；`rm -rf /tmp/phpo-ext` 固定在 `docker commit` 之前；缓存任一环节失败只 `dim` 并退回在线编译；用例 `internal/cache/extpkg_test.go`（前缀命中/最大版本/损坏/提升登记）+ `internal/service/extension_service_test.go` 五条（pecl 命中零网络 · Alpine apk 预取 · deb 跳过 · 缓存失败降级 · 损坏回退）；§0.2 规则 36 + §5.14.3 / §5.16.3**（v2.9.14 追加） |
-| **R105** | **管理扩展弹窗把「上次请求的目标集」当成「此刻启用态」——基座自带的扩展（真机 73 项里 21 项）全部画成 off，用户看不出这个版本到底装了什么；反之把静态内建的 19 项画成可取消的开关，点了「停用」什么也不会发生** | **启用态唯一判据改为容器内实测 `php -m`（后端归一显示名 → 回写 `php_extensions` → 随权威快照回流；前端不消费文本、不新增事件名，硬红线 4）；三档显示 `on · 可停用` / `on · 内建不可停用` / `off`；拿不到实测时退回库里集并明示非实时、期间不可提交；§0.2 规则 37 + §5.16.2 / §5.16.4 / §5.16.5**（v2.9.14 追加；**已落地**，落点见 §5.16.2「落地登记」） |
+| **R105** | **管理扩展弹窗把「上次请求的目标集」当成「此刻启用态」——基座自带的扩展（真机 73 项里 21 项）全部画成 off，用户看不出这个版本到底装了什么；反之把静态内建的 19 项画成可取消的开关，点了「停用」什么也不会发生** | **启用态唯一判据改为容器内实测 `php -m`（后端归一显示名 → 回写 `php_extensions` → 随权威快照回流；前端不消费文本、不新增事件名，硬红线 4）；三档显示 `on · 可停用` / `on · 内建不可停用` / `off`；拿不到实测时退回库里集并明示非实时、期间不可提交；§0.2 规则 37 + §5.16.2 / §5.16.4 / §5.16.5**（v2.9.14 追加；**已落地**，落点见 §5.16.2「落地登记」；**已真机取证**——`test/integration/g6_extstatus_live_test.go` 在真容器上跑应用的 `Status` 链路复现 21/19/2 三档、名字归一、幂等静默与「容器停用即退回非实时」，全程零网络且不碰用户数据目录；仍欠的只有原生窗口里的**像素级**点击验收） |
 
 ---
 
@@ -2512,7 +2514,7 @@ const (
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（84 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **11** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（85 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **12** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -2879,6 +2881,38 @@ const (
 > 扩展 **73**·**8**·**11**／i18n 两侧各 **619**／live **11**／迁移 **8**／docs **32** 篇／`app.go` 的 **68 = 70 − 两颗钩子**；
 > 冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）。
 > **真宿主 GUI 未走查**（本轮无代码改动）。
+>
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 三档显示的真机取证落进总纲 + 四处仓库计数校正**：
+> 用户指令「**更新总纲 / 创建git标签 / 构建发布 全部**」。本条只做「更新总纲」这一段：上一轮那条
+> `test/integration/g6_extstatus_live_test.go`（真容器上跑应用自己的 `Status` 链路）已提交，但总纲还停留在
+> 「三档显示只有单测假件背书」的口径上，§4.1／§11.3 的测试计数也没跟着仓库走。四处改动**全部先命令实测再落文**：
+> ① **§5.16.2「落地登记」新增一行「真机取证」**——写清这条 live 用例走的是应用自己的代码路径（因此必须落在独占命名
+> 空间：版本取上游不存在的 `9.9` 以免 Pre-Clean 撞到真机容器、库与目录全在 `t.TempDir()`、基座由本机已有标签提供、
+> 全程零网络、**不碰用户那份 `<用户数据目录>/`**），四段断言逐段点名（实测非空 + 名字归一 / 三档两半各有其物 /
+> **21·19·2** 三档计数 / 幂等静默 + 停用后退回非实时且不写库不发事件）；§9 **R105** 的缓解列同时把「已落地」升级为
+> 「已落地 + 已真机取证」，并**明写仍欠的那一件**：原生窗口里的**像素级**点击验收（压暗芯片好不好认、非实时那行读不
+> 读得懂）——那是要用户眼睛判断的，live 用例代答不了。
+> ② **§0.3「干净基座里目录扩展的已启用数」一行的来源补两条事实**：`php -m` 会把 `Zend OPcache` **打两遍**，所以真机
+> 是 **35** 行 / 去重后 **34** 个唯一名——拿行数对账前必须 `sort -u`，否则会误判「归一吃掉了名字」；并指向 ① 那条
+> live 用例作为 21/19/2 的复现证据（原来只有 `docker exec` 的手工只读取证）。
+> ③ **§5.16.2 落地登记首行的一处数字纠错**：原文写 `Status` 发「**三**条只读 argv 探针」，实际只有**两**条
+> （`ExtLoadedProbeCmd` = `php -m`、`ExtIniListCmd` = `ls -1 conf.d`，`internal/service/extension_service.go` 现读现核）；
+> 第三个 `ExtPkgProbeCmd` 是**装扩展链路**探基座包管理器用的，与启用态判定无关。已改为「**两**条」。
+> ④ **§4.1 与 §11.3 的测试计数按仓库实测校正**：与包同目录的 `*_test.go` **84 → 85**（`find . -name '*_test.go'
+> -not -path './test/*' | wc -l`；多出的一颗是上一轮的 `internal/service/extension_status_test.go`），
+> `test/integration/` 真环境用例 **11 → 12**（新增 `g6_extstatus_live_test.go`，§4.1 目录树同轮补登该行）；
+> 复测确认 `app.go` 的 **70** 个导出方法与 `frontend/bindings/phpo/app.ts` 的 **68** 个绑定方法未变，
+> 「**68 = 70 − ServiceStartup/ServiceShutdown 两颗生命周期钩子**」这条口径继续成立。
+>
+> **同源同步**（§13 第 4 步）：`docs/目录规范.md` §测试段一处（11 → **12** 个 live 用例 + 补 `g6` 的取证口径 +
+> 84 → **85**）。`docs/接口契约.md`、`docs/状态同步.md` 上一轮已按「两条只读 argv 探针」写对，本轮核对无过期表述。
+> **验真**：`gofmt -l .` 无输出 · `go vet ./...` · `go build ./...` · `go test ./... -count=1` 全绿 ·
+> 五项门禁全过（以 `go run scripts/check-*.go` 输出为准）· `PHPO_LIVE=1` 的 g6 live 用例 PASS（上一轮已跑，本轮未改代码故不复跑）。
+> **总纲版本仍为 v2.9.14**（未发布版本内折叠，不另起 v2.9.15）。**明确未改**：8 条硬红线原文、三段式写操作、
+> **17 事件名**／后端 **4** 任务状态、preflight **19** action 与 NEEDS_HOME **17**、`pkg/errs` **27** 码、门禁 **5** 项、
+> 扩展目录 **73**·**8** 组·常用 **11** 项、§5.16.2 三档显示与「停用 = 删 ini」的判定口径（本条只补证据与纠错，
+> 未改任何行为要求）、i18n 两侧各 **623** 键（本轮无新增文案键）、迁移 **8**、`docs/` **32** 篇、
+> 冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`。**本轮纯文档，未改任何 Go／Vue 代码。**
 >
 > **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 管理扩展弹窗的开关语义落地（上一条「冻结要求」转已完成）**：
 > 上一条把判据钉成「实测 `php -m`」时明写「代码尚未落地」；本轮实现它，并把 §5.16.2 的「现状登记」改写为「落地登记」。
