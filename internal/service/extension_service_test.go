@@ -40,6 +40,14 @@ type fakeExtRuntime struct {
 	copiedFrom  map[string][]string
 	copyToErr   error
 	copyFromErr error
+
+	// 两条只读探针单独记账：它们读的是容器现状，不是编译命令，
+	// 混进 execs 就会让每条「应用扩展」的命令序列断言拖上一行 php -m。
+	phpMOut    string   // php -m 的原始输出（显示名，未归一）
+	iniFiles   []string // conf.d 目录清单（basename）
+	reads      []string // 探针 argv 记账
+	phpMErr    error
+	iniListErr error
 }
 
 func newFakeExtRuntime() *fakeExtRuntime {
@@ -109,6 +117,25 @@ func (f *fakeExtRuntime) ExecStream(_ context.Context, name string, cmd []string
 			pm = string(config.PkgManagerDeb)
 		}
 		_, _ = io.WriteString(stdout, pm+"\n")
+		return nil
+	}
+	// 启用态探针：php -m 打的是显示名（PDO / Zend OPcache），由被测代码负责归一
+	if len(cmd) == 2 && cmd[0] == "php" && cmd[1] == "-m" {
+		f.reads = append(f.reads, line)
+		if f.phpMErr != nil {
+			return f.phpMErr
+		}
+		_, _ = io.WriteString(stdout, f.phpMOut)
+		return nil
+	}
+	if len(cmd) == 3 && cmd[0] == "ls" && cmd[2] == config.ExtConfDir {
+		f.reads = append(f.reads, line)
+		if f.iniListErr != nil {
+			return f.iniListErr
+		}
+		for _, ini := range f.iniFiles {
+			_, _ = io.WriteString(stdout, ini+"\n")
+		}
 		return nil
 	}
 	f.execs = append(f.execs, line)
@@ -236,9 +263,10 @@ func (c *fakeImageCache) PromoteExtension(_, extType, tmpFile string) error {
 
 // extStore 实现 ExtStore
 type extStore struct {
-	snap    *model.Snapshot
-	saved   map[string][]string
-	failSet bool
+	snap     *model.Snapshot
+	saved    map[string][]string
+	failSet  bool
+	setCalls int // 回写次数：实测集与库里一致时必须一写都不发
 }
 
 func newExtStore() *extStore {
@@ -246,6 +274,7 @@ func newExtStore() *extStore {
 }
 func (s *extStore) BuildSnapshot() (*model.Snapshot, error) { return s.snap, nil }
 func (s *extStore) SetPHPExtensions(version string, exts []string) error {
+	s.setCalls++
 	if s.failSet {
 		return errors.New("db down")
 	}
@@ -571,6 +600,8 @@ func TestExtension_Apply_DisableRemovesIni(t *testing.T) {
 	_ = st.SetPHPExtensions("8.4", []string{"redis", "gd"})
 	// 正常路径：原扩展集来自本机已有的固化镜像（否则就是 TestExtension_Apply_BaseFallbackRecompilesFullSet 那一支）
 	rt.hasImages = []string{engine.CommittedPHPRef("8.4")}
+	// redis 的 ini 在盘上＝它确实可停用；若清单里没有它，停用那一步会被当作内建项跳过（另一条用例锁那种情形）
+	rt.iniFiles = []string{"docker-php-ext-redis.ini"}
 	if err := svc.Apply(context.Background(), "8.4", []string{"gd"}); err != nil {
 		t.Fatal(err)
 	}

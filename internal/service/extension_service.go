@@ -75,7 +75,8 @@ func NewExtensionService(rt ExtRuntime, cache ExtImageCache, store ExtStore, rel
 	return &ExtensionService{rt: rt, cache: cache, store: store, reload: reload, emitter: emitter, env: env, tasks: tm}
 }
 
-// List 返回某 php 版本当前启用的扩展（后端权威）
+// List 返回某 php 版本当前启用的扩展（后端权威）。
+// 这里读的是库——界面上那颗开关要的是「此刻容器里开着没有」，那是 Status 的职责。
 func (s *ExtensionService) List(version string) ([]string, error) {
 	snap, err := s.store.BuildSnapshot()
 	if err != nil {
@@ -86,6 +87,111 @@ func (s *ExtensionService) List(version string) ([]string, error) {
 		return []string{}, nil
 	}
 	return exts, nil
+}
+
+// Status 打开「管理扩展」弹窗时到容器里现查一次启用态（§5.16.2）：
+// 唯一判据是容器内实测的 php -m，名字归一后回写权威库并随快照回流；「能不能停用」再看 conf.d 里有没有那份 ini。
+// 三种情况一律退回库里那份并标 Live=false——容器没跑、探针失败、实测为空（真机上的 php 再裁也会报 Core/date，
+// 一条都没有就等于没读到东西）。退回时**不写库、不发事件**：伪造一份没人实测过的权威值，比显示旧值更糟。
+// 取到实测且与库里不同才回写广播；相同则一写都不发（每次开弹窗都重发一遍同样的事实等于刷屏，§5.19.4 同口径）。
+func (s *ExtensionService) Status(ctx context.Context, version string) (model.ExtStatus, error) {
+	name := dockerutil.ContainerName(string(model.KindPHP), version)
+	fallback := func() (model.ExtStatus, error) {
+		exts, err := s.List(version)
+		if err != nil {
+			return model.ExtStatus{Version: version}, err
+		}
+		return model.ExtStatus{Version: version, Enabled: exts, BuiltIn: []string{}, Live: false}, nil
+	}
+	running, err := s.rt.ContainerRunning(ctx, name)
+	if err != nil || !running {
+		return fallback()
+	}
+	enabled, builtIn, ok := s.probeEnabled(ctx, name)
+	if !ok {
+		return fallback()
+	}
+	prev, err := s.List(version)
+	if err != nil {
+		return model.ExtStatus{Version: version}, err
+	}
+	if !sameExtSet(prev, enabled) {
+		if err := s.store.SetPHPExtensions(version, enabled); err != nil {
+			return model.ExtStatus{Version: version}, err
+		}
+		if err := s.emit(version, enabled); err != nil {
+			return model.ExtStatus{Version: version}, err
+		}
+	}
+	return model.ExtStatus{Version: version, Enabled: enabled, BuiltIn: builtIn, Live: true}, nil
+}
+
+// probeEnabled 发两条只读探针：php -m 给「开着哪些」，conf.d 清单给「哪些删得掉」。
+// 都必须是 argv（不经 shell，防注入），且任一条读失败就整体判为「没实测到」——
+// 把 ls 失败说成「全部内建」等于给每一项都画上一颗哑开关。
+func (s *ExtensionService) probeEnabled(ctx context.Context, ctr string) (enabled, builtIn []string, ok bool) {
+	var out bytes.Buffer
+	if err := s.rt.ExecStream(ctx, ctr, config.ExtLoadedProbeCmd, &out, io.Discard); err != nil {
+		return nil, nil, false
+	}
+	set := map[string]bool{}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if n, valid := config.NormalizeExtName(line); valid {
+			set[n] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil, nil, false
+	}
+	inis, err := s.probeExtInis(ctx, ctr)
+	if err != nil {
+		return nil, nil, false
+	}
+	enabled = make([]string, 0, len(set))
+	for e := range set {
+		enabled = append(enabled, e)
+	}
+	sort.Strings(enabled)
+	for _, e := range enabled {
+		if !inis[config.ExtIniFile(e)] {
+			builtIn = append(builtIn, e)
+		}
+	}
+	if builtIn == nil {
+		builtIn = []string{}
+	}
+	return enabled, builtIn, true
+}
+
+// probeExtInis 列 conf.d，返回该目录里实际存在的文件名集合。
+func (s *ExtensionService) probeExtInis(ctx context.Context, ctr string) (map[string]bool, error) {
+	var out bytes.Buffer
+	if err := s.rt.ExecStream(ctx, ctr, config.ExtIniListCmd, &out, io.Discard); err != nil {
+		return nil, err
+	}
+	m := map[string]bool{}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if n := strings.TrimSpace(line); n != "" {
+			m[n] = true
+		}
+	}
+	return m, nil
+}
+
+func sameExtSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sa, sb := toSet(a), toSet(b)
+	if len(sa) != len(sb) {
+		return false
+	}
+	for k := range sa {
+		if !sb[k] {
+			return false
+		}
+	}
+	return true
 }
 
 // diffExts 计算新增 / 停用集合（均去重、稳定序）
@@ -185,6 +291,9 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 
 	// 跨步状态：本次是否已固化新镜像（决定回滚是否需删除 committedRef）
 	var committedNew bool
+	// 落库的必须是容器重建后实测到的那一份，不是本次请求的目标集——基座自带的扩展（curl/mbstring/PDO…）
+	// 从来没进过目标集，只写目标集就等于库里说「这个版本只装了 redis」而 php -m 里有十四项（§5.16.2）。
+	var measured []string
 
 	steps := []task.Step{
 		&task.FuncStep{StepName: "写扩展清单 extensions.env", Exec: func(_ context.Context, log task.StepLog) error {
@@ -214,7 +323,30 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 			if len(added) > 0 {
 				s.prefetchBuildDeps(ctx, name, version, tmpDir, log)
 			}
-			for _, e := range removed {
+			// 停用只对「conf.d 里有那份 ini」的扩展有效：基座静态内建的那几项既无 .so 也无 ini，
+			// 让它们进循环等于日志报「已停用 gd」而 php -m 里 gd 照旧在——界面撒谎（§5.16.2 三档显示 / §5.16.4 边界）。
+			targets := removed
+			if len(targets) > 0 {
+				inis, err := s.probeExtInis(ctx, name)
+				if err != nil {
+					// 分不清哪几项删得掉时照原样逐项处理：rm -f 对不存在的 ini 退出码 0（真机取证，幂等），删不动也不报错
+					log.Log(string(model.LogDim), "扩展 ini 清单读取失败，本次逐项照原样停用: "+err.Error())
+				} else {
+					var keep, skipped []string
+					for _, e := range targets {
+						if inis[config.ExtIniFile(e)] {
+							keep = append(keep, e)
+						} else {
+							skipped = append(skipped, e)
+						}
+					}
+					if len(skipped) > 0 {
+						log.Log(string(model.LogDim), "基座内建（无 conf.d ini 可删），停用无效，已跳过: "+strings.Join(skipped, " "))
+					}
+					targets = keep
+				}
+			}
+			for _, e := range targets {
 				if !config.ValidateExt(e) {
 					return fmt.Errorf("扩展名不合法: %s", e)
 				}
@@ -258,6 +390,15 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 				return err
 			}
 			log.Log(string(model.LogOk), "容器已运行于固化镜像: "+name)
+			// 容器已经换到固化镜像上运行，此刻到里面现查一次「到底哪些扩展开着」，
+			// 任务结尾落库的就是这一份。拿不到只退回落库目标集并留一行说明——
+			// 已编译生效的扩展不该因为一次读探针失败而被判死（§0.2 规则 16）。
+			en, _, ok := s.probeEnabled(ctx, name)
+			if !ok {
+				log.Log(string(model.LogDim), "未能实测启用集（容器内 php -m），本次落库的是请求的目标集，下次打开「管理扩展」即按实测纠正（非实时）")
+			} else {
+				measured = en
+			}
 			return nil
 		}, RB: func(ctx context.Context) error {
 			// 重建失败：撤回本次固化镜像，退回原镜像运行态
@@ -305,10 +446,14 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 		Meta:  model.TaskMeta{Type: "extensions", Kind: string(model.KindPHP), Version: version},
 		Steps: steps,
 		Apply: func() error {
-			if err := s.store.SetPHPExtensions(version, enabled); err != nil {
+			persist := measured
+			if len(persist) == 0 {
+				persist = enabled
+			}
+			if err := s.store.SetPHPExtensions(version, persist); err != nil {
 				return err
 			}
-			return s.emit(version, enabled)
+			return s.emit(version, persist)
 		},
 	}
 	_, err = s.tasks.Run(ctx, t)
@@ -509,13 +654,10 @@ func (s *ExtensionService) emitCacheCorrupted(version, entry string) {
 		Kind: string(model.KindPHP), Version: version, Entry: model.ManifestPackage{Name: entry}})
 }
 
-// phpExtConfDir 官方 php 镜像的扩展 ini 目录：docker-php-ext-enable 即往此处写 docker-php-ext-<name>.ini
-const phpExtConfDir = "/usr/local/etc/php/conf.d"
-
 // extDisableArgs 停用扩展 = 删掉它的 ini。真机取证 php 镜像内没有 docker-php-ext-disable
 // （只有 -install / -enable / docker-php-source），沿用不存在的命令会让每次取消勾选必然失败并整单回滚。
 func extDisableArgs(name string) []string {
-	return []string{"rm", "-f", phpExtConfDir + "/docker-php-ext-" + strings.TrimSpace(name) + ".ini"}
+	return []string{"rm", "-f", config.ExtConfDir + "/" + config.ExtIniFile(name)}
 }
 
 // ensureRunning 保证 name 容器以 image 运行：未运行则从 image 重建并启动

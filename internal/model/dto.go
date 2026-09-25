@@ -54,3 +54,14 @@ type TaskMeta struct {
 	Added   []string `json:"added,omitempty"`
 	Removed []string `json:"removed,omitempty"`
 }
+
+// ExtStatus 打开「管理扩展」时后端到容器里现查一次的启用态（§5.16.2「启用态的唯一真值」）。
+// Enabled 回答「此刻哪些扩展开着」：Live 为真就是容器内 php -m 的实测结果（名字已归一成小写目录名），
+// Live 为假就是库里上次落库的那份——界面必须按 Live 显示「非实时」，不得把「没查到」画成「没装」。
+// BuiltIn 是 Enabled 里删不掉的那几项（静态编进基座，既无 .so 也无 conf.d ini，停用对它们是空操作）。
+type ExtStatus struct {
+	Version string   `json:"version"`
+	Enabled []string `json:"enabled"`
+	BuiltIn []string `json:"builtIn"`
+	Live    bool     `json:"live"`
+}

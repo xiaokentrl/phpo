@@ -99,3 +99,47 @@ func ExtInstallFromFileCmds(name, stagedPkg string) [][]string {
 	}
 	return [][]string{{"pecl", "install", stagedPkg}, {"docker-php-ext-enable", n}}
 }
+
+// ExtConfDir 官方 php 镜像的扩展 ini 目录：docker-php-ext-enable 的全部效果就是往这里写一份
+// docker-php-ext-<name>.ini，因此「停用」的机制与「能不能停用」的判据都落在这一个目录上。
+const ExtConfDir = "/usr/local/etc/php/conf.d"
+
+// ExtIniFile 某扩展对应的 ini 文件名（只在 ExtConfDir 内，路径不可能穿越）
+func ExtIniFile(name string) string {
+	return "docker-php-ext-" + strings.TrimSpace(name) + ".ini"
+}
+
+// 两条只读探针：打开「管理扩展」弹窗不该改动容器状态，因此都只查不改。
+// 必须传 argv（不经 shell）——扩展名与目录名都可能来自用户输入，拼进 shell 字符串即注入面。
+var (
+	// ExtLoadedProbeCmd 实测「此刻哪些扩展被加载了」，这是启用态的唯一判据。
+	// 库里那份是「上次请求的目标集」，基座自带的扩展从来没进过它，拿它当判据就会把已装的说成没装。
+	ExtLoadedProbeCmd = []string{"php", "-m"}
+	// ExtIniListCmd 列出可删的 ini：据此区分「可停用」与「静态内建（删无可删）」。
+	ExtIniListCmd = []string{"ls", "-1", ExtConfDir}
+)
+
+// normalizeExtAlias 显示名 → 目录名里不规则的那几个：php -m 打的是「Zend OPcache」，
+// 目录与 ini 用的是 opcache。其余名字只靠大小写归一。
+var normalizeExtAlias = map[string]string{
+	"zend opcache": "opcache",
+}
+
+// NormalizeExtName 把 php -m 的一行归一成扩展目录用的名字。
+// 归一只允许发生在这里这一处：前端再判一次就会出现「两边口径不一致」，
+// 界面显示 off 而后端认为 on。第二段 [Zend Modules] 的标题行、空行、以及过不了格式校验的
+// 奇怪输出（真机上 php 的警告也可能混进 stdout）一律返回 ok=false 当作不是名字。
+func NormalizeExtName(line string) (string, bool) {
+	s := strings.TrimSpace(line)
+	if s == "" || strings.HasPrefix(s, "[") {
+		return "", false
+	}
+	n := strings.ToLower(s)
+	if alt, ok := normalizeExtAlias[n]; ok {
+		n = alt
+	}
+	if !ValidateExt(n) {
+		return "", false
+	}
+	return n, true
+}

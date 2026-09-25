@@ -14,6 +14,7 @@ import { Dialogs } from '@wailsio/runtime'
 import { dataDirOf, defaultDataDir, envKeyPort, setPort, setServiceDataDir } from '@/api/env'
 import PasswordField from '@/components/common/PasswordField.vue'
 import { DIR_ROWS, DEFAULT_FILE_COUNT, GAP_REASON_KEYS, SVC_META } from '@/constants/service'
+import { catalogFor } from '@/constants/ext'
 import type { ServiceKind, TaskBrief } from '@/types'
 import { needsPort, needsPassword } from '@/utils/format'
 import { verRoot } from '@/utils/path'
@@ -40,8 +41,11 @@ function dirPath(version: string, sub: string): string {
   if (sub === 'data') return dataDirOf(props.kind, version)
   return `${verRoot(state.env, props.kind, version)}/${sub}`
 }
+// extCount 卡片上「已启用扩展」的颗数：只数扩展目录里那些（管理扩展弹窗铺的就是这一份）。
+// 快照里现在是容器内实测的全集，含 Core／date 这类目录管不到的名字，照直数会比弹窗对不上。
 function extCount(version: string): number {
-  return (state.phpExtensions[version] || []).length
+  const cat = new Set(catalogFor(version).map((e) => e.name))
+  return (state.phpExtensions[version] || []).filter((n) => cat.has(n)).length
 }
 
 // busyPill 该版本卡片上有没有任务在跑/在排队：判据是后端 TaskBrief 的 kind+version（§5.6 队列详情走快照），

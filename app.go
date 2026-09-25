@@ -512,12 +512,13 @@ func (a *App) ConfigSaveFiles(ctx context.Context, kind model.ServiceKind, versi
 
 // ---- M6 扩展绑定：读启用集 / 三段式应用扩展并重建固化镜像（硬红线 4/5/8）----
 
-// ExtList 返回某 PHP 版本当前启用的扩展（后端权威）
-func (a *App) ExtList(version string) ([]string, error) {
+// ExtStatus 到容器里现查一次某 PHP 版本「此刻哪些扩展开着」，并把它回写权威库后随快照回流。
+// 界面那颗开关要的是实测结果，不是上次提交的目标集；容器没跑时返回库里那份并标 live=false（界面上写「非实时」）。
+func (a *App) ExtStatus(ctx context.Context, version string) (model.ExtStatus, error) {
 	if a.container.ExtensionService == nil {
-		return nil, errNotReady
+		return model.ExtStatus{}, errNotReady
 	}
-	return a.container.ExtensionService.List(version)
+	return a.container.ExtensionService.Status(ctx, version)
 }
 
 // ExtApply 应用目标扩展集：容器内编译 → commit 固化 phpo/php:{version} → 提升离线缓存 → 重建容器 → 重载 nginx
