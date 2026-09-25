@@ -36,7 +36,87 @@ In one sentence: **it isn't yet another PHP bundle — it's a tool that hides th
 
 ---
 
-## 2. What you need before installing
+## 2. The UI at a glance (ordered by how much a developer cares)
+
+If you are not going to read the long version, these 12 shots are enough. The order is my guess at what you want to know first: **prove the versions really coexist, then show me I can still reach into nginx myself, then extensions / logs / backups, and only at the end the cosmetics.**
+
+> The screenshots come from the current production frontend build running through the **backend-less demo channel** — the sites, services and archives listed there are demo seeds, not live data. The click-level walkthrough inside the native window is still outstanding; see "What isn't done yet" below. The offline-cache screen is deliberately not screenshotted: the demo channel cannot fetch real cache entries and I am not going to invent data for it. What that page does is described in the table above and in the "Network behaviour" section.
+
+### ① Overview: which environments are installed and running
+
+![phpo overview](./docs/screenshots/01-overview.png)
+
+Four numbers on top (service instances / running / stopped / service lines) plus a row per instance: PHP 8.4, 8.3, 8.0 alongside MySQL 8.4, PostgreSQL 17, Redis 8 and Nginx alpine — **installed side by side and running side by side**. Each row gives the service, its version, its state, its container name (uniform `phpo-php-8.4` style) and a "Manage" entry. The three buttons top-right are cleanup, trash and run diagnostics — the last one runs the 15-item environment check on the real host (Docker, ports, writable dirs, hosts permission, cache integrity, leftover temp dirs…); whatever can be fixed automatically gets a button right there.
+
+### ② The PHP page: three versions side by side, each on its own
+
+![PHP service page](./docs/screenshots/02-service-php.png)
+
+This is the first reason the software exists. Three PHP cards, each with its own config dir / log dir / site source path, its enabled-extension count (15 / 9 / 7), and its own config / stop / uninstall buttons. Switching a site to another PHP version points the upstream at exactly that container's `php-{version}-fpm:9000` — no fuzzy matching.
+
+### ③ Sites: port, PHP version and health, edited inline
+
+![Sites list](./docs/screenshots/03-sites.png)
+
+Four stat cards on top (4 sites / 3 PHP versions / 2 healthy / nginx port 80); each row gives domain, port, PHP version (**switched from an inline dropdown**), root path, health, and an actions column (⋮ menu and delete; the table scrolls sideways to the hosts column). Note the orange "degraded" pill on `api.test`: its port was taken at creation time, and phpo **does not silently change the port you typed** — the site is still created, the vhost just is not written yet; free the port (or change it once) and it self-heals. Switching PHP runs `nginx -t` before writing and reloading; if the domain is unresolved, "Add hosts" does it (with an elevation prompt — if you decline it just hands you a line to copy, the site is unaffected).
+
+### ④ The vhost itself: nginx config you can edit, validated before it lands
+
+![vhost editor](./docs/screenshots/04-vhost-editor.png)
+
+The "liftable" half of "hides Docker, but keeps it liftable". Raw text of `nginx/sites/demo.test.conf` under the working root (default `~/phpo`), with `set $php_upstream php-8.4-fpm:9000;` in plain sight; `proxy_pass`, `ssl_certificate`, `load_module` are all allowed through. **The one hard requirement**: saving must pass `nginx -t`, otherwise it rolls back automatically — you cannot brick nginx from here.
+
+### ⑤ Rewrite rules: 9 framework presets, including the Chinese ecosystem
+
+![Rewrite presets](./docs/screenshots/05-rewrite-presets.png)
+
+Laravel / ThinkPHP / Yii2 / ThinkCMF / CodeIgniter / Symfony / WordPress / none / custom. One click writes the block into the right place in the vhost, with a preview of the rule text; "custom" takes your own.
+
+### ⑥ Extensions are chosen while installing PHP: 73 entries, the 11 common ones pre-checked
+
+![Install PHP with extensions](./docs/screenshots/06-install-extensions.png)
+
+Not a text box where you guess. Each PHP version gets a 73-entry / 8-group catalog (filtered by version visibility), and the ones Laravel needs are ticked by default. The catalog is **not a whitelist** — type an extension name that is not in it, and as long as it passes the format check it gets installed.
+
+### ⑦ Manage extensions: you always submit the full target set, the compile streams line by line
+
+![Manage extensions](./docs/screenshots/07-php-extensions.png)
+
+What the dialog has pre-checked equals the extensions currently **applied** to that version (read from the authoritative backend snapshot, not an empty list). Change one item and it recompiles, commits a new image and rebuilds the container; the **package files themselves** (pecl `.tgz`, Alpine `.apk` build deps) land in the offline cache, so compiling on another machine, offline, works. If one extension fails to compile, the error names it and the whole order rolls back to the previous image.
+
+### ⑧ The log drawer: what each step is doing and where it stuck, line by line
+
+![Task log drawer](./docs/screenshots/08-task-drawer.png)
+
+The core of the project, not an accessory. Left 70% / right 30% (the divider drags, double-click resets): the left column's top line is the task in plain words ("Create backup"), below it `[4/6] Pack data` all the way to `Backup completed`; the right column is the queue, newest submission on top, each row labelled waiting / running / done. The rule is hard — **the backend is the only authority and the UI never pretends success** — so the button you clicked stays greyed out until the real state comes back.
+
+### ⑨ Database service card: port, password and data dirs on its face
+
+![MySQL service card](./docs/screenshots/09-service-mysql.png)
+
+MySQL 8.4: port 3384, password with 👁 reveal / 📋 copy / ↺ reset, and the config dir / data dir / log dir / init script listed one per row (the data dir can be customised per version, to any path). Passwords are **stored in plaintext, may be empty, length unchecked** — a deliberate policy, not a missing feature. Changing the password or port does not take effect immediately (both are fixed when the container is built): press "Rebuild to apply" on the card, and **the data volume is kept — the database is not lost**.
+
+### ⑩ Backup: one click, and one unreadable file does not kill the archive
+
+![Backup and restore](./docs/screenshots/10-backup.png)
+
+Logical dump first (`mysqldump` / `pg_dumpall` / redis `--rdb`) → stop services → snapshot configs → pack → restart. Files inside data dirs are written by the container's uid and often unreadable from the host: those are **skipped with aggregated warnings** and the archive still gets produced. The "archive root" line at the top can be pointed at any folder (default `~/phpo/backups`); the list shows size, time and entry count, with per-row download / restore / delete.
+
+### ⑪ Warnings instead of blocks: before stopping a PHP version it tells you who uses it
+
+![preflight warning dialog](./docs/screenshots/11-preflight-warning.png)
+
+Apart from the 8 hard red lines, anything warnable is never blocked: this says plainly "these sites are using PHP 8.4: demo.test, api.test" and then carries on. Uninstalling is the same — there is no "keep at least one version" gate. You are the programmer; that decision is yours.
+
+### ⑫ Settings: themes, language, scaling, tray
+
+![Settings](./docs/screenshots/12-settings.png)
+
+Lowest weight, so it is last. Four cards, each doing one job: **layout** (compact / standard / wide presets plus sidebar width and log-panel height), **UI scaling** (7 steps from 75% to 150%, with a continuous slider as well), **appearance** (简体中文 / English) and **tray** (minimise on close, show tray icon), followed by check-for-updates. The 6 themes are not picked on this screen — use the「phpo · 晨光白」chip in the title bar or "switch theme" at the bottom of the sidebar. All of these preferences are **written to frontend local storage only**, never to the config file or the database. (The header line saying "changes are written to config.yaml" is leftover prototype copy — the password and port that *do* go into `config.yaml` are edited on the service cards, not here.)
+
+---
+
+## 3. What you need before installing
 
 - **Docker must be running**: Docker Desktop on Windows/macOS, native Docker Engine on Linux. Without Docker, no service can start (one of the hard red lines).
 - **One extra step on Linux**: after `sudo apt install docker.io`, also run `sudo usermod -aG docker $USER` and then **log out and back in** (a new terminal is not enough). Skip it and the socket is on disk and the daemon is running, but phpo can't dial it — and phpo will say "the current user has no permission to access Docker" rather than lie that "Docker isn't running".
@@ -45,7 +125,7 @@ In one sentence: **it isn't yet another PHP bundle — it's a tool that hides th
 
 ---
 
-## 3. Download and install
+## 4. Download and install
 
 Go to https://github.com/xiaokentrl/phpo/releases/latest and pick the file for your system:
 
@@ -71,7 +151,7 @@ The "Verify" step in the wizard is a **read-only pre-flight**: it only checks wh
 
 ---
 
-## 4. Running in ten minutes
+## 5. Running in ten minutes
 
 1. Open phpo and finish the wizard.
 2. "PHP" page → click "Install" → version `8.3` → the 11 common extensions are already ticked in the catalog, glance over them if you like → confirm.
@@ -85,7 +165,7 @@ For databases, install from the "MySQL / PostgreSQL / Redis" pages. The password
 
 ---
 
-## 5. What's in the UI
+## 6. What's in the UI
 
 The left sidebar has 10 entries (Sites + five service pages + Overview + Backup + Offline cache + Settings; the five service pages share one base component). Counting the "Cleanup" panel makes 11 screens — it opens as a modal from a button on the Overview page, not as its own route. There are 12 view files in the tree (one is the shared base, one is the body of the cleanup panel).
 
@@ -97,7 +177,7 @@ The left sidebar has 10 entries (Sites + five service pages + Overview + Backup 
 | Backup | One-click archive (logical DB dump first → pause → snapshot → pack → auto-restart), download, restore, delete |
 | Offline cache | Usage and entries, verify all, cleanup in three modes, **manual import** of a single package file, change the cache root |
 | Cleanup | Scan orphan containers/volumes/networks/images, clean in three modes (conservative / standard / aggressive) + trash |
-| Settings | Passwords and ports, release sources, audit log, tray preferences, check for updates |
+| Settings | Layout (sidebar width, log-panel height), UI scaling, language, tray preferences, check for updates |
 
 **The bottom log drawer is the core of the project, not an accessory.** It's two panes (default 70% / 30%; the splitter is draggable, clamped between 40–80%, double-click resets):
 
@@ -110,7 +190,7 @@ The rule is hard: **the backend is the only authority, and the UI never optimist
 
 ---
 
-## 6. Where things live
+## 7. Where things live
 
 | Content | Location |
 |---------|----------|
@@ -128,7 +208,7 @@ Three paths can be **customized individually**: the offline cache root, the back
 
 ---
 
-## 7. Network behaviour
+## 8. Network behaviour
 
 Two kinds of outbound traffic, no third kind:
 
@@ -141,7 +221,7 @@ Release sources can be several: `update_sources` in `config.yaml` is an array, a
 
 ---
 
-## 8. Running from source
+## 9. Running from source
 
 ### Dependencies
 
@@ -216,7 +296,7 @@ The signing private key lives in `~/.local/share/phpo-signing/` (never committed
 
 ---
 
-## 9. Where the code lives
+## 10. Where the code lives
 
 ```
 phpo/
@@ -254,7 +334,7 @@ A few trade-offs the design genuinely cares about:
 
 ---
 
-## 10. FAQ
+## 11. FAQ
 
 | Symptom | What's going on |
 |---------|-----------------|
@@ -270,7 +350,7 @@ A few trade-offs the design genuinely cares about:
 
 ---
 
-## 11. What isn't done yet (stated honestly)
+## 12. What isn't done yet (stated honestly)
 
 - **The Windows / macOS packages have only ever been built successfully in CI; they've never been installed on a real machine.** Silent NSIS installation, uninstall registry entries, shortcut placement, and the .dmg's actual behaviour under Gatekeeper are still paper inferences. The Linux deb/rpm have been installed, upgrade-over-installed and rollback-checked on this machine.
 - **macOS is ad-hoc signed**; a proper Developer ID and notarization are not wired up, and Windows has no code-signing certificate.
@@ -281,7 +361,7 @@ A few trade-offs the design genuinely cares about:
 
 ---
 
-## 12. Document map
+## 13. Document map
 
 Go deeper on any topic in `docs/` (32 documents, all in Chinese). The ones people reach for:
 
