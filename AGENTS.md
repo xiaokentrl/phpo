@@ -723,6 +723,8 @@ phpo/
 ├── Makefile
 ├── config.example.yaml              # 配置样例：两根 + 可自定义根（offline_root/backup_root）+ services.{kind}.{version}.{password,port,data_dir}
 ├── AGENTS.md                        # 本总纲
+├── README.md                        # 中文入口手册（12 节：定位/装机/安装/十分钟跑起来/界面/落盘位置/联网行为/源码跑/代码树/FAQ/未做事项/文档地图）
+├── README_EN.md                     # README.md 的完整英译（同一套 12 节，非摘要；两册标题下与页尾互设切换入口）
 ├── index.html                       # 原型 SSOT 镜像（由 前端唯一界面来源.txt 逐字派生，禁止手改）
 ├── 前端唯一界面来源.txt              # 单文件 HTML 原型 = 前端唯一界面来源
 ├── 任务工单.md  实施顺序.md          # 派生工单清单 / 里程碑排期
@@ -832,10 +834,11 @@ phpo/
 │   │
 │   ├── updater/
 │   │   ├── checker.go  downloader.go  verifier.go   # SHA256 + Ed25519（硬红线 6）
+│   │   ├── source.go                                # 多发布源探测（并发拉取 + 跨源取版本序最大 + 单源 15s 超时 + 按 OS 选包）
 │   │   ├── update.go  rollback.go  scheduler.go     # 启动时 + 每 24h 检查
 │   │   ├── embed.go                                 # go:embed signing
 │   │   ├── installer.go  installer_windows.go  installer_darwin.go  installer_linux.go
-│   │   └── signing/public.key                       # 公钥随包分发（当前为占位，待持钥者一次性替换）
+│   │   └── signing/public.key                       # 公钥随包分发（**已是真实公钥**，2026-09-24 配钥随 `2d7326a` 入库；`verify-signing-guard.sh` 与私钥配对通过）
 │   │
 │   ├── ui/
 │   │   └── window.go  tray.go  menu.go
@@ -940,8 +943,8 @@ phpo/
     └── PULL_REQUEST_TEMPLATE.md
 ```
 
-> **尚未落地的规划交付物**（属 M7 发布线，不得当作已存在引用）：根目录 `README.md` / `README_EN.md` /
-> `CHANGELOG.md`（现仅 `docs/CHANGELOG.md`）/ `CONTRIBUTING.md` / `LICENSE`；`configs/`（默认配置已内联到
+> **尚未落地的规划交付物**（属 M7 发布线，不得当作已存在引用）：根目录 `CHANGELOG.md`（现仅 `docs/CHANGELOG.md`）/
+> `CONTRIBUTING.md` / `LICENSE`；`configs/`（默认配置已内联到
 > `internal/config` 与前端 `constants/`）；`assets/`、`data/`；`internal/i18n/`（文案在前端 locales）；
 > `pkg/hash`、`pkg/execx`、`pkg/fsutil`；`frontend/public/favicon.svg`；win/mac 代码签名链（EV 证书 /
 > Developer ID + 公证）与真机冒烟。
@@ -2760,6 +2763,34 @@ const (
 > 而根目录 `README.md` 已写出（当前尚未 commit；同段的 `README_EN.md` 与 `LICENSE` 实测**确实不存在**，该两条不动）；
 > ② §4.1 的 `internal/updater/` 一段未登记多源轮新增的 `source.go`，同段 `signing/public.key` 的注释仍写「当前为占位，
 > 待持钥者一次性替换」——真公钥已随 `2d7326a` 入库并经 Release `v0.1.42` 的 CI 守卫验过，该句已是过期事实。
+> ⚠️ 本段的**两条待裁均已被下一轮消掉**（`README_EN.md` 其时同样已入库，故「该两条不动」只对 `LICENSE` 成立）；见下条。
+>
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· §4.1 三处状态标记校正**：
+> 用户指令「**更新一下总纲里的状态标记**」——上一轮按 §3.4.3 只登记未改的两处事实错误，本轮取得授权后落文。
+> 三条全部先以命令现取再写，不凭记忆改：
+> ① **根目录 `README.md` / `README_EN.md` 从「尚未落地」名单删除**（§4.1 末）。判据 `[ -e README.md ] && [ -e README_EN.md ]`
+> 均为真；两册已随 `4ab62d6`（中文册 + 英译）与 `e0f7b6c`（中英互设切换入口）入库并推送，§4.1 根目录树同轮补登两行。
+> 该名单其余每一项（根 `CHANGELOG.md`／`CONTRIBUTING.md`／`LICENSE`／`configs/`／`assets/`／`data/`／`internal/i18n/`／
+> `pkg/hash`／`pkg/execx`／`pkg/fsutil`／`frontend/public/favicon.svg`／win·mac 签名链）**逐条 `[ -e ]` 实测仍不存在**，
+> 一条不删——尤其 `LICENSE` 是本条名单里唯一还活着的「缺交付物」事实。
+> ② **`internal/updater/` 补登 `source.go`**（多源轮 `ff05853` 新增的第 4 个文件）。上一轮只补了它的测试
+> （`source_test.go` 使 `*_test.go` 计数 83 → 84），源文件本身漏登，于是 §4.1 这段读起来像「多源探测长在 `checker.go` 里」。
+> ③ **`signing/public.key` 的注释由「当前为占位，待持钥者一次性替换」改为真实状态**：该串在 2026-09-24 由持钥者一次性
+> 替换为真公钥并随 `2d7326a` 入库，判据是 `bash scripts/verify-signing-guard.sh <私钥> internal/updater/signing/public.key`
+> 现报「✓ 内嵌公钥与签名私钥匹配」（占位串下该守卫必然拒绝），且 Release `v0.1.42` 的 CI 守卫步骤为绿。
+> **注释原写的「替换流程」语义仍然有效**（换钥时仍走 `sign-release.sh genkey` → `pubkey` → 守卫核对三步，操作步骤登记在
+> `internal/updater/embed.go` 头注释与 `docs/应用升级.md` §3），失效的只是「当前为占位」这一状态断言。
+>
+> **同源同步**（§13 第 4 步）：`docs/目录规范.md` 三处随本轮改——根目录树补登 `README.md README_EN.md` 一行、
+> §8「尚未落地的规划交付物」的根一栏删去两册、`internal/` 分层表的 `updater/` 一行补 `source.go` 并注明公钥已是真实值（该表的公钥格
+> 原只列文件名、未带「占位」字样，故本轮是**补登**而非纠错；其 §8 之外的配钥事实早已写对）。
+> **本轮纯文档、只改 §4.1 的三处状态标记**，因此未跑编译与门禁；**总纲版本仍为 v2.9.14**（未发布版本内折叠，不另起 v2.9.15）。
+> **明确未改**：§11.1 三平台安装包里 `phpo-x64.dmg`「公证未接入」一条（实测仍成立，不是过期标记）；§4.1 的
+> `frontend/dist/index.html 占位产物`（仍是 tracked 占位，构建后须还原）；其余各处「占位」字样（队列占位行／demo 占位快照，
+> 与状态标记无关）；17 事件名／4 任务状态／preflight **19** action／NEEDS_HOME **17**／`pkg/errs` **27** 码／门禁 **5** 项／
+> 扩展 **73**·**8**·**11**／i18n 两侧各 **619**／live **11**／迁移 **8**／docs **32** 篇／`app.go` 的 **68 = 70 − 两颗钩子**；
+> 冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）。
+> **真宿主 GUI 未走查**（本轮无代码改动）。
 >
 > **v2.9.13 变更（新增 §5.6.4「等待期反馈：操作名进抽屉标题条 + 被点按钮禁用」，把「一切耗时操作实时说出在做什么」写成冻结条款）**：
 > 用户提出的最高优先级需求：**「所有的一切全部（操作/点击/变化/请求/反馈/响应/日志/消息…）优先把直观名字放进日志抽屉，
