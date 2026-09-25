@@ -1,9 +1,11 @@
 # phpo
 
+[中文](./README.md) · [English](./README_EN.md)
+
 > A local Docker development environment manager for PHP developers. Desktop app for three platforms — **GUI only, no command line**.
 >
 > Latest release: **0.1.42** · Download: https://github.com/xiaokentrl/phpo/releases/latest
-> The single authority for this project's rules is [AGENTS.md](./AGENTS.md) (Chinese, frozen document). This file is the entry point for "understand the project and use it".
+> The single authority for this project's rules is [AGENTS.md](./AGENTS.md) (Chinese, frozen document). This file is the entry point for "understand the project and use it". **Switch to the Chinese version above, or go straight to [README.md](./README.md); note that the 32 documents under `docs/` are Chinese-only.**
 
 ---
 
@@ -299,3 +301,7 @@ Go deeper on any topic in `docs/` (32 documents, all in Chinese). The ones peopl
 | What changed | [CHANGELOG](./docs/CHANGELOG.md) |
 
 **Read [AGENTS.md](./AGENTS.md) before changing this project.** It is a frozen document: the tech stack may not drift, numbers may not be edited from memory, and when a clause contradicts the code you stop and report it rather than quietly working around it.
+
+---
+
+[中文](./README.md) · [English](./README_EN.md)

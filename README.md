@@ -1,9 +1,11 @@
 # phpo
 
+[中文](./README.md) · [English](./README_EN.md)
+
 > 面向 PHP 开发者的本地 Docker 开发环境管理器。三平台桌面应用，**只有图形界面，没有命令行**。
 >
 > 最新版本：**0.1.42** · 下载：https://github.com/xiaokentrl/phpo/releases/latest
-> 项目规则的唯一权威是 [AGENTS.md](./AGENTS.md)（中文，冻结文档），本文为「读懂并使用这个项目」的入口。
+> 项目规则的唯一权威是 [AGENTS.md](./AGENTS.md)（中文，冻结文档），本文为「读懂并使用这个项目」的入口。**想看英文版，点上面的 English，或直取 [README_EN.md](./README_EN.md)；`docs/` 下的 32 篇文档只有中文。**
 
 ---
 
@@ -299,3 +301,7 @@ phpo/
 | 改了什么 | [CHANGELOG](./docs/CHANGELOG.md) |
 
 **改这个项目之前请先读 [AGENTS.md](./AGENTS.md)。** 它是冻结文档：技术栈不许漂移、数字不许凭印象改、发现条款与代码矛盾要停下来报告而不是绕过去悄悄修。
+
+---
+
+[中文](./README.md) · [English](./README_EN.md)
