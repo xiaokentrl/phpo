@@ -47,12 +47,6 @@ func (r *srcRecorder) Emit(name string, payload any) {
 	r.events = append(r.events, srcEvent{name, payload})
 }
 
-func (r *srcRecorder) reset() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = nil
-}
-
 // miss 取首个 cache:miss 事件载荷（本用例全程只应有一次未命中）
 func (r *srcRecorder) miss() (model.CacheMissEvent, bool) {
 	r.mu.Lock()
