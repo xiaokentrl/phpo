@@ -1,10 +1,17 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.44`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.45`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
 ## [未发布 / M7 收尾]
+
+- **定版 `0.1.44` → `0.1.45`（用户指令「发 Releases」）**：把这一区间的两处功能改动送进版本号，并推标签让 CI 按这份源码出三平台包。定版本身只改三处（`wails.json` 的 `info.productVersion`、`build/linux/nfpm.yaml` 的 `version`、本文件页眉），前两处由 `bash scripts/bump-version.sh patch` 一次做完；**本轮不在本机跑 `release:local`**——那个任务会再自增一次 patch，把号推到 `0.1.46`，而发版路径是「推 tag → CI 出包」。
+  - **版本区间内容（`v0.1.44..HEAD` 共 4 个 commit、51 个文件、+2501 −141）**：`d865bf2` 设置页的 Docker 镜像源（多行地址 + 逐个测握手延迟 + 拉取时先试最快的那个，全不通自动直连官方）、`0008bea` 扩展编译失败点名缺哪个系统开发包（`internal/config/extdeps.go` 的 **28** 个 pkg-config 名 → **17** 对 Debian／Alpine 包名）、`932e889` 删掉镜像源取证用例里没人调的 `reset`（CI 的 golangci-lint 判 `unused`）、`238813c` 把前三次的已推送事实补进本文件过期的表述。**用户看得见的两处新功能**：装服务需要联网拉镜像时可以先试离自己最近的源；断网/内网机器上「扩展一直装不上」现在会说出到底缺哪个包、该敲什么命令、装完点哪里回来。
+  - **一处必须说清的过期事实**：`build/bin/` 里现存的包**不含**本区间任何一项——它们是更早的 `release:local` 自增出来的产物，不会随工作区更新。真正的 `0.1.45` 三平台包由 `release.yml` 在收到 `v0.1.45` 标签后现场构建。
+  - **仍欠的三件验收（都在原生窗口，用例代答不了）**：① 设置页「检测」的结果表与「最快」标记好不好认；② 「管理扩展」三档显示（可停用／内建不可停用／未启用）与「非实时」那一行的点击级观感；③ 扩展编译失败时新增的那两行日志（缺的包名 + 怎么回来）在真窗口的可读性。另 **live 端到端未跑**：「缺包 → 进容器装上 → 点应用并重建即成功」这条要联网且会写用户正在跑的容器，本机只做只读取证。
+  - **验真（命令现取）**：`bash scripts/version.sh` → `0.1.45`，与 `wails.json`、`build/linux/nfpm.yaml`、本文件页眉四处一致。回归全绿：`gofmt -l .` 无输出 · `go vet ./...` EXIT=0 · `go build ./...` EXIT=0 · `go test ./... -count=1` EXIT=0 · 五项门禁全过（i18n zh-CN 与 en-US 各 **642** 键且集合相等、模板 golden 空 diff、Docker 命名、缓存清单字段、扩展 **73** 项分类对账）· **`golangci-lint run ./...`（2.13.2）`0 issues.`**——它只挂在 `.github/workflows/lint.yml`，本机五项门禁不含它，而本区间动过 `test/integration/`，按上一轮立的口径必须本机单跑 · `vue-tsc --noEmit` EXIT=0（用仓库内 `frontend/node_modules/.bin/vue-tsc`；`npx` 会装 vue-tsc@3，与本项目 `typescript ~5.7.2` 不兼容）。当前权威计数：preflight **20** action／NEEDS_HOME **18**／`app.go` **73** 导出方法 = **71** 绑定 + `ServiceStartup`/`ServiceShutdown` 两颗钩子／与包同目录 `*_test.go` **89**·`test/integration/` live **13**·门禁 **5**·docs **32** 篇，与 AGENTS.md §4.1／§11.3 一致，本区间无新计数漂移。
+  - **一条待用户裁决、本轮不动**：`0008bea` 的提交信息写的是「增加Docker 镜像源」，载荷却是扩展系统包依赖表（镜像源实为 `d865bf2`）。该提交已在 `origin/main` 上，改消息要重写历史并强推——按约定归用户决定，本轮只在本文件登记（见下文那条 `⚠️`）。
 
 - **扩展编译失败时会说清「缺的是哪个系统开发包」（用户裁定「有 apk 和 pecl 就必须做」之后追进来的第三条需求，AGENTS.md §0.2 规则 40 / §5.16.6 / R107）**：一句话——以前界面只说「扩展 gd 安装失败，本次扩展集未应用」，用户既不知道该装什么、也不知道去哪儿装；现在同一处会多两行，一行点名缺的包（两种基座各自的包名都给），一行说怎么回来。起因是用户的「php 扩展一直安装失败，能不能换个带 apk 的镜像」——**换 Alpine 修不好**：只读他 `operations` 表里四条同形状失败记录看到的是同一件事，`configure` 说 `Package requirements (zlib) were not met`，而缺的那份 `-dev` 包在 Debian 系和 Alpine 系基座上都缺，缺的是「扩展 → 系统包」这份对照知识，不是基座种类。
   - **全仓唯一对照表 `internal/config/extdeps.go`**：**28** 个 pkg-config 名映射到 **17** 个 Debian 包名／**17** 个 Alpine 包名（`zlib`→`zlib1g-dev`／`zlib-dev`、`openssl`→`libssl-dev`／`openssl-dev`…），一行同时给出两种写法，用户不必先搞清楚自己基座是哪家。识别入口 `ExtMissingDepNames(line)` 只认两种形状：`Package requirements (zlib libpng) were not met` 与 `Package 'libxml-2.0', required by …`，同一行去重。表里认不出的名字**照原样报出去**，不猜。
