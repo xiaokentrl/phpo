@@ -23,6 +23,7 @@
 > **扩展弹窗生命周期**（v2.9.14 新增，见 §5.16.2/§5.16.3）：「应用并重建」是数十秒级的后台链路，管理扩展弹窗**提交即关闭**——等待期的步骤、进度与失败全部由抽屉日志与右栏队列承载，不得让弹窗 `await` 到任务结束；重开弹窗的默认勾选**是**该版本容器内**此刻已启用**的扩展集（唯一真值 `php -m`，由后端现取后回写库、随快照回流，v2.9.14 追加见 §5.16.2）——**不是**「上次 Apply 的目标集」。后置环节不得判死已做对的工作：**nginx 缺席/未运行 → `dim` 跳过行，nginx 重载失败 → 一行 `err` 后继续**，不撤回本次已编译生效的扩展
 >
 > **扩展开关的语义**（v2.9.14 追加，见 §5.16.2）：`EXT_CATALOG` 每一行那颗开关**只表达「这个扩展在本 PHP 版本上启用了没有」**——启用即 on、未启用即 off。**停用 = 不再加载**（删 `conf.d` ini），**不是卸载**：`.so` 留在镜像里，开关照样回 off，不得因为「文件还在」就显示 on。基座自带的扩展（`curl`／`mbstring`／`openssl`／`dom`／`xml`／`opcache`／`sodium`…实测 **21** 项）因此**必须**显示为 on，不得因为 phpo 没装过它们就显示 off；其中 **19** 项是**静态内建**（无 `.so`、无 ini，删无可删），故开关**三档**：`on · 可停用` ／ `on · 内建不可停用` ／ `off`——不得给内建项一颗假的取消开关
+> **Docker 镜像源**（v2.9.14 追加，见 §5.21）：设置页可填**多个**镜像源地址（一行一个 `主机[:端口]`），点「检测」并发问一次 registry 握手（`GET /v2/`，单源 **5s** 超时）看每一行的**延迟 ms** 与不通原因，装服务时**先试延迟最小的那个**、它拉不动就按序换下一个，全部失败才直连官方。三条不得：**① 不写宿主 Docker 的配置**（绝不改 `daemon.json`、不配 `registry-mirrors`、不重启用户的 Docker Desktop / Docker Engine——那会重启正在跑的容器，且 macOS/Windows 上会被 Docker Desktop 下次启动覆盖回去），改写只发生在 phpo 自己那一次拉取的镜像名前缀上；**② 「检测」的结论不落库、不进快照、不新增事件名**（17 事件名冻结），它是请求/响应回来的即时数字，真正拉取时还会**现测一次**再排序（检测过了几分钟就过期，持久化等于把过期结论当成事实）；**③ 唯一校验是地址合形**（主机[:端口]，禁路径分隔符与 `..`），**可达性不拦**——填了暂时连不上的源照常收下，保存时的警告 + 拉取时逐源点名 + 自动回落直连官方（§0.2 规则 15/16）。空清单合法，语义即「不改写镜像名、直连官方」
 > **文档必须说人话**（v2.9.14 追加，见 §0.2 规则 38 / §12.11）：本文件、`docs/` 全部文档、代码注释、以及**界面文案**（前端 `locales/`、向导提示、错误信息）**一律用大白话写**。写法固定为三步：① 先用一句话说明**这是干什么的**（不说术语）；② 再说**什么情况下会错**、错的时候用户看得见什么；③ 最后说**怎么回来**（恢复路径、点哪里）。字段名、函数名、条款编号只在句尾作**索引**用，不得充当解释——内部词（「权威集」「派生态」「落地链」「归一」「幂等」）首次出现时必须顺带说清它指什么，否则等于让读者去查词典。判据：把这一段拿给**没参与过当轮讨论的同事**读，他能复述出「改了什么、为什么、怎么验证」才算合格；需要反问才能读懂的即重写
 > **路径记法**：本文件的 **`./` 一律指 PHPO_HOME 根**（即 `config.yaml` 的 `phpo_home`，由装机向导指向任意目录；`~/phpo` 只是默认值，**打包安装后不得假定工作目录在用户主目录**）。`<用户数据目录>` 仍是各平台 XDG 的 `os.UserConfigDir()/phpo`（`config.yaml` / `phpo.db` / `logs` / `trash` / `updates`），与 PHPO_HOME **不同源**；`~/www/` 是 WWW_ROOT 的默认值（同样可改）。同一记法**同等约束 `docs/` 全部文档、任务工单、代码注释与面向用户的文案（前端 locales）**——只有带「默认」字样的默认值/预填值可写字面量。详见 §0.1.1
 > **状态同步**：后端唯一权威；前端只订阅事件、不做乐观更新；**一切操作/日志/队列/请求/响应必须实时同步界面 UI 与抽屉日志**——§5.6 的 17 个事件名逐一有前端落地处（见 §5.6.2，无任务归属的事件走抽屉左栏的「系统日志通道」）
@@ -135,18 +136,23 @@
 36. **禁止只缓存扩展的「结果」而不缓存扩展的「包」**（v2.9.14 追加，见 §5.14.3 / §5.16.3）：扩展的**包文件本体**必须在**安装**与**重新编译**两条路径上都落到缓存根（pecl → `{pecl}/{name}-{版本}.tgz`，Alpine 构建依赖 → `{apk}/*.apk`，各带 `manifest.json` 的 SHA256 条目），命中时**零网络回填容器暂存目录** `/tmp/phpo-ext/{apk|pecl}` 并从该文件编译。为此：查找扩展包必须按**扩展名前缀**匹配（`pecl install redis` 的产物永远叫 `redis-6.0.2.tgz`，按精确名查等于永不命中）；Alpine 构建依赖必须用 `apk add --cache-dir <暂存目录>`（官方脚本的 `--no-cache` 用完即弃，永远拿不到 `.apk`）；容器暂存目录必须在 `docker commit` **之前**清空，否则包文件被固化进 `phpo/php:{version}` 镜像层。基座不是 Alpine 时（Debian / 认不出）**不产生可离线的系统包**，给一行 `dim` 说明后跳过——**不得**为此造 deb 槽位。缓存链上任一环节（查询/回填/下载/取回/提升）失败**只 `dim` 并退回在线编译，绝不判死整单**（§0.2 规则 16）。
 37. **禁止把扩展开关画成「上次请求的目标集」**（v2.9.14 追加，见 §5.16.2）：`EXT_CATALOG` 每一行那颗开关**只表达一件事——这个扩展在本 PHP 版本上此刻启用了没有**；已启用 = on，未启用 = off。因此启用态的**唯一真值是容器内实测的 `php -m`**（经后端归一大小写后回写 `php_extensions`、随权威快照回流），**不得**拿库里的「上次 Apply 的目标集」、前端本地状态或空清单当判据。**停用 = 不再加载（删 `conf.d` ini），不是卸载**——`.so` 留在镜像里，停用后开关照样回 off。由此推出一条不得回避的显示口径：**静态编进基座的扩展**（真机干净基座 **73** 项里占 **19** 项，无 `.so` 无可删的 ini）**必须显示为 on 且标为「内建不可停用」**，不得让它画成一颗可取消的开关——点了「停用」什么也不会发生，那是界面在撒谎（§3.4.1 第 4 条：发现矛盾必须报告，不是绕过）。容器未运行 / 实测拿不到时**退回库里集并明示「非实时」**（一行说明 + 该行不可提交），**绝不**静默铺成整片 off。
 38. **禁止写不说人话的文档与文案**（v2.9.14 追加，写法与判据见 §0.1.2，自查见 §12.11）：本文件、`docs/` 全部文档、`任务工单.md`、`实施顺序.md`、代码注释，以及**给用户看的文案**（前端 `locales/`、向导提示、错误信息）**一律用大白话写**——先用一句话说清这是干什么的，再说这种情况错的时候用户在界面上看得见什么，最后说怎么回来。三条不得：**① 不得拿术语当解释**（「权威集」「派生态」「落地链」「归一」「幂等」这类词首次出现要顺带说清指什么，读者不该边读边查词典）；**② 不得拿条款编号当正文**（`见 §5.16.2` 只是索引，那一段本身必须读得懂）；**③ 不得把实现细节写进给用户看的文案**（函数名、分支名、事件名留在总纲与代码注释里，界面只说结果和下一步）。判据：把这段拿给**没参与过当轮讨论的同事**读，他能复述「改了什么 / 为什么会错 / 怎么验证」即合格；他要反问才能读懂，就是重写的时候。**说人话不放松任何准确性要求**——数字仍须命令实测（规则 2）、路径仍守 §0.1.1 记法、口径仍与既有条款一致。本条源自用户在多轮里反复给出的纠正：「说人话」。
+39. **禁止把镜像源做成宿主 Docker 的全局设置、或把测速结论当事实存下来**（v2.9.14 追加，见 §5.21）：设置页那几行「Docker 镜像源」只影响 **phpo 自己发起的那一次 `docker pull`**（换镜像名前缀 → 拉回来归一回原始引用 → 删掉带前缀的别名）。**绝不**写宿主 Docker daemon 的 `daemon.json`、**绝不**改 `registry-mirrors`、**绝不**重启用户的 Docker——那等于替用户改他机器上所有容器的行为。「检测」给出的握手延迟**只在当下有效**：不落库、不进快照、不缓存排名，真正要拉取前必须现问一次再排序，否则几小时后源已不通还优先用它。镜像源是**加速手段**：可达的源按延迟逐个试、失败就换下一个，全都不行才直连官方，直连也失败才报错并在消息里逐源点名；**不得**因为某个源不通就把这次安装判死（§0.2 规则 16），也**不得**因为配了源就跳过离线缓存与本机镜像库那两级（决策 22 的优先级一字不动）。承载上只给 `cache:miss` 补一个 `source` 字段，**17 事件名一个不增**。
 
 ### 0.3 数字权威表（Agent 引用禁止出错）
 
 | 项 | 权威值 | 来源 |
 |----|-------|------|
-| preflight action 数 | **19**（原型 17 + 生产新增 `root-set` / `cache-import`） | `internal/preflight/preflight.go` 的 `Run` switch-case 与 `AllActions`（`ActionCount`） |
-| NEEDS_HOME 动作数 | **17** | 同文件 `needsHome` map（`NeedsHomeCount`）；对账测试 `TestActionAndNeedsHomeCounts` |
+| preflight action 数 | **20**（原型 17 + 生产新增 `root-set` / `cache-import` / `docker-source-set`） | `internal/preflight/preflight.go` 的 `Run` switch-case 与 `AllActions`（`ActionCount`） |
+| NEEDS_HOME 动作数 | **18**（`docker-source-set` 与 `root-set` 同口径：它写的就是 `config.yaml`，两根未就绪即拒绝） | 同文件 `needsHome` map（`NeedsHomeCount`）；对账测试 `TestActionAndNeedsHomeCounts` |
 | PF 校验错误码数 | **27**（原型 26 + 生产新增 `FileMissing`；原 `LastPhp`「至少保留一个 PHP 版本」已按 §0.2 规则 33 删除） | `pkg/errs/codes.go`（`CodeCount`） |
 | §5.6 事件名数 | **17** | 事件协议表（冻结，不新增） |
 | 事件前端落地覆盖率 | **17/17**（`update:progress` 由升级弹窗进度条承载，不进日志） | `frontend/src/composables/useStateSync.ts` 的 `landEvent` + `eventNote`（§5.6.2） |
 | 可自定义根面数 | **3**（缓存根 · 备份根 · 每服务版本数据目录） | `config.yaml` 的 `offline_root` / `backup_root` / `services.{kind}.{ver}.data_dir`（§5.15） |
 | 同类路径生效根数 | **1**（自定义与默认**互斥唯一**，不并存、不做二级回退） | `internal/config/paths.go` 的 `applyRoot` / `DataDirFor` 一处判定（§5.15.1 · 决策 23） |
+| 设置页可写配置面数 | **4**（缓存根 · 备份根 · 每服务版本数据目录 · **Docker 镜像源清单**）——但「根面数」仍是 **3**：镜像源不是路径，不进 `rootsKey`，改它**不触发** `Rebind` 换图 | 前三个见 §5.15.1；第四个是 `config.yaml` 的 `docker_sources`（`app.go` 的 `DockerSourcesGet` / `DockerSourcesSet`，§5.21） |
+| 镜像源「检测」测的是什么 | **registry 握手延迟 ms**（`GET /v2/`，并发、单源超时 **5s**；HTTP 200／401／403 都算通），**不是下载带宽** | `internal/engine/mirror.go` 的 `ProbeSources` / `handshake` / `MirrorProbeTimeout`（§5.21.2） |
+| 镜像源的唯一校验 | **地址合形**（`主机[:端口]`，忽略空行、去重、禁路径分隔符与 `..`）；**可达性不拦**，全不通也照常收下，只在保存时给一行警告 | `config.ValidateRegistryHosts` + `internal/preflight/rules_docker.go`（§5.21.1） |
+| 镜像源的生效范围 | **只参与「联网拉取」那一段**（`cache:miss` 的 `action=pull`）；命中离线缓存与「本机已有镜像重建缓存」两条零网络路径完全不受影响。**拉取侧仍按延迟升序逐个试、失败只换源，全都不行才直连官方并在错误里逐源点名**——镜像源是加速手段，不该变成新的失败面（§0.2 规则 16） | `internal/cache/image_cache.go` 的 `fetchImage` / `fastestFirst`（§5.14.3 末条 · §5.21.3） |
 | PHP 扩展目录条目数 | **73**（内置 **49** ／ pecl **24**，分 **8** 组） | `frontend/src/constants/ext.ts` 的 `EXT_CATALOG`；与 `internal/config/extensions.go` 的 `peclExts` 由 `scripts/check-ext-catalog.go` 对账（§5.16） |
 | 安装时默认勾选的常用扩展 | **11** | 同文件 `common: true` → `commonExts(version)` |
 | 扩展启用态的唯一判据 | **容器内实测 `php -m`**（后端归一大小写：`PDO`→`pdo`、`Zend OPcache`→`opcache`）→ 回写 `php_extensions` → 随快照回流 | §0.2 规则 37 · §5.16.2「启用态的唯一真值」；前端**不得**直接消费 `php -m` 文本（硬红线 4） |
@@ -300,6 +306,7 @@
 | 限制策略 | 最小限制；仅 8 条硬红线；警告代替阻止 |
 | Docker 清洁策略 | 所有操作幂等、原子、可回滚、可清理 |
 | 离线缓存策略 | 装任何镜像/扩展必先查缓存（**在用户选定的缓存根下**，默认 `./offline/`）；命中零网络；镜像未命中先探本机镜像库、已有即零网络重建缓存，否则下载编译；扩展未命中先**取包文件本体**（`pecl download` / Alpine `apk add --cache-dir`）到容器暂存目录 → 取回 → 提升，再从该文件编译，命中即把包**回填容器暂存目录**；成功后提升到缓存；支持**手工导入任意文件**为缓存条目；无论成败均清空临时目录 |
+| Docker 镜像源 | 设置页可填**多个**源（一行一个 `主机[:端口]`）、「检测」给每一行的**握手延迟 ms**、装服务时**先试最快的那个**、它拉不动按序换下一个、全失败才直连官方；**只在联网拉取那一段生效**（命中缓存与本机重建缓存零网络，不碰源）；**绝不写宿主 Docker 的 `daemon.json`／`registry-mirrors`、不重启用户的 Docker**；检测结论不落库不进快照（见 §5.21） |
 
 ### 1.2 原型资产盘点
 
@@ -745,7 +752,7 @@
 ```
 phpo/
 ├── main.go                          # GUI 入口（embed all:frontend/dist + 注册根 Service）
-├── app.go                           # 根 Service：唯一对前端暴露的门面（68 个绑定方法 = 70 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子）
+├── app.go                           # 根 Service：唯一对前端暴露的门面（71 个绑定方法 = 73 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子）
 ├── app_test.go
 ├── go.mod  go.sum                   # module phpo；go 1.27
 ├── wails.json                       # Wails 配置
@@ -800,10 +807,11 @@ phpo/
 │   │       ├── 0007_drop_dir_ready.sql    # dirReady 改快照派生，表下线
 │   │       └── 0008_add_task_ledger.sql   # 任务账本：给 operations 加 task_id / label / logs 三列（不另立表）
 │   │
-│   ├── engine/                      # Docker 引擎层（18 文件）
-│   │   ├── client.go  container.go  image.go  registry.go
+│   ├── engine/                      # Docker 引擎层（19 文件）
+│   │   ├── client.go  container.go  image.go  registry.go   # registry.go 含 MirrorRef：把原始镜像名换成「走某个源」的名字（§5.21.3）
 │   │   ├── network.go  volume.go  mount.go  inspect.go  exec.go
 │   │   ├── copy.go                  # 宿主 ⇄ 容器唯一字节通道（CopyTo/CopyFrom，Docker archive API）：扩展包回填与取回
+│   │   ├── mirror.go                # 镜像源「检测」：并发握手问延迟（ProbeSources，单源 5s 超时），不落库不进快照（§5.21.2）
 │   │   ├── calibrate.go  health.go
 │   │   └── cleaner.go  orphan.go  idempotent.go  verify.go  trash.go  audit.go
 │   │
@@ -831,10 +839,11 @@ phpo/
 │   │       └── elevate_linux.go  elevate_darwin.go  elevate_windows.go
 │   │
 │   ├── preflight/                   # 唯一裁决层（§0.2-14）
-│   │   ├── preflight.go             # Run 的 19-case switch + AllActions / needsHome 集合
+│   │   ├── preflight.go             # Run 的 20-case switch + AllActions / needsHome 集合
 │   │   ├── validators.go            # 域名 / 版本 / 路径 / 端口校验
 │   │   ├── rules_service.go  rules_site.go
 │   │   ├── rules_ops.go  rules_cache.go
+│   │   ├── rules_docker.go          # docker-source-set：镜像源清单只裁决地址合形，可达性不拦（§5.21.1）
 │   │   └── rules_root.go            # root-set：自定义缓存根 / 备份根 / 每服务版本数据目录（§5.15，仅路径安全）
 │   │       # 占用判定内联复用 store.CollectUsedPorts（无独立 portprobe.go）
 │   │       # 清理规则在 cleanup_service 侧（无 rules_cleanup.go）
@@ -895,10 +904,10 @@ phpo/
 │   └── src/
 │       ├── main.ts  App.vue  env.d.ts
 │       ├── router/index.ts          # 10 命名路由（CleanupView 由 CleanupModal 承载，非独立路由）
-│       ├── api/                     # 17 文件
+│       ├── api/                     # 18 文件
 │       │   ├── env.ts  lifecycle.ts  site.ts  extension.ts  config.ts
 │       │   ├── backup.ts  offline.ts  cache.ts  doctor.ts  task.ts
-│       │   ├── state.ts  updater.ts  cleanup.ts  wizard.ts  docker.ts
+│       │   ├── state.ts  updater.ts  cleanup.ts  wizard.ts  docker.ts  dockerSource.ts
 │       │   └── events.ts  mockEvents.ts
 │       ├── stores/                  # Pinia 8
 │       │   ├── appState.ts  taskStore.ts  layoutStore.ts  prefsStore.ts
@@ -963,8 +972,9 @@ phpo/
 │       ├── m6_offline_live_test.go  t601_extension_live_test.go  t602_backup_live_test.go
 │       ├── g4_pgsql_heal_live_test.go        # 旧配置裸启动必失败（带日志取证）→ 经 Start 自愈后就绪
 │       ├── g5_v2914_live_test.go             # 真机取证 v2.9.14：两缓存槽位互不覆盖 · 产出物 0777 · 外部删除的缺失态点名 · 零网络恢复固化镜像
-│       └── g6_extstatus_live_test.go         # 真机取证 §5.16.2 三档显示：跑应用自己的 Status 链路，复现 21/19/2 三档计数 + 名字归一 + 幂等静默 + 容器停用退回「非实时」
-│       # 单元测试与包同目录（85 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       ├── g6_extstatus_live_test.go         # 真机取证 §5.16.2 三档显示：跑应用自己的 Status 链路，复现 21/19/2 三档计数 + 名字归一 + 幂等静默 + 容器停用退回「非实时」
+│       └── d1_dockersource_live_test.go      # 真机取证 §5.21：走生产装配拉一次真镜像，取证「带源前缀拉回来仍归一成原始引用」+「cache:miss 真带着源名」；本机已有镜像时另取证零网络重建完全不碰源
+│       # 单元测试与包同目录（88 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -985,7 +995,7 @@ phpo/
 ```
 <用户数据目录>/                         # = os.UserConfigDir()/phpo（见 internal/config/userdata.go）；不受装机向导影响
 │                                       # Windows: %APPDATA%\phpo · macOS: ~/Library/Application Support/phpo · Linux: ~/.config/phpo
-├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + offline_root? + backup_root? + services.{kind}.{version}.{password,port,data_dir?}；0777（§5.20）
+├── config.yaml                       # 单一配置权威（YAML）：phpo_home + www_root + offline_root? + backup_root? + docker_sources?（镜像源主机名，一行一个，见 §5.21）+ update_sources?（升级发布源）+ services.{kind}.{version}.{password,port,data_dir?}；0777（§5.20）
 ├── phpo.db                           # SQLite，仅存运行态（installed / running / sites / php_extensions / trash / operations（含任务账本 task_id/label/logs） / offline / cache_manifest）；**延迟建库**：装机向导把两根目录写入 config.yaml 后才创建
 ├── logs/
 │   └── operations.log                # 操作审计（JSON Lines，§5.13.10）
@@ -1085,7 +1095,7 @@ phpo/
 | `docker:orphan-found` | `{ resources: []Resource }` | 发现孤儿资源 |
 | `docker:state-drift` | `{ expected, actual, gaps }`（`gaps` 为 `[]ServiceGap`，v2.9.14 补入；启动校准取不到比对值时退化为 `{ error }`） | 状态漂移 |
 | `cache:hit` | `{ kind, version, source, size }` | 命中缓存 |
-| `cache:miss` | `{ kind, version, action }`（`action`：镜像 `local`=用本机已有镜像重建缓存（零网络）/ `pull`=联网拉取；扩展 `download`） | 未命中缓存 |
+| `cache:miss` | `{ kind, version, action, source? }`（`action`：镜像 `local`=用本机已有镜像重建缓存（零网络）/ `pull`=联网拉取；扩展 `download`。`source` **只在 `action=pull` 时给**——点名这次是从哪一个镜像源拉的，空即直连官方；`local`／`download` 完全不涉及镜像源故留空。**载荷补字段，事件名仍为 17 个**，与 `docker:state-drift` 补 `gaps` 同先例） | 未命中缓存 |
 | `cache:promote` | `{ kind, version, entries }` | 提升到缓存 |
 | `cache:corrupted` | `{ kind, version, entry }` | 缓存损坏 |
 | `cache:cleanup` | `{ mode, freed_bytes }` | 缓存清理完成 |
@@ -1163,7 +1173,7 @@ phpo/
 | `docker:orphan-found` | — | ✅ `meta` 行 | 只落**计数**；不触发 rescan、不回填 `cleanupStore`（载荷是 `unknown[]`，无法无损映射成 `OrphanReport`） |
 | `docker:state-drift` | ✅ **额外 `syncState()`** | ✅ `meta` 行 | **有 `gaps` 时逐条点名铺开、不再补汇总行**（一次漂移说两遍等于把抽屉当日志复读机，§5.19.5）；`gaps` 为空时落 `expected → actual` 一行，比对值缺席则退化为 `error` 文本 |
 | `cache:hit` | `cacheStore`（经 `useCache` 重拉） | ✅ | 命中零网络的证据 |
-| `cache:miss` | 同上 | ✅ | `action=local` 显示「本机重建」，`pull`/`download` 显示「走网络」 |
+| `cache:miss` | 同上 | ✅ | `action=local` 显示「本机重建」，`pull`/`download` 显示「走网络」；`pull` **带 `source` 时点名用的哪一台镜像源**（`task.cacheMissSource`），`source` 缺席（未配置镜像源＝直连官方）沿用不带源那条（`task.cacheMiss`） |
 | `cache:promote` | 同上 | ✅ | 手工导入（§5.14.9a）同样发此事件 |
 | `cache:corrupted` | 同上 | ✅ | SHA256 校验失败回退网络 |
 | `cache:cleanup` | 同上 | ✅ | 三模式清理结果 + 释放体积 |
@@ -1522,6 +1532,11 @@ CI 无人值守支持。
        ├─ 本机已有 → 零网络重建缓存（发射 cache:miss，action=local）
        │   → docker save -o {tmp}/image.tar
        └─ 本机没有 → docker pull {image}（网络，发射 cache:miss，action=pull）
+                    │   ├─ 设了镜像源：拉之前现问一次各源握手延迟，按延迟从小到大依次试
+                    │   │     （engine.MirrorRef 把镜像名换成「{源}/{原引用}」再拉，到手后 ImageTag 归一回原引用——不归一等于本机仍「没有这个镜像」，下次照样联网、建容器直接找不到镜像）
+                    │   │     → 某一台拉不动就换下一台；全都拉不动才直连官方；全失败则错误里逐源点名（§5.21.3）
+                    │   └─ 未设镜像源：直连官方（= 旧行为，一字不变）
+                    → cache:miss 的 source 记下**实际用上**的那一台（空=直连官方），本机重建与扩展包下载两路留空
                     → docker save -o {tmp}/image.tar
        → 校验
        → mv {tmp}/image.tar ./offline/{kind}/{version}/image.tar
@@ -1679,7 +1694,7 @@ type OfflineService interface {
 | 事件 | 载荷 | 说明 |
 |------|------|------|
 | `cache:hit` | `{ kind, version, source, size }` | 命中缓存 |
-| `cache:miss` | `{ kind, version, action }`（`action`：镜像 `local`=用本机已有镜像重建缓存（零网络）/ `pull`=联网拉取；扩展 `download`） | 未命中缓存 |
+| `cache:miss` | `{ kind, version, action, source? }`（`action`：镜像 `local`=用本机已有镜像重建缓存（零网络）/ `pull`=联网拉取；扩展 `download`。`source` **只在 `action=pull` 时给**——点名这次是从哪一个镜像源拉的，空即直连官方；`local`／`download` 完全不涉及镜像源故留空。**载荷补字段，事件名仍为 17 个**，与 `docker:state-drift` 补 `gaps` 同先例） | 未命中缓存 |
 | `cache:promote` | `{ kind, version, entries }` | 提升到缓存 |
 | `cache:corrupted` | `{ kind, version, entry }` | 缓存损坏 |
 | `cache:cleanup` | `{ mode, freed_bytes }` | 缓存清理完成 |
@@ -1773,6 +1788,8 @@ type OfflineService interface {
 | 临时目录 `./{kind}/{version}/ext/` | 它是**编译中间产物**而非缓存，路径固定才能保证「任务结束必清空 + 不跨任务持久化」（§5.14.4）；自定义根只影响缓存**结果**的落点，不影响这里 |
 | 站点根目录 | 已是每站点独立字段（需求外），不属本条三个面 |
 
+> **补注：设置页上还有第四个「可写配置面」，但它不是根**（v2.9.14 追加，见 §5.21）。`config.yaml` 的 `docker_sources` 同样在设置页编辑、同样点「保存」落库、同样只过一道 preflight，用户看到的手感与换根一致；它**不属本条三个面**，因为它是**一组主机名而不是路径**——不参与 `rootsKey` 指纹、因此**不触发 `Rebind` 换图**（缓存管理器拿的是一个现读提供者，每次取路径/拉镜像时当场从同一份 `config.yaml` 读，改完即生效，无需整图重建）。「同类路径生效根数 = **1**」与「可自定义根面数 = **3**」两个权威数字**不因它改变**。
+
 #### 5.15.6 明确禁止
 
 - ❌ 同一类路径出现两个生效根（自定义与默认并用、按顺序回退查找）。
@@ -1853,7 +1870,7 @@ type OfflineService interface {
 | 服务卡片计数 | `ServiceView.vue` 的 `extCount` 只数目录内那些（快照是实测全集，含 `Core`／`date` 这类目录管不到的名字，照直数会比弹窗对不上） |
 | **真机取证（不再只有单测假件背书）** | `test/integration/g6_extstatus_live_test.go`（`PHPO_LIVE=1` + Docker 可用双重 skip）跑的是**应用自己的** `Status` 链路：库与目录全在 `t.TempDir()`、容器名用上游不存在的 `phpo-php-9.9`、基座由本机已有标签提供，**全程零网络、不碰用户那份 `<用户数据目录>/`**。四段断言：① 实测到东西且名字已归一（`PDO`→`pdo`、`Zend OPcache`→`opcache`、`[php]` 头行不进集）；② 三档的两半都在——可停用项有 ini（`opcache`／`sodium`），内建项没有（`curl`／`mbstring`）；③ 计数复现 §0.3 的 **21 / 19 / 2**；④ 同一事实不重发事件，容器停用后 `Live=false` + 退回库里 + 不写库不发事件 |
 
-**方法数未变**：本轮用 `App.ExtStatus` 替换原 `App.ExtList`（一进一出），§4.1／§11.3 的「**68 个绑定方法 = 70 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子**」按现产物复测仍成立（`grep -c '^func (a \*App) [A-Z]' app.go` = **70**；`frontend/bindings/phpo/app.ts` 的 `export function` = **68**）。
+**方法数**：该轮用 `App.ExtStatus` 替换原 `App.ExtList`（一进一出），故那一轮复测的「**68 个绑定方法 = 70 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子**」当时仍成立。**镜像源功能（§5.21）之后这个数字已经变了**：门面一进三出（净 +3），现按 `grep -c '^func (a \*App) [A-Z]' app.go` = **73**、`frontend/bindings/phpo/app.ts` 的 `export function` = **71** 复测成立（§4.1／§11.3 同步）。上一轮那句「仍成立」是当时的真实现场取证，保留不改，但**不得**再当作当前值——以本句为准。
 
 
 #### 5.16.3 执行期日志契约（这条是需求 ③ 的硬约束）
@@ -2137,14 +2154,91 @@ const (
 
 ---
 
+### 5.21 Docker 镜像源：多行地址 + 逐个测速 + 拉取时按最快优先（v2.9.14 追加）
+
+**一句话**：**设置页可以填一批 Docker 镜像源（每行一个），点「检测」能看到每一行连不连得上、各要多少毫秒；装服务需要联网拉镜像时，就挑其中最快能连上的那一个用。全部连不上则直连官方源，安装照常进行。**
+
+这是第四节「设置页能改的配置」。**它和 §5.15 那三根的唯一区别是：它不是路径**——不参与 `rootsKey` 指纹、因此保存它**不换图**（不重建缓存管理器、不需要队列空闲、不影响任何在跑任务），但**回显仍只认后端读回来的那一份**（硬红线 4）。
+
+#### 5.21.1 清单的存储、归一与保存
+
+| 项 | 口径 | 落点 |
+|----|------|------|
+| 存哪 | `config.yaml` 的 `docker_sources`（字符串切片，一行一个地址）；**不落 SQLite**、不进快照 | `internal/config/configstore.go` 的 `DockerSources` / `SetDockerSources` |
+| 归一 | 每行去空白 → 去掉 `https://` / `http://` 前缀 → 去掉尾部 `/` 与尾部 `/v2` → 校验 → **去重保序**；空行忽略；返回值**永远非 nil** | `internal/config/validate.go` 的 `NormalizeRegistryHost` / `ValidateRegistryHosts` |
+| 唯一校验 | **地址合形**：`主机名[:端口]`，不含空白、不含 `/`（带路径一律拒并点名原值）、正则 `^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?(:[0-9]{1,5})?$`。**可达性不是保存条件**——连不上的地址照存（用户可能在内网、也可能待会儿才通） | 同上 `ValidateRegistryHost` |
+| 读盘侧 | 手工改坏的项**静默剔除**（不给旧装机添一次打不开的配置文件）；严格裁决只在写入路径 | `normalizeRegistryHosts` |
+| 写链路 | 三段式照旧（硬红线 5）：`docker-source-set` preflight → 落 `config.yaml` → 读回 → 界面回显。空切片合法，语义即「清除、回落直连官方」 | `app.go` 的 `DockerSourcesSet` |
+| preflight | 新 action **`docker-source-set`**（第 **20** 项）：逐项过 `ValidateRegistryHosts`，非法即 `errf` 并点名原值；清单为空给一行 **`warnf`**「未填写镜像源，拉取将直连官方（docker.io）」，**不阻止**保存（§0.2 规则 16）；与 `root-set` 同族——同样写 `config.yaml`，故同样进 **NEEDS_HOME**（第 **18** 项，首启零落盘口径） | `internal/preflight/rules_docker.go` |
+| 不改的东西 | **不写宿主 Docker daemon 的 `daemon.json`、不改 `registry-mirrors`、不重启 Docker**。镜像源只影响 phpo 自己发起的那一次 `docker pull`（这是本条的立场，不是实现细节：用户的环境归用户） | — |
+| 生效时机 | 缓存管理器持**惰性 provider**（每次装服务现读 `config.yaml` 当前值），保存即生效，无需重启应用、无需 `Rebind` | `internal/app/di.go` 的 `cacheMgr.SetSourcesProvider(cfg.DockerSources)` |
+
+#### 5.21.2 「检测」：测的是握手延迟，不是下载速度
+
+点「检测」时，界面把这几行地址原样交给后端并发探一次，结果按**入参顺序**逐行回流（所以界面能直接和文本框的行对上）：
+
+| 项 | 口径 |
+|----|------|
+| 探什么 | registry v2 握手 `GET https://{host}/v2/`。**200／401／403 都算连得上**（401/403 说明这是个真镜像源，只是要鉴权），只有连不上/超时才算不可用 |
+| 数字含义 | `latencyMs` = HTTPS 建连 + 一次 `/v2/` 往返的**毫秒数**。界面上那句话就是「连上一次 + 问一句在不在」的耗时，**不是下载带宽**——不得为了好看把它说成速度，也不得拿它给用户承诺快 |
+| 超时 | `MirrorProbeTimeout = 5s`（`var`，供用例收紧）；每源独立计时，一个慢源不拖住其余行 |
+| HTTPS 不通时 | 仅当地址**看着像明文 HTTP**（本机端口、`localhost`、`http://` 显式前缀等形状）才再试一次 HTTP；仍不通则给合并错误串「{HTTPS 错误}（该地址不以 HTTPS 应答，改用 HTTP 也不通：{HTTP 错误}）」——两种失败原因都在一行里，用户不用猜 |
+| 只读 | **不落库、不建任务、不进账本、不进快照、不新增事件名**（§5.6 的 17 个冻结）。它就是这一次请求的响应；测速排名**不保存**，因为「上次最快」到下次拉取时可能已经不通了 |
+| 下次拉取 | 决策时**现测现取**：拉镜像前重新并发探一遍，按当下延迟升序用。所以界面上那张贴纸式的旧结果不会误导——真实决策永远用新数据 |
+| 前端 | 结果表三列：**源** ／ **延迟** ／ **结论**；延迟最小且可达的那一行标「最快」。空清单时「检测」不可用并提示「先填至少一行地址再检测」 |
+| 未接入后端 | demo 通道下 `getSources`／`probeSources` 返回 `null`，界面显示「当前未连接后端，镜像源需在应用内设置」，**不**把「拿不到」画成「没配」（§0.2 规则 37 同口径） |
+
+落点：`internal/engine/mirror.go`（`ProbeSources` 并发 + 保序、`probeSource` 双方案、`handshake`、`looksLikePlaintextHTTP`）、`app.go` 的 `DockerSourcesGet` / `DockerSourcesSet` / `DockerSourcesProbe`、`frontend/src/api/dockerSource.ts`、`frontend/src/views/SettingsView.vue`。
+
+#### 5.21.3 生效范围：只在联网拉镜像那一步，且缓存优先级一字不动
+
+**决策 22 的「离线缓存 > 本机 Docker 镜像库 > 网络」不因镜像源改变。** 镜像源**只参与最后那一格**——`docker pull` 那一段（即 `cache:miss` 的 `action=pull`）：
+
+- `action=local`（本机已有镜像、零网络 `docker save` 重建缓存）**完全不碰镜像源**；
+- 扩展的 `action=download`（`pecl download` / `apk add`）**不适用**——那不是 Docker 镜像，没有源可换。
+
+未命中且要联网时，`fetchImage` 的次序固定：
+
+```
+1. 并发探一遍已保存的源，留下可达的，按延迟升序排（fastestFirst）
+2. 逐个试：MirrorRef(host, ref) → docker pull 带前缀那份 → ImageTag 归一回原始引用 → 删掉带前缀的别名
+3. 全部失败 → 直连官方 PullImage(ref)
+4. 直连也失败 → 报错，消息里逐源点名（各源失败原因用「；」连接），用户看得见到底是谁不通
+（取消优先：ctx 已取消即返回 ctx.Err()，不冒充「全部源失败」）
+```
+
+两条容易踩错的地方已在实现里钉住：
+
+1. **`MirrorRef` 必须补 `library/`**：`php:8.4-fpm` 在源上的真实路径是 `docker.m.daocloud.io/library/php:8.4-fpm`。单段镜像名不补这一段就是 404，而 404 看起来像「这个源没有这个镜像」，用户和日志都分不出是源坏了还是路径写错了。主机名留空即原样返回；无 tag 补 `latest`。
+2. **拉回来要归一回原始引用**：带前缀那份只是中转，`ImageTag` 到 `php:8.4-fpm` 后立即 `ImageRemove` 别名（删不掉不影响本次结果）。不归一，后续所有按 `ref` 找镜像的代码（`ImageExists`、容器创建、缓存提升）都会以为「没拉到」，而离线缓存里存进去的也会是源前缀名字、换台机器即失效。
+
+**回落与降级**：源不可达**不进**候选序列（不浪费时间试已知不通的）；任一源失败继续下一个；**镜像源是加速手段，不该变成新的失败面**（§0.2 规则 16）——最后一定还有直连官方这条路。
+
+**日志与事件**：`cache:miss` 载荷补一个字段 `source`（`{ kind, version, action, source? }`），**只在 `action=pull` 且真用了某个源时给**，点名这次是从哪台拉的；`local`／`download` 与未配镜像源时留空。前端抽屉相应给一行「缓存未命中 · … （镜像源 {source}）」，不带源时沿用原文案。**事件名仍为 17 个**（与 §5.6 的 `docker:state-drift` 补 `gaps` 同先例）。
+
+#### 5.21.4 明确禁止
+
+- ❌ 写宿主 Docker daemon 的 `daemon.json`／`registry-mirrors`，或为此重启 Docker——那是用户的环境，本产品只改自己发起的那一次 `docker pull`。
+- ❌ 因为配了镜像源就跳过离线缓存或本机镜像库探测（决策 22 的三级优先级不动；镜像源只在 `action=pull` 这一格）。
+- ❌ 保存时要求地址必须连得上、或要求填绝对 URL／带路径（唯一校验是「主机名[:端口]」合形；可达性交给「检测」和用户自己判断）。
+- ❌ 「检测」失败即判死整单——每行各说各的结论，一个不通不影响其余行照常出结果；慢源不得拖住其余行（每源独立超时）。
+- ❌ 把测速结果落库、进快照、发事件，或拿「上次最快」当作下次拉取的判据（17 事件名与快照字段冻结；决策时现测现取）。
+- ❌ 把 `latencyMs` 说成下载速度、或在界面文案里用它承诺「快多少倍」。
+- ❌ 单段镜像名不补 `library/` 就拼到源前缀上（等于制造一个必然 404 的引用，还被误读成「源不可用」）。
+- ❌ 拉回来后不 `ImageTag` 归一、或不删带前缀的别名、或不发 `cache:miss` 的 `source`；也不得把带源前缀的名字提升进离线缓存（换机即失效）。
+- ❌ 全部源都失败时静默直连官方、或只报「拉取失败」不点名每一台的原因。
+- ❌ 因为镜像源不是根就去改 §0.3 的「可自定义根面数 = **3**」「同类路径生效根数 = **1**」，或把它塞进 `rootsKey`／要求 `errs.TaskBusy` 队列空闲——它保存时不需要换图，加这些限制等于给用户添没必要的门禁（§0.2 规则 15/16）。
+
+---
+
 ## 6. 原型 → 生产映射表
 
 | 原型元素 | Go 侧落点 | 前端落点 |
 |---------|----------|---------|
 | state 全局对象 | `internal/store/ + SQLite` | `stores/appState.ts` |
 | persistState / hydrateState | `internal/store/snapshot.go` | — |
-| preflight()（原型 17 action；生产 19） | `internal/preflight/preflight.go` | `composables/usePreflight.ts` |
-| NEEDS_HOME（原型 15；生产 17） | `internal/preflight/preflight.go`（`needsHome` map） | — |
+| preflight()（原型 17 action；生产 20） | `internal/preflight/preflight.go` | `composables/usePreflight.ts` |
+| NEEDS_HOME（原型 15；生产 18） | `internal/preflight/preflight.go`（`needsHome` map） | — |
 | validators | `internal/preflight/validators.go` | `composables/usePreflight.ts`（即时反馈）+ `utils/`（无独立 validate.ts） |
 | VHosts（9 方法） | `internal/vhost/manager.go` | `api/site.ts` |
 | parseVhost / replaceListen | `internal/vhost/parse.go` | — |
@@ -2223,6 +2317,7 @@ const (
 | 扩展固化镜像的第二缓存槽位（v2.9.14，需求 ③） | `config/offline.go#OfflineExtImageTar` + `cache/{lookup,image_cache,promote}.go`（`LookupExtImage` / `LoadExtImage` / `PromoteExtImage`，在 `cache.Manager` 不经门面）+ `cache/manifest.go` 的 `extensions_image` 字段 | `CacheDetailModal.vue` 按 `CacheEntry.HasExtImage` 单独一栏显示两槽位（`offline.detail.extImage`）；`scripts/check-cache-manifest.go`（第 4 项门禁）锁死字段名 |
 | phpo 产出物一律 0777（v2.9.14，需求 ②） | `internal/util/fs.go`（`DirPerm`/`FilePerm` + `MkdirAll`/`WriteFile`/`Create`/`AtomicWrite` 显式 chmod 归一，失败 best-effort）——全仓 23 个落点统一走它 | —（权限是落盘事实，不进快照） |
 | 卸载不设「至少保留一个 PHP」门禁（v2.9.14，需求 ⑤） | `preflight/rules_service.go#uninstall`（php / nginx 依赖均 `warnf`；`pkg/errs` 删 `LastPhp` → **27** 码） | 各服务卡片「卸载」照常可点至最后一个版本；warnings 进确认弹框 |
+| Docker 镜像源 · 逐个测速 · 拉取按最快优先（v2.9.14 追加，§5.21） | `config/{configstore,validate}.go`（`docker_sources` + `ValidateRegistryHosts` 归一去重）+ `preflight/rules_docker.go`（第 20 个 action `docker-source-set`，空清单 `warnf`）+ `engine/mirror.go`（`ProbeSources` 并发保序 + `MirrorProbeTimeout` + 明文 HTTP 回退）+ `engine/registry.go#MirrorRef`（单段名补 `library/`）+ `task/steps/steps_service.go#PullFromSource`（pull → `ImageTag` 归一 → 删别名）+ `cache/image_cache.go`（`fetchImage` 延迟升序逐源 → 直连官方 → 逐源点名）+ `app.go`（`DockerSourcesGet`/`Set`/`Probe`） | `api/dockerSource.ts` + `SettingsView.vue`（多行地址 + 「检测」三列表 + 「最快」标记 + 未接入后端占位）+ `useStateSync.ts`（`cache:miss` 的 `source` 有则点名）+ `CacheHitBadge.vue` |
 
 ---
 
@@ -2397,6 +2492,31 @@ const (
 
 ---
 
+### 决策 30：Docker 镜像源采用「只改自己那一次 pull + 检测只当排序依据」（v2.9.14 追加）
+
+**核心决策**：镜像源保存在 phpo 自己的 `config.yaml` 里，**只影响 phpo 主动发起的那一次 `docker pull`**；不碰宿主 Docker 的配置、不重启 Docker。「检测」测的是握手延迟，它的作用**只是给拉取时排个先后次序**——不是资格赛，也不是承诺。
+
+#### 理由
+
+1. **画像 F（内网/弱网）与画像 C（网络不稳定）**：装服务最后那一格（联网拉镜像）是这两类用户唯一还会卡住的地方。缓存和本机镜像库都探过了才走到网络，此时能选一台内网可达的源，就是这一格能不能过的问题。
+2. **为什么不写 `daemon.json`**：那是用户机器的全局 Docker 配置，写它意味着① 要 root，② 要重启 Docker（会把用户正在跑的所有容器打断），③ 影响范围远超 phpo（用户自己 `docker pull` 也跟着走那个源）。**改自己那一次请求**把这三笔代价全部消掉，能力一样。
+3. **为什么不存测速排名**：「上次最快」到下次拉取时可能已经不通（内网源尤其如此）。存下来就等于让一个过期事实替用户决定用谁；拉取前现测一次，用的永远是当下可达的那一批。
+4. **为什么可达性不拦保存**：用户可能先填地址再连 VPN，也可能填的是只在内网通的源。要求「保存前必须连得上」会把这种正常用法挡在门外，也违反 §0.2 规则 16（能警告的不要阻止）。所以校验只管「这串字符像不像一个主机名」，通不通交给「检测」这一颗按钮和拉取时的实测。
+5. **为什么不新增事件名/快照字段**：拉取用哪一台已经是**一条日志**该说的事（`cache:miss` 补一个 `source` 字段），不是需要界面长期持有的**状态**。§5.6 的 17 个事件名与快照形状因此一字未增（与 §5.6 的 `docker:state-drift` 补 `gaps` 载荷同先例）。
+
+#### 具体规则（四条）
+
+1. **优先级不动**：镜像源只站在决策 22 那条链的最后一格（`离线缓存 > 本机镜像库 > 网络`，见 §5.14.3）——`action=local` 与扩展的 `action=download` 完全不涉及镜像源。
+2. **拉取次序**：可达的源按当下延迟升序逐个试 → 全失败才直连官方 → 直连也失败才报错，且消息里逐源点名原因；任务取消优先返回。
+3. **拉回来必须归一**：带源前缀的那份只是中转，`ImageTag` 回原始引用并删别名，**离线缓存里存的永远是原始名字**（否则换机即失效）。
+4. **保存即生效但不换图**：写 `config.yaml` 后由缓存管理器的惰性 provider 现读；它不是路径，不进 `rootsKey`、不要求队列空闲（与 §5.15 那三根的唯一差别）。
+
+#### 明确禁止
+
+见 §5.21.4。
+
+---
+
 ## 8. 跨平台差异矩阵
 
 | 差异维度 | Windows | macOS | Linux |
@@ -2454,6 +2574,7 @@ const (
 | **R103** | **扩展弹窗 `await` 数十秒的后台任务才关闭；或 nginx 重载失败把已编译生效的扩展整单回滚** | **管理扩展弹窗提交即 `emit('close')`，进度/失败由抽屉日志与队列承载、`.then` 里 `await syncState()` 后 toast（§5.16.2）；nginx 缺席/未运行 → `dim` 跳过行、重载失败 → `err` 行 + `return nil` 不判死整单（§5.16.3）；§0.2 规则 34 + §5.16.2 / §5.16.3 / §5.16.5**（v2.9.14） |
 | **R104** | **扩展只缓存「结果」（`.so` / 固化镜像）而不缓存「包本体」，断网/换机时 pecl 与 Alpine 构建依赖仍必拨网络；或命中缓存后因按精确名查而永不命中，每次白拨一次网络** | **`cache.LookupExtPackage` 按 `{name}-` 前缀匹配 + 取版本序最大；命中即 `engine.CopyTo` 回填容器 `/tmp/phpo-ext/{apk,pecl}` 并 `pecl install <包文件>`（零网络）；未命中先 `pecl download` / `apk add --cache-dir` 取包 → `CopyFrom` 取回宿主 → `PromoteExtension` 登记 manifest（SHA256）；`rm -rf /tmp/phpo-ext` 固定在 `docker commit` 之前；缓存任一环节失败只 `dim` 并退回在线编译；用例 `internal/cache/extpkg_test.go`（前缀命中/最大版本/损坏/提升登记）+ `internal/service/extension_service_test.go` 五条（pecl 命中零网络 · Alpine apk 预取 · deb 跳过 · 缓存失败降级 · 损坏回退）；§0.2 规则 36 + §5.14.3 / §5.16.3**（v2.9.14 追加） |
 | **R105** | **管理扩展弹窗把「上次请求的目标集」当成「此刻启用态」——基座自带的扩展（真机 73 项里 21 项）全部画成 off，用户看不出这个版本到底装了什么；反之把静态内建的 19 项画成可取消的开关，点了「停用」什么也不会发生** | **启用态唯一判据改为容器内实测 `php -m`（后端归一显示名 → 回写 `php_extensions` → 随权威快照回流；前端不消费文本、不新增事件名，硬红线 4）；三档显示 `on · 可停用` / `on · 内建不可停用` / `off`；拿不到实测时退回库里集并明示非实时、期间不可提交；§0.2 规则 37 + §5.16.2 / §5.16.4 / §5.16.5**（v2.9.14 追加；**已落地**，落点见 §5.16.2「落地登记」；**已真机取证**——`test/integration/g6_extstatus_live_test.go` 在真容器上跑应用的 `Status` 链路复现 21/19/2 三档、名字归一、幂等静默与「容器停用即退回非实时」，全程零网络且不碰用户数据目录；仍欠的只有原生窗口里的**像素级**点击验收） |
+| **R106** | **镜像源被当成「改一次就好、之后一直用」的全局设置，于是去改用户 Docker 的 `daemon.json`；或把测速结果存下来当判据，几分钟后源已不通却仍优先用；或源不通即判死这次安装；或带源前缀的名字被 `docker save` 进离线缓存，换机即失效** | **能力只落在 phpo 自己发起的那一次 `docker pull`（`MirrorRef` 换镜像名前缀 → `ImageTag` 归一 → 删别名），绝不写 `daemon.json`／不重启 Docker；测速不落库不进快照（`cache:miss` 只补 `source` 载荷字段，17 事件名未增），真正拉取前**现测现排序**；可达源按延迟升序逐个试 → 全失败直连官方 → 直连也失败才报错并逐源点名，取消优先返回；§0.2 规则 39 + §5.21**（v2.9.14 追加；**已落地**；**已真机取证**——`test/integration/d1_dockersource_live_test.go` 走生产装配真拉一次镜像，锁死「归一回原始引用」与「`cache:miss` 真带着源名」，本机已有镜像时另取证零网络重建完全不碰源。**仍欠原生窗口里的点击级验收**：「检测」结果表与「最快」标记是要用户眼睛判断的） |
 
 ---
 
@@ -2514,7 +2635,7 @@ const (
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（85 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **12** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（88 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **13** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -2685,6 +2806,19 @@ const (
 - [ ] 抽查判据：把本轮新写的文案拿给**没参与过当轮讨论的同事**读，他能否复述「改了什么 / 为什么会错 / 怎么验证」？需要反问的即重写。
 - [ ] 说人话**没有**牺牲准确性：数字仍来自命令实测、路径仍守 §0.1.1 记法、条款仍与冻结口径一致（大白话不等于含糊）。
 
+
+### 12.12 Docker 镜像源检查（v2.9.14 追加，§0.2 规则 39 · §5.21）
+
+- [ ] 镜像源清单是否只落在 phpo 自己的 `config.yaml`（`docker_sources`）？是否**没有**写过宿主 Docker 的 `daemon.json`／`registry-mirrors`、没有重启过用户的 Docker？
+- [ ] 是否**只在** `docker pull` 那一步换镜像名前缀（`MirrorRef`），拉回来后立刻 `ImageTag` 归一回原始引用并删掉带前缀的别名？`docker save` 进离线缓存的那份是否是**原始引用**（换机才可复用）？
+- [ ] 决策 22 的三级优先级是否一字未动？命中离线缓存与「本机已有镜像零网络重建」（`action=local`）是否**完全不碰**镜像源？
+- [ ] 「检测」的结果是否**不落库、不进快照、不缓存排名**？真正拉取前是否现问一次再按延迟升序排？
+- [ ] 可达源逐个试 → 全失败直连官方 → 直连也失败才报错并逐源点名（各源原因用「；」连接）；取消是否**优先**返回 `ctx.Err()`，不冒充「全部源失败」？
+- [ ] 源不通是否只影响这一格（不判死整单，§0.2 规则 16）？「检测」里某一行的失败是否只写在该行、不阻塞其余行（每源独立超时）？
+- [ ] 保存的唯一校验是否只有「主机名[:端口]」合形（忽略空行、去重、禁路径分隔符与 `..`）？是否**没有**要求填了就必须连得上、没有要求绝对 URL？
+- [ ] 承载是否**只**给 `cache:miss` 补了 `source` 字段（**17 事件名一个未增**、后端任务状态仍 **4** 个、快照字段未增）？
+- [ ] 是否**没有**因为「设置页多了一处能改」就去改 §0.3 的「可自定义根面数 = **3**」／「同类路径生效根数 = **1**」，或把它塞进 `rootsKey`／要求它走 `errs.TaskBusy` + `Rebind` 换图？（它不是路径）
+- [ ] 界面是否只说结果与下一步（握手延迟显示成「多少毫秒 · 最快」），没有把 `MirrorRef`、HTTP 状态码这类实现细节贴给用户？
 
 ---
 
@@ -3021,6 +3155,64 @@ const (
 > 冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`。**真宿主 GUI 未走查**（本轮无界面改动）。
 > **未 commit**（等指令）。
 >
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 设置页的 Docker 镜像源（多行地址 + 逐个测速 + 拉取按最快优先）**：
+> 用户原文：**「在设置页面增加docker源配置，可以配置多个源，每行一个，点击检测，可以看到每一个的速度，默认优先使用最快的源。
+> 先规划，后实现代码。」** 规划阶段有一处必须让用户拍板的分岔：镜像源可以落在两个完全不同的位置——**宿主 Docker 的
+> `daemon.json`（`registry-mirrors`，一改就对用户机器上所有容器生效、且要重启 Docker）**，或 **phpo 自己发起的那一次
+> `docker pull`（只换镜像名前缀）**。用户选后者（「按你推荐做」），因此本条从设计上就**不碰用户的 Docker 环境**：
+> 源清单存进 phpo 自己的 `config.yaml`（`docker_sources`），拉取时 `engine.MirrorRef(host, ref)` 换前缀 →
+> `docker pull` 那一份 → `ImageTag` 归一回原始引用 → 删掉带前缀的别名。**归一是必须的**：不落回原始引用，离线缓存
+> 就会存进一个带源前缀的名字，换机/换源后 load 出来的镜像名对不上，等于把加速手段变成故障源。
+>
+> **三个容易误解成「更强」的点，已在条款里钉死**：① 「检测」测的是 **registry v2 握手延迟**（`GET /v2/`，并发、
+> 单源超时 **5s**，200/401/403 都算通），**不是下载带宽**——界面文案不得承诺「快多少倍」；② 测速结论**当下有效**，
+> **不落库、不进快照、不缓存排名**，真正拉取前现问一次再按延迟升序排（存下来的排名几小时后源换了就是错的）；
+> ③ 可达性**不拦保存**（唯一校验是 `config.ValidateRegistryHosts` 的「`主机[:端口]` 合形」，忽略空行、去重、
+> 禁路径分隔符与 `..`）——全不通也照常收下，只在 preflight 给一行 `warnf`；源不通也不得判死这次安装（§0.2 规则 16）：
+> 可达源逐个试 → 全失败**直连官方** → 直连也失败才报错并在消息里逐源点名（各源原因用「；」连接），
+> `ctx` 已取消则优先返回 `ctx.Err()`，不冒充「全部源失败」。
+>
+> **与离线缓存的关系（这条最容易被后续实现破坏）**：决策 22 的 **「离线缓存 > 本机 Docker 镜像库 > 网络」一字未动**，
+> 镜像源只站在最后一格里——`cache:miss` 的 `action=pull` 才用它；`action=local`（本机已有镜像、零网络 `docker save`
+> 重建缓存）与扩展包的 `action=download` **完全不碰**。承载侧只给 `cache:miss` 补一个可选载荷字段
+> `source`（`internal/model/cache_entry.go`），**17 事件名一个未增、后端任务状态仍 4 个、快照字段未增**；
+> 前端 `CacheHitBadge` 在 `action=pull` 时把源名一起显示，用户才看得见「这次是从哪台拉的」。
+>
+> **落条款**：头部新增一条「**Docker 镜像源**」；§0.2 新增规则 **39**（故意续在 38 之后不重编号）；§0.3 新增 **4** 行
+> （设置页可写配置面数 **4**／「检测」测的是什么／唯一校验／生效范围）；§1.1 结论表新增一行；§4.1 目录树补
+> `engine/mirror.go`、`preflight/rules_docker.go`、`api/dockerSource.ts`、`test/integration/d1_dockersource_live_test.go`；
+> §4.2 的 `config.yaml` 一行补 `docker_sources`；§5.6 与 §5.14.11 的 `cache:miss` 载荷补 `source?`、§5.6.2 对照表同步；
+> §5.14.3 未命中分支补「设了源 → 现测现排序」；**§5.21 新节**（5.21.1 存储与保存 · 5.21.2 「检测」 · 5.21.3 生效范围与
+> 拉取次序 · 5.21.4 **10** 条禁止项）；§6 映射表一行；§7 **决策 30**；§9 **R106**；§12.12 新自查 **10** 项；底部摘要一条。
+>
+> **随功能一并校正的冻结计数**（这些数字在镜像源落地前就已漂移，本轮按 `AGENTS.md` §0.2 规则 2 现取现写）：
+> preflight action **19 → 20**（新 `docker-source-set`）、NEEDS_HOME **17 → 18**（它写的就是 `config.yaml`，
+> 与 `root-set` 同口径）、`app.go` 导出方法 **70 → 73** 与生成绑定 **68 → 71**（差额仍恰为
+> `ServiceStartup`/`ServiceShutdown` 两颗钩子；§5.16.2 那句「68 = 70 − 两颗」已改写为「按那一轮复测」并补现值）、
+> i18n 两侧各 **619 → 642** 键（第 1 项门禁输出为准）、`frontend/src/api/*.ts` **17 → 18**、
+> `internal/engine/` 非测试文件 **18 → 19**、与包同目录 `*_test.go` **85 → 88**、`test/integration/` live 用例
+> **12 → 13**。§5.15 的「可自定义根面数 = **3**」「同类路径生效根数 = **1**」**不变**并在 §5.21 与 §12.12 各写一条
+> ❌ 明说理由：镜像源不是路径，不在 `rootsKey` 指纹里（`internal/app/di.go`），保存它**不触发** `Rebind` 换图、
+> 也**不需要** `errs.TaskBusy` 门禁（缓存管理器持的是懒取 provider `cfg.DockerSources`，下次拉取自然读到新值）。
+>
+> **同源同步**（§13 第 4 步）：`docs/{离线缓存机制,离线缓存协议,接口契约,事件流协议,界面规格,路径策略,目录规范,用户手册,CHANGELOG}.md`、
+> `任务工单.md`、`实施顺序.md`。
+> **验真**：`gofmt -l .` 无输出 · `go vet ./...` · `go build ./...` · `go test ./... -count=1` 全绿 ·
+> 五项门禁全过（i18n zh-CN / en-US 各 **642** 键、集合相等、无重复；模板 golden 空 diff；Docker 命名；
+> 缓存清单字段；扩展 **73** 项分类对账）· `vue-tsc --noEmit` EXIT=0。真机取证：
+> `test/integration/d1_dockersource_live_test.go`（`PHPO_LIVE=1` + Docker 可用双重 skip，全程 `t.TempDir()` 独占、
+> 不碰用户 `<用户数据目录>`）走**生产装配**真拉一次镜像，锁死两条容易被悄悄破坏的事实——
+> ① 拉回来之后**原始引用在机**（归一真的做了）；② `cache:miss` 的载荷**真带着源名**；并在本机已有该镜像时另取证
+> **零网络重建路径完全不查询镜像源**（源清单里放一台必然不通的地址，事件里不得出现它）。
+> **仍欠的那一件**：原生窗口里点一次「检测」，看结果表与「最快」标记是否好认（本机有 `DISPLAY=:0` 但无截图/注入工具，
+> 代答不了）；UI 侧目前只有产物级 `grep -a` 与 demo 通道浏览器走查作证据。
+> **一处既有文档漂移如实登记、本轮未改**：`pkg/errs` 的 `CodeCount` 声明 **27**，而 `codes.go` 实有 **28** 条常量
+> （v2.9.14 删 `LastPhp` 时未同步常量），§0.3 仍按冻结口径写 27；这是代码侧的账，需要单独一轮裁决。
+> **明确未改**：8 条硬红线原文、三段式写操作、**17 事件名**（只补 `cache:miss` 载荷字段）／**4 任务状态**、
+> `pkg/errs` 码数、门禁 **5** 项、扩展目录 **73**·**8** 组·常用 **11** 项、每版本两镜像槽位、§5.15 三根互斥唯一、
+> §5.16 三档显示与「停用 = 删 ini」、§5.17 备份容错、§5.18 数据服务运行态、§5.19 全量口径、§5.20 权限 0777、
+> 密码／版本／域名／端口策略、冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`。
+>
 > **v2.9.13 变更（新增 §5.6.4「等待期反馈：操作名进抽屉标题条 + 被点按钮禁用」，把「一切耗时操作实时说出在做什么」写成冻结条款）**：
 > 用户提出的最高优先级需求：**「所有的一切全部（操作/点击/变化/请求/反馈/响应/日志/消息…）优先把直观名字放进日志抽屉，
 > 以便用户第一时间知晓；其他功能同理；点击立即备份时等待期间按钮应禁用，结束再恢复可用」**。此前 §5.6.1 只管住右栏队列行的
@@ -3296,6 +3488,7 @@ const (
 - 扩展缓存槽位与弹窗（v2.9.14）：**每个 php 版本两份镜像缓存各占槽位（`image.tar` / `image-extensions.tar`，清单 `image` / `extensions_image`）· 提升日志一行 `ok` 点名落点全路径 · 固化镜像缺席由 `LoadExtImage` 零网络 `docker load` 恢复并发 `cache:hit`/`cache:corrupted` · 管理扩展弹窗提交即关闭、默认勾选取「实测启用态回写后」的权威快照 · nginx 缺席/未运行 `dim` 跳过、重载失败 `err` 后继续，不判死已生效的扩展（见 §5.14.2 / §5.16.2 / §5.16.3）**
 - 扩展开关的语义（v2.9.14 追加）：**那颗开关只说一件事——「这个扩展在本 PHP 版本上此刻启用了没有」，已启用 on、未启用 off；唯一真值是容器内实测 `php -m`（后端归一显示名 → 回写 `php_extensions` → 随权威快照回流，前端不消费文本、不新增事件名）· 每次打开弹窗由后端现取一次，「安装成功后同步」是它的自然特例 · 停用 = 不再加载（删 `conf.d` ini）≠ 卸载，`.so` 留在镜像里而开关照样回 off · 静态内建的 19 项显示 `on · 内建不可停用`（三档显示不得退化为两档）· 拿不到实测时退回库里集并明示非实时、绝不铺成整片 off（见 §0.2 规则 37 / §5.16.2）**
 - 扩展包本体离线化（v2.9.14 追加）：**缓存对象是包文件本体（pecl 的 `.tgz` ／ Alpine 构建依赖的 `.apk`）而不是编译结果——安装与重新编译两条路径都必须落进缓存根并登记 SHA256 · 按 `{name}-` 前缀查（精确名等于永不命中）、命中即 `engine.CopyTo` 零网络回填容器 `/tmp/phpo-ext/{apk,pecl}` 并 `pecl install <该文件>` · 未命中先 `pecl download` / `apk add --cache-dir --virtual`（**不是** `--no-cache`）取包 → `CopyFrom` 取回宿主 → `PromoteExtension` 提升 → 再从文件编译 · 基座非 Alpine（`deb`/`none`）一行 `dim` 跳过、不造 deb 槽位 · 容器暂存目录在 `docker commit` **之前** `rm -rf` · 缓存任一环节失败只 `dim` 退回在线编译、绝不判死整单（见 §0.2 规则 36 / §5.14.3 / §5.16.3）**
+- Docker 镜像源（v2.9.14 追加）：**设置页可填多个源（一行一个 `主机[:端口]`）、「检测」给每一行的 registry 握手延迟 ms（并发、单源 5s 超时、200/401/403 均算通，不是下载速度）· 只影响 phpo 自己那一次 `docker pull`：`MirrorRef` 换前缀 → 拉回 `ImageTag` 归一原始引用 → 删别名，绝不写宿主 `daemon.json`／不重启 Docker · 决策 22 的「离线缓存 > 本机镜像库 > 网络」一字不动，源只站在最后一格 · 测速不落库不进快照，拉取前现测现排序（延迟升序逐个试 → 全失败直连官方 → 仍失败报错并逐源点名，取消优先）· 源不通只 `dim`/换下一个，绝不判死整单 · 承载只给 `cache:miss` 补 `source` 字段，17 事件名未增（见 §0.2 规则 39 / §5.21）**
 - 等效命令：**全界面不展示 `phpo …` 伪命令行（抽屉头部、三处模态的「将执行」预览、向导与 demo 日志首行；仅保留 `taskStore` 的参数登记，见 §1.4）**
 - 升级：**支持版本检查和自动升级（SHA256 + Ed25519 双校验）**
 - Docker 清洁：**所有操作幂等、原子、隔离、一致、可清理、可恢复**

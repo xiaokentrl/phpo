@@ -80,6 +80,14 @@ func (c *Client) ImagePull(ctx context.Context, ref string, onProgress func(line
 	return nil
 }
 
+// ImageTag 给本机已有的镜像引用再打一个名字（镜像源拉回来的带源前缀名字，换回原始引用）
+func (c *Client) ImageTag(ctx context.Context, src, dst string) error {
+	if err := c.cli.ImageTag(ctx, src, dst); err != nil {
+		return fmt.Errorf("docker tag 失败: %w", err)
+	}
+	return nil
+}
+
 // ImageRemove 删除镜像（force）；幂等：不存在不报错
 func (c *Client) ImageRemove(ctx context.Context, ref string) error {
 	if _, err := c.cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: true}); err != nil {

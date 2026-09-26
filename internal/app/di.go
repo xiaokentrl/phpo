@@ -65,6 +65,7 @@ type Container struct {
 	graphMu      sync.Mutex                  // 串行化对象图重建与回收
 	graphKey     string                      // 当前对象图已绑的根指纹（两根 + 自定义缓存/备份根 + 数据目录）；未变即 no-op
 	graphCleanup func(context.Context) error // 当前对象图的连接回收（docker client + 运行态存储）
+	graphCfg     *config.ConfigStore         // 当前对象图所用的那份 config.yaml（EnvService 与镜像源 provider 同源于此）
 }
 
 // Version 应用版本单一真实来源；默认值供 `go run`/单测使用，打包时由 Taskfile 经
@@ -162,12 +163,47 @@ func (c *Container) Rebind(ctx context.Context) error {
 	return nil
 }
 
+// GraphConfig 取当前对象图所用的那份 config.yaml。镜像源清单必须读写这同一份实例：
+// 缓存管理器持的是指向它的懒读 provider，另 `LoadConfigStore()` 一份拷贝会让「设置页存完即生效」落空。
+// 第二返回值为 false 即对象图尚未装配（启动钩子没跑完），门面据此回「服务尚未初始化」。
+func (c *Container) GraphConfig() (*config.ConfigStore, bool) {
+	c.graphMu.Lock()
+	defer c.graphMu.Unlock()
+	return c.graphCfg, c.graphCfg != nil
+}
+
+// ProbeDockerSources 并发测速一批镜像源地址，返回顺序与入参逐行对应（界面按这份顺序列表）。
+// 每一行先过 config.ValidateRegistryHost：地址写错了（带路径、带协议头以外的问题）直接点名成一行结论、
+// 不去拨网络——用户粘进来一个 `https://x/v2/` 之类的东西，界面上该看到的是「这一行写错了」，
+// 而不是被混进「连不上」里让人去查网络。合法项才交给引擎握手。
+func (c *Container) ProbeDockerSources(ctx context.Context, raw []string) []model.MirrorSource {
+	out := make([]model.MirrorSource, len(raw))
+	hosts := make([]string, 0, len(raw))
+	row := make([]int, 0, len(raw)) // hosts[i] 落在 out 的哪一行
+	for i, line := range raw {
+		host, err := config.ValidateRegistryHost(line)
+		if err != nil {
+			out[i] = model.MirrorSource{Host: strings.TrimSpace(line), Error: err.Error()}
+			continue
+		}
+		hosts = append(hosts, host)
+		row = append(row, i)
+	}
+	if len(hosts) > 0 {
+		for j, ms := range engine.ProbeSources(ctx, hosts) { // 返回顺序与入参一致
+			out[row[j]] = ms
+		}
+	}
+	return out
+}
+
 // buildObjectGraph 按已载入的配置构造（重绑时重建）整棵运行期对象图。
 // env 两份：原始值供展示与快照，展开值供真实文件 IO 与容器挂载。
 // calibrate=false 跳过启动校准：重绑只为换根，此刻库里没有任何「已装」记录，校准会把旧根下遗留的
 // phpo-* 容器直接标成已安装（其 bind 挂载仍指向旧根），宁可让用户显式「同步状态」后再校准。
 func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStore, calibrate bool) error {
 	c.Env = cfg.Env()        // 原始根派生（含 `~`，供展示/快照）
+	c.graphCfg = cfg         // 镜像源等「非路径配置」就地读写这一份：懒读 provider 绑的就是它，换拷贝即读到旧值
 	env := cfg.ExpandedEnv() // 展开 `~` 供真实 IO / 容器挂载
 	// 运行态存储延迟建库：两根目录未写入 config.yaml 前不创建/打开 phpo.db（首启在用户数据目录零落盘）。
 	dbPath, err := config.DBPath()
@@ -188,6 +224,8 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	tm.SetRecorder(st)
 	lc := service.NewLifecycle(cli, st, c.Emitter, env, cfg)
 	cacheMgr := steps.NewCacheManager(env, c.Emitter, cli)
+	// 镜像源清单每次拉取现读：设置页存完即生效，不需要换对象图（它不是路径，不参与 rootsKey）
+	cacheMgr.SetSourcesProvider(cfg.DockerSources)
 	// php 建/重建容器时固化镜像不在本机 → 从缓存 image-extensions.tar 零网络载入（§5.14.3）
 	lc.SetExtImageLoader(cacheMgr)
 	c.AppService = service.NewAppService(lc, tm, cacheMgr, cli, env)

@@ -55,6 +55,18 @@ type TaskMeta struct {
 	Removed []string `json:"removed,omitempty"`
 }
 
+// MirrorSource 一个 Docker 镜像源的测速结果（设置页「检测」逐行显示的就是它）。
+// 只有三个可核对的事实：地址、从本机到它建一次连接的耗时、这次通没通。
+// OK=false 时 Error 写清不通的原因（超时 / 拒绝连接 / 证书 / 401 等），界面照原样显示，不替用户改写。
+// 耗时是 HTTPS 建连 + /v2/ 往返，不是「下载带宽」——拉镜像真正的速度还取决于镜像大小与后续分段，
+// 这里只能给出「哪个源离你近、现在还活着」这一项可验证的判据。
+type MirrorSource struct {
+	Host      string `json:"host"`
+	LatencyMs int64  `json:"latencyMs"`
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
+}
+
 // ExtStatus 打开「管理扩展」时后端到容器里现查一次的启用态（§5.16.2「启用态的唯一真值」）。
 // Enabled 回答「此刻哪些扩展开着」：Live 为真就是容器内 php -m 的实测结果（名字已归一成小写目录名），
 // Live 为假就是库里上次落库的那份——界面必须按 Live 显示「非实时」，不得把「没查到」画成「没装」。

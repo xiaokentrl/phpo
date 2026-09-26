@@ -23,6 +23,15 @@ update_sources:
   # - name: gitee
   #   manifest_url: https://gitee.com/your-name/phpo/releases/latest/download/manifest.json
 
+# Docker 镜像源（总纲 §5.14.3 里「联网拉取」那一级）：一行一个主机名（可带端口），只填地址、不填路径；空列表或不写 = 不改写镜像名，直连官方源。
+# 拉取时这些源**并发测速、谁快先用谁**（不是按本列表的顺序试），最快那个连不上就依次试下一个；全部失败才回落原始镜像名。
+# 数组顺序只决定设置页与日志里点名的先后，不决定优先级。
+# 这里配的是「phpo 自己去哪儿拉」，不改 Docker 守护进程的 registry-mirrors，因此不影响你在 Docker Desktop / 命令行里拉的其他镜像。
+docker_sources:
+  - docker.m.daocloud.io
+  - dockerproxy.net
+  # - 123456.mirror.aliyuncs.com   # 阿里云个人加速器地址同样可用
+
 # 每服务版本的可配置项（按需出现；未列出的版本回落注册表默认端口与默认密码）
 # 密码策略：明文、默认 123456、可为空、长度不校验（总纲 §1.5）。
 # data_dir 同样互斥：写了即用该目录，未写回落默认 {phpo_home}/{kind}/{version}/data。

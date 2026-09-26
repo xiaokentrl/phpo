@@ -282,27 +282,28 @@ func TestGateDirReadyBlocksNeedsHome(t *testing.T) {
 	}
 }
 
-// actionConsts 19 个 action → app.go 门面里的裁决常量名（对账：漏接一个即失败）
+// actionConsts 20 个 action → app.go 门面里的裁决常量名（对账：漏接一个即失败）
 var actionConsts = map[string]string{
-	"install":        "ActInstall",
-	"uninstall":      "ActUninstall",
-	"service-stop":   "ActServiceStop",
-	"service-start":  "ActServiceStart",
-	"update-config":  "ActUpdateConfig",
-	"service-config": "ActServiceCfg",
-	"site-add":       "ActSiteAdd",
-	"site-remove":    "ActSiteRemove",
-	"site-port":      "ActSitePort",
-	"site-vhost":     "ActSiteVhost",
-	"php-switch":     "ActPhpSwitch",
-	"rewrite":        "ActRewrite",
-	"extensions":     "ActExtensions",
-	"backup":         "ActBackup",
-	"restore":        "ActRestore",
-	"backup-delete":  "ActBackupDelete",
-	"offline-prune":  "ActOfflinePrune",
-	"root-set":       "ActRootSet",
-	"cache-import":   "ActCacheImport",
+	"install":           "ActInstall",
+	"uninstall":         "ActUninstall",
+	"service-stop":      "ActServiceStop",
+	"service-start":     "ActServiceStart",
+	"update-config":     "ActUpdateConfig",
+	"service-config":    "ActServiceCfg",
+	"site-add":          "ActSiteAdd",
+	"site-remove":       "ActSiteRemove",
+	"site-port":         "ActSitePort",
+	"site-vhost":        "ActSiteVhost",
+	"php-switch":        "ActPhpSwitch",
+	"rewrite":           "ActRewrite",
+	"extensions":        "ActExtensions",
+	"backup":            "ActBackup",
+	"restore":           "ActRestore",
+	"backup-delete":     "ActBackupDelete",
+	"offline-prune":     "ActOfflinePrune",
+	"root-set":          "ActRootSet",
+	"cache-import":      "ActCacheImport",
+	"docker-source-set": "ActDockerSourceSet",
 }
 
 // TestGateEveryActionWiredInFacade 每个 action 都必须在 App 门面里真跑一次后端裁决；

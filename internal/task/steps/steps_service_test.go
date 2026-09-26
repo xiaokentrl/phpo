@@ -55,6 +55,15 @@ func (f *fakeBE) LoadImage(_ context.Context, tar string) error {
 func (f *fakeBE) ImageExists(_ context.Context, ref string) (bool, error) { return false, nil }
 func (f *fakeBE) Download(_ context.Context, url, dst string) error       { return nil }
 
+// 本用例集未注入镜像源清单（source provider 为 nil），拉取必走 PullImage 直连分支，
+// 故这两个方法只作接口占位；镜像源编排由 internal/cache 的用例覆盖。
+func (f *fakeBE) ProbeSources(_ context.Context, hosts []string) []model.MirrorSource {
+	return nil
+}
+func (f *fakeBE) PullFromSource(_ context.Context, host, ref string) error {
+	return errors.New("本用例集不应走镜像源拉取")
+}
+
 // pulledSnapshot 返回当前已发起 pull 的引用快照（用于测试同步点）
 func (f *fakeBE) pulledSnapshot() []string {
 	f.mu.Lock()

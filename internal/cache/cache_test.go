@@ -44,6 +44,35 @@ type fakeBackend struct {
 	exists                            map[string]bool // 本地 Docker store 已有的镜像引用
 	existsErr                         error
 	existsCalls                       []string
+	probes                            []model.MirrorSource // 镜像源测速返回值（ nil = 全部握手不通）
+	probeCalls                        []string
+	pulledFrom                        []string // 从镜像源拉取的「源/引用」记录
+	pullFromErr                       error
+	pullFromErrs                      map[string]error  // 按源名逐个给定失败（模拟最快源限流、次快源可用）
+	onPullFrom                        func(host string) // 拉取前回调（模拟「拉取期间用户取消」）
+}
+
+func (f *fakeBackend) ProbeSources(_ context.Context, hosts []string) []model.MirrorSource {
+	f.probeCalls = append(f.probeCalls, hosts...)
+	if f.probes != nil {
+		return f.probes
+	}
+	out := make([]model.MirrorSource, 0, len(hosts))
+	for _, h := range hosts {
+		out = append(out, model.MirrorSource{Host: h, OK: true})
+	}
+	return out
+}
+
+func (f *fakeBackend) PullFromSource(_ context.Context, host, ref string) error {
+	if f.onPullFrom != nil {
+		f.onPullFrom(host)
+	}
+	f.pulledFrom = append(f.pulledFrom, host+"/"+ref)
+	if err, ok := f.pullFromErrs[host]; ok {
+		return err
+	}
+	return f.pullFromErr
 }
 
 func (f *fakeBackend) ImageExists(_ context.Context, ref string) (bool, error) {

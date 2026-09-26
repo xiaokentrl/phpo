@@ -59,7 +59,9 @@ export interface DockerOrphanFoundPayload { resources: unknown[] }
 // 协议表里的 expected / actual 此时缺席，故两者皆为可选。
 export interface DockerStateDriftPayload { expected?: unknown; actual?: unknown; error?: string; gaps?: ServiceGap[] }
 export interface CacheHitPayload { kind: string; version: string; source: string; size: number }
-export interface CacheMissPayload { kind: string; version: string; action: string }
+// source 只在 action=pull 时出现：本次联网拉取实际用的是哪一个镜像源（主机名）。
+// 本机重建（local）与扩展包下载（download）都不经镜像源，该字段缺席。
+export interface CacheMissPayload { kind: string; version: string; action: string; source?: string }
 export interface CachePromotePayload { kind: string; version: string; entries: unknown[] }
 export interface CacheCorruptedPayload { kind: string; version: string; entry: unknown }
 export interface CacheCleanupPayload { mode: string; freed_bytes: number }

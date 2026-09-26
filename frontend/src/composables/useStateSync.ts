@@ -59,7 +59,10 @@ function eventNote(event: EventName, payload: unknown): void {
     }
     case EVENT.CacheMiss: {
       const e = payload as CacheMissPayload
-      task.eventLine('dim', t('task.cacheMiss', { kind: e.kind, version: e.version, action: e.action }))
+      // 点了镜像源就点名用的哪一台；没点（本机重建 / 扩展包下载）沿用不带源的那条文案
+      task.eventLine('dim', e.source
+        ? t('task.cacheMissSource', { kind: e.kind, version: e.version, action: e.action, source: e.source })
+        : t('task.cacheMiss', { kind: e.kind, version: e.version, action: e.action }))
       return
     }
     case EVENT.CachePromote: {

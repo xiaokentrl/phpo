@@ -485,6 +485,39 @@ func (a *App) setCustomRoot(ctx context.Context, field, kind, version, value str
 	return nil
 }
 
+// ---- Docker 镜像源绑定（设置页：多源 · 测速 · 拉取优先最快）----
+// 与可自定义根的唯一区别：镜像源不是路径，不参与 rootsKey，因此**不换图**。
+// 缓存管理器拿的是指向对象图那份 config.yaml 的懒读 provider，故这里必须写同一份实例（见 Container.GraphConfig）。
+
+// DockerSourcesGet 读回已保存的镜像源清单（顺序即 config.yaml 里的书写顺序；空清单=不改写，直连官方）
+func (a *App) DockerSourcesGet() ([]string, error) {
+	cfg, ok := a.container.GraphConfig()
+	if !ok {
+		return nil, errNotReady
+	}
+	return cfg.DockerSources(), nil
+}
+
+// DockerSourcesSet 保存镜像源清单（每行一个地址；空行忽略，全部非法项报错并点名原值）。
+// 保存即对**下一次拉取**生效，不需要重启、不需要重建容器；这里不测速也不拦「连不上」——
+// 选了暂时连不上的源照常收下，拉取时逐项点名后自动回落直连官方（最小限制：能警告的不要阻止）。
+func (a *App) DockerSourcesSet(ctx context.Context, hosts []string) error {
+	if err := a.guard(preflight.ActDockerSourceSet, preflight.Ctx{Sources: hosts}); err != nil {
+		return err
+	}
+	cfg, ok := a.container.GraphConfig()
+	if !ok {
+		return errNotReady
+	}
+	return cfg.SetDockerSources(hosts)
+}
+
+// DockerSourcesProbe 并发测速界面上填的这几行地址，返回顺序与入参逐行对应。
+// 只读：不落库、不建任务、不进账本，结果按请求/响应回给界面（故无需事件名）。
+func (a *App) DockerSourcesProbe(ctx context.Context, hosts []string) ([]model.MirrorSource, error) {
+	return a.container.ProbeDockerSources(ctx, hosts), nil
+}
+
 // ---- M5 服务配置绑定：读回显 / 三段式原子保存（硬红线 3/5）----
 
 // ConfigGetFiles 返回该服务版本配置：宿主已存在则回显内容，否则回落模板默认

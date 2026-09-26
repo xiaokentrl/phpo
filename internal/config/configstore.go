@@ -54,7 +54,7 @@ func DefaultUpdateSources() []UpdateSource {
 	}}
 }
 
-// FileConfig config.yaml 的完整磁盘形态（唯一配置真相）：两个工作根 + 自定义缓存/备份根 + 每服务版本设置 + 升级发布源；
+// FileConfig config.yaml 的完整磁盘形态（唯一配置真相）：两个工作根 + 自定义缓存/备份根 + 每服务版本设置 + 升级发布源 + Docker 镜像源；
 // 其余派生路径（PHP_ROOT/…）不落盘、由 DerivePaths 现算，杜绝不同步。
 // 自定义根与默认根互斥且唯一：非空即完全取代 ./offline、./backups。
 type FileConfig struct {
@@ -62,6 +62,7 @@ type FileConfig struct {
 	WWWRoot       string                           `yaml:"www_root,omitempty"`
 	OfflineRoot   string                           `yaml:"offline_root,omitempty"`
 	BackupRoot    string                           `yaml:"backup_root,omitempty"`
+	DockerSources []string                         `yaml:"docker_sources,omitempty"` // Docker 镜像源主机名；空即不改写镜像名（直连官方）
 	UpdateSources []UpdateSource                   `yaml:"update_sources,omitempty"` // 全部并发探测，顺序只作并列版本的裁决与点名次序
 	Services      map[string]map[string]SvcSetting `yaml:"services,omitempty"`       // kind -> version -> 设置
 }
@@ -285,6 +286,27 @@ func (c *ConfigStore) UpdateSources() []UpdateSource {
 		return DefaultUpdateSources()
 	}
 	return c.fc.UpdateSources
+}
+
+// DockerSources Docker 镜像源主机名清单（参与 §5.14.3 优先级里「联网拉取」那一级）：空即「不改写」——拉取仍用原始镜像名直连官方。
+// 只做去空白/去空行归一，不在此处判可达性（最小限制原则：选了连不上的源，拉取时逐项点名后回落原始名）。
+func (c *ConfigStore) DockerSources() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return normalizeRegistryHosts(c.fc.DockerSources)
+}
+
+// SetDockerSources 落库 Docker 镜像源清单（空切片=清除，回落直连官方），原子写盘。
+// 每一项过 ValidateRegistryHost；非法项报错并点名原值，不静默丢弃。
+func (c *ConfigStore) SetDockerSources(hosts []string) error {
+	norm, err := ValidateRegistryHosts(hosts)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fc.DockerSources = norm
+	return c.save()
 }
 
 // RootOverrides 对象图重绑指纹的组成部分：三个可自定义面的原始值（缓存根 + 备份根 + 各版本数据目录）

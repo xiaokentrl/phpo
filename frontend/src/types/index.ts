@@ -251,3 +251,14 @@ export interface DockerStatus {
   message?: string
   hint?: string
 }
+
+// MirrorSource 一个 Docker 镜像源的测速结果，与后端 model.MirrorSource（internal/model/dto.go）JSON 逐字对齐。
+// latencyMs 是「本机到该源建一次 HTTPS 连接 + /v2/ 往返」的耗时，不是下载带宽——它只回答哪个源离你近、此刻还活着。
+// ok=false 时 error 给出不通的原因（超时 / 拒绝连接 / TLS / HTTP 状态码）；这一行地址写错了也走 error，
+// 那种情况后端不会拨网络。设置页的「检测」按请求/响应回来，不进快照、不发事件。
+export interface MirrorSource {
+  host: string
+  latencyMs: number
+  ok: boolean
+  error?: string
+}

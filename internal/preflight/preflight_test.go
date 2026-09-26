@@ -35,8 +35,8 @@ func firstErr(res *model.PreflightResult) string {
 // —— 对账：action 数与 NEEDS_HOME 数 ——
 
 func TestActionAndNeedsHomeCounts(t *testing.T) {
-	if len(AllActions) != ActionCount || ActionCount != 19 {
-		t.Fatalf("action 数应为 19，得 %d/%d", len(AllActions), ActionCount)
+	if len(AllActions) != ActionCount || ActionCount != 20 {
+		t.Fatalf("action 数应为 20，得 %d/%d", len(AllActions), ActionCount)
 	}
 	n := 0
 	for _, a := range AllActions {
@@ -45,7 +45,7 @@ func TestActionAndNeedsHomeCounts(t *testing.T) {
 		}
 	}
 	if n != NeedsHomeCount {
-		t.Fatalf("NEEDS_HOME 应为 17，得 %d", n)
+		t.Fatalf("NEEDS_HOME 应为 18，得 %d", n)
 	}
 	// php-switch 与 backup-delete 不在 NEEDS_HOME（原型）
 	if needsHome[ActPhpSwitch] {
@@ -504,5 +504,50 @@ func TestOfflinePruneMissing(t *testing.T) {
 	res := Run(ActOfflinePrune, Ctx{Svc: "redis", Ver: "8"}, readyWorld())
 	if firstErr(res) != errs.OfflineMissing+": redis/8" {
 		t.Fatalf("缺缓存应报 offlineMissing，得 %q", firstErr(res))
+	}
+}
+
+// —— docker-source-set（镜像源只裁决地址合形，可达性不在 preflight 拦）——
+
+func TestDockerSourceSetOK(t *testing.T) {
+	res := Run(ActDockerSourceSet, Ctx{Sources: []string{"docker.m.daocloud.io", "127.0.0.1:5000"}}, readyWorld())
+	if !res.Ok {
+		t.Fatalf("合形主机名应通过，得 %+v", res.Errors)
+	}
+}
+
+// 界面上的文本框每行一个地址：行间与末尾的空行不是错误（与写路径 ValidateRegistryHosts 同判据）；
+// 全是空行等于「清空清单」，照常通过并给出「回落直连官方」的警告。
+func TestDockerSourceSetIgnoresBlankLines(t *testing.T) {
+	res := Run(ActDockerSourceSet, Ctx{Sources: []string{"  ", "docker.m.daocloud.io", ""}}, readyWorld())
+	if !res.Ok || len(res.Warnings) != 0 {
+		t.Fatalf("空行应被忽略且不误报「未填写」，得 errors=%+v warnings=%+v", res.Errors, res.Warnings)
+	}
+	empty := Run(ActDockerSourceSet, Ctx{Sources: []string{"", "   "}}, readyWorld())
+	if !empty.Ok || len(empty.Warnings) == 0 {
+		t.Fatalf("全是空行应等同清空清单：通过 + 一条直连官方警告，得 errors=%+v warnings=%+v", empty.Errors, empty.Warnings)
+	}
+}
+
+// 空清单合法，但必须告知「等于直连官方」，不得静默让用户以为配好了源
+func TestDockerSourceSetEmptyWarns(t *testing.T) {
+	res := Run(ActDockerSourceSet, Ctx{Sources: nil}, readyWorld())
+	if !res.Ok {
+		t.Fatalf("清空镜像源应通过，得 %+v", res.Errors)
+	}
+	if len(res.Warnings) == 0 {
+		t.Fatal("空镜像源应给一条警告说明回落直连官方")
+	}
+}
+
+func TestDockerSourceSetRejectsBadHost(t *testing.T) {
+	for _, bad := range []string{"https://x.example.com/path", "bad host", "../etc"} {
+		res := Run(ActDockerSourceSet, Ctx{Sources: []string{bad}}, readyWorld())
+		if res.Ok {
+			t.Fatalf("非法镜像源 %q 应被拒绝", bad)
+		}
+		if firstErr(res) == "" {
+			t.Fatalf("非法镜像源 %q 应点名原值", bad)
+		}
 	}
 }

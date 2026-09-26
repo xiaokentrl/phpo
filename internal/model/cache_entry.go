@@ -39,10 +39,14 @@ type CacheHitEvent struct {
 	Size    int64  `json:"size"`
 }
 
+// CacheMissEvent 未命中缓存。「这次到底有没有拨网络、拨的是哪台」全靠 action + source 两格：
+// action=local 是本机已有镜像重建缓存（零网络）；pull/download 才走网络，此时 source 点名用的哪个镜像源，
+// 空即直连官方（docker.io）。事件名未新增，只补载荷字段（docker:state-drift 补 gaps 是同先例）。
 type CacheMissEvent struct {
 	Kind    string `json:"kind"`
 	Version string `json:"version"`
 	Action  string `json:"action"`
+	Source  string `json:"source,omitempty"` // 实际用来拉取的镜像源主机名（空=未走镜像源）
 }
 
 type CachePromoteEvent struct {

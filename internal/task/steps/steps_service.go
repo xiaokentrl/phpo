@@ -28,6 +28,31 @@ func (d dockerBackend) SaveImage(ctx context.Context, ref, dstTar string) error 
 	return d.cli.ImageSave(ctx, ref, dstTar)
 }
 
+// ProbeSources 并发测速镜像源（缓存层不碰 HTTP，探测留在引擎侧）
+func (d dockerBackend) ProbeSources(ctx context.Context, hosts []string) []model.MirrorSource {
+	return engine.ProbeSources(ctx, hosts)
+}
+
+// PullFromSource 从镜像源把 ref 拉回本机，并把名字归一回原始 ref。
+//
+// 为什么归一：源拉回来的镜像在 Docker 里的名字带源前缀（docker.m.daocloud.io/library/php:8.4-fpm），
+// 而后续每一步（探测在机、docker save、建容器、卸载清理）认的都是原始引用。不归一等于拉完
+// 还是「本机没有这个镜像」，下次照样联网。带源前缀那份用完即删——§5.13 清洁：不留脏状态。
+func (d dockerBackend) PullFromSource(ctx context.Context, host, ref string) error {
+	src := engine.MirrorRef(host, ref)
+	if src == ref {
+		return d.cli.ImagePull(ctx, ref, nil)
+	}
+	if err := d.cli.ImagePull(ctx, src, nil); err != nil {
+		return err
+	}
+	if err := d.cli.ImageTag(ctx, src, ref); err != nil {
+		return err
+	}
+	_ = d.cli.ImageRemove(ctx, src) // 前缀那份是临时别名，删不掉不影响本次结果
+	return nil
+}
+
 func (d dockerBackend) LoadImage(ctx context.Context, tarPath string) error {
 	return d.cli.ImageLoad(ctx, tarPath)
 }

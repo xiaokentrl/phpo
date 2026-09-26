@@ -39,7 +39,7 @@ func (m *Manager) InstallExtension(ctx context.Context, phpVersion, extType, nam
 		}
 		srcPath = tmpPath
 	} else {
-		m.emitMiss("php", phpVersion, "download")
+		m.emitMiss("php", phpVersion, "download", "")
 		if err := m.db.Download(ctx, url, tmpPath); err != nil {
 			return err
 		}

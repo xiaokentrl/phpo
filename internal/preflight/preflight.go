@@ -1,5 +1,6 @@
 // preflight 框架（硬红线 #5 三段式首段：唯一权威裁决层）
-// 直译原型 preflight()（前端唯一界面来源.txt:1707–1940）的 17 action，并补 root-set / cache-import（需求 1/2/7/8）共 19 action
+// 直译原型 preflight()（前端唯一界面来源.txt:1707–1940）的 17 action，并补 root-set / cache-import（需求 1/2/7/8）
+// 与 docker-source-set（Docker 镜像源）共 20 action
 // 返回 {ok,errors,warnings,adjusted}；能警告的绝不阻止（§3.3 最小限制）
 package preflight
 
@@ -11,41 +12,43 @@ import (
 	"phpo/pkg/errs"
 )
 
-// 原型 17 个 action 名（§0.3 权威值：service 6 + site 6 + ops/cache 5）+ 生产新增 2 个（root-set / cache-import）
+// 原型 17 个 action 名（§0.3 权威值：service 6 + site 6 + ops/cache 5）+ 生产新增 3 个
+// （root-set / cache-import / docker-source-set）
 const (
-	ActInstall      = "install"
-	ActUninstall    = "uninstall"
-	ActServiceStop  = "service-stop"
-	ActServiceStart = "service-start"
-	ActUpdateConfig = "update-config"
-	ActServiceCfg   = "service-config"
-	ActSiteAdd      = "site-add"
-	ActSiteRemove   = "site-remove"
-	ActSitePort     = "site-port"
-	ActSiteVhost    = "site-vhost"
-	ActPhpSwitch    = "php-switch"
-	ActRewrite      = "rewrite"
-	ActExtensions   = "extensions"
-	ActBackup       = "backup"
-	ActRestore      = "restore"
-	ActBackupDelete = "backup-delete"
-	ActOfflinePrune = "offline-prune"
-	ActRootSet      = "root-set"
-	ActCacheImport  = "cache-import"
+	ActInstall         = "install"
+	ActUninstall       = "uninstall"
+	ActServiceStop     = "service-stop"
+	ActServiceStart    = "service-start"
+	ActUpdateConfig    = "update-config"
+	ActServiceCfg      = "service-config"
+	ActSiteAdd         = "site-add"
+	ActSiteRemove      = "site-remove"
+	ActSitePort        = "site-port"
+	ActSiteVhost       = "site-vhost"
+	ActPhpSwitch       = "php-switch"
+	ActRewrite         = "rewrite"
+	ActExtensions      = "extensions"
+	ActBackup          = "backup"
+	ActRestore         = "restore"
+	ActBackupDelete    = "backup-delete"
+	ActOfflinePrune    = "offline-prune"
+	ActRootSet         = "root-set"
+	ActCacheImport     = "cache-import"
+	ActDockerSourceSet = "docker-source-set"
 )
 
 // ActionCount 供对账测试：preflight action 总数
-const ActionCount = 19
+const ActionCount = 20
 
-// AllActions 19 个 action 名（顺序对应分组：service→site→ops/cache→root）
+// AllActions 20 个 action 名（顺序对应分组：service→site→ops/cache→root）
 var AllActions = []string{
 	ActInstall, ActUninstall, ActServiceStop, ActServiceStart, ActUpdateConfig, ActServiceCfg,
 	ActSiteAdd, ActSiteRemove, ActSitePort, ActSiteVhost, ActPhpSwitch, ActRewrite,
 	ActExtensions, ActBackup, ActRestore, ActBackupDelete, ActOfflinePrune,
-	ActRootSet, ActCacheImport,
+	ActRootSet, ActCacheImport, ActDockerSourceSet,
 }
 
-// NeedsHome：需要 PHPO_HOME 就绪的 17 个 action（php-switch/backup-delete 不在内）
+// NeedsHome：需要 PHPO_HOME 就绪的 18 个 action（php-switch/backup-delete 不在内）
 var needsHome = map[string]bool{
 	ActInstall: true, ActUninstall: true, ActServiceStop: true, ActServiceStart: true,
 	ActUpdateConfig: true,
@@ -56,16 +59,18 @@ var needsHome = map[string]bool{
 	ActRootSet: true,
 	// cache-import 写缓存根目录：与 offline-prune 同组，两根未就绪即拒绝
 	ActCacheImport: true,
+	// docker-source-set 同样写 config.yaml：与 root-set 同口径，两根未就绪即拒绝（首启零落盘）
+	ActDockerSourceSet: true,
 	// 注：backup 原型 NEEDS_HOME 含之，见下
 }
 
 func init() {
-	// 原型 NEEDS_HOME 明确含 'backup'，共 17 项
+	// 原型 NEEDS_HOME 明确含 'backup'，共 18 项
 	needsHome[ActBackup] = true
 }
 
 // NeedsHomeCount 供对账测试
-const NeedsHomeCount = 17
+const NeedsHomeCount = 18
 
 // World 只读快照 + 运行时上下文（后端唯一权威）
 type World struct {
@@ -101,6 +106,7 @@ type Ctx struct {
 	File       string
 	Svc        string
 	Ver        string
+	Sources    []string // docker-source-set：Docker 镜像源主机名清单（每行一项，空切片=清除回落直连官方）
 }
 
 // run 收集器（对应原型 errors/warnings/adjusted 三数组）
@@ -127,7 +133,7 @@ func (r *run) setAdjustedPort(v int) {
 	r.adjusted["port"] = v
 }
 
-// Run 执行 preflight 裁决：先全局守卫（homeNotReady），再分派 19 action。
+// Run 执行 preflight 裁决：先全局守卫（homeNotReady），再分派 20 action。
 //
 // 这里**不拦并发写操作**：task.Manager 是串行 FIFO，前一个任务在跑时再发起的写操作会排队，
 // 排队不是错误（§0.2-16 能警告的不要阻止）。重复提交同一操作由 Manager 以 ErrQueued 当场拒绝——
@@ -181,6 +187,8 @@ func Run(action string, c Ctx, w *World) *model.PreflightResult {
 		r.rootSet()
 	case ActCacheImport:
 		r.cacheImport()
+	case ActDockerSourceSet:
+		r.dockerSourceSet()
 	}
 
 	return &model.PreflightResult{

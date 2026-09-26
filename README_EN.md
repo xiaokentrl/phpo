@@ -177,7 +177,7 @@ The left sidebar has 10 entries (Sites + five service pages + Overview + Backup 
 | Backup | One-click archive (logical DB dump first → pause → snapshot → pack → auto-restart), download, restore, delete |
 | Offline cache | Usage and entries, verify all, cleanup in three modes, **manual import** of a single package file, change the cache root |
 | Cleanup | Scan orphan containers/volumes/networks/images, clean in three modes (conservative / standard / aggressive) + trash |
-| Settings | Layout (sidebar width, log-panel height), UI scaling, language, tray preferences, check for updates |
+| Settings | Layout (sidebar width, log-panel height), UI scaling, language, tray preferences, **Docker registry mirrors** (several sources · sorted by check), check for updates |
 
 **The bottom log drawer is the core of the project, not an accessory.** It's two panes (default 70% / 30%; the splitter is draggable, clamped between 40–80%, double-click resets):
 
@@ -194,7 +194,7 @@ The rule is hard: **the backend is the only authority, and the UI never optimist
 
 | Content | Location |
 |---------|----------|
-| `config.yaml` (paths, passwords, ports, data dirs, release sources) | The `phpo/` folder inside your OS app-data directory: Linux `~/.config/phpo/`, macOS `~/Library/Application Support/phpo/`, Windows `%APPDATA%\phpo\` |
+| `config.yaml` (paths, passwords, ports, data dirs, release sources, Docker registry mirrors) | The `phpo/` folder inside your OS app-data directory: Linux `~/.config/phpo/`, macOS `~/Library/Application Support/phpo/`, Windows `%APPDATA%\phpo\` |
 | `phpo.db` (runtime state only), audit log, trash (7 days), upgrade workspace | Same as above |
 | Per-service config/logs/data, offline cache (default `./offline/`), backup archives (default `./backups/`) | Working root `./` (default `~/phpo`, movable anywhere by the wizard) |
 | Site directories | Site root (default `~/www`) |
@@ -218,6 +218,8 @@ Two kinds of outbound traffic, no third kind:
 No telemetry, no analytics beacons, no accounts, no usage data uploaded. The signing public key ships inside the binary (`internal/updater/signing/public.key`); a downloaded package must pass both SHA256 and signature verification — either failure refuses the install.
 
 Release sources can be several: `update_sources` in `config.yaml` is an array, and every check **asks all sources concurrently** (15-second timeout each) and **takes the manifest with the highest version number** (mirrors usually lag, so it's not "whoever answers first wins"). It only errors if all fail, and then names each source with its reason. In mainland China you can add a Gitee mirror yourself. **There is no automatic region detection** — the app has no reliable location signal, and guessing wrong is slower.
+
+Image pulls can also change source: the "Docker registry mirrors" card on the settings page takes one hostname per line, and **Check** reports each source's reachability latency — how long it takes to connect and get an answer, **not download speed** — so the next pull tries them fastest-first. If none of them answer, phpo falls back to the official `docker.io` and the install continues; only a real failure names each source with its reason. It affects **only phpo's own pull**: it does **not** touch your Docker daemon's `daemon.json` / `registry-mirrors`, never restarts your Docker, and `docker pull` in your terminal keeps using your own configuration. The two paths that never touch the network anyway — a local cache hit, and rebuilding the cache zero-network from an image already in your local Docker — don't use a source at all.
 
 ---
 
@@ -266,7 +268,7 @@ All are `scripts/check-*.go`, shared between CI and local runs:
 
 | Script | What it locks down |
 |--------|--------------------|
-| `check-i18n-keys.go` | The Chinese and English locale files have **equal key sets** (currently 619 keys each), no duplicates |
+| `check-i18n-keys.go` | The Chinese and English locale files have **equal key sets** (currently 642 keys each), no duplicates |
 | `check-templates.go` | The 7 config templates match the frozen prototype verbatim (the single production deviation is annotated with its reason: pgsql logging moved to stderr) |
 | `check-docker-naming.go` | Containers/networks/volumes always carry the `phpo-` prefix; nothing may slip |
 | `check-cache-manifest.go` | The JSON field names of `manifest.json` are frozen (including the two slots `image` and `extensions_image`) |
@@ -310,13 +312,13 @@ phpo/
 │   ├── cache/              # offline cache core: lookup/manifest/promotion/temp dir/SHA256/stats
 │   ├── template/           # go:embed config templates (grouped by service, not by version)
 │   ├── vhost/              # vhost generation, upstream rewriting, rewrite presets, nginx -t, hosts elevation on three platforms
-│   ├── preflight/          # **the single adjudication layer** (19 actions; UI validation is only instant feedback, the final call is here)
+│   ├── preflight/          # **the single adjudication layer** (20 actions; UI validation is only instant feedback, the final call is here)
 │   ├── task/               # three-phase task engine (serial FIFO + cancel + rollback + ledger)
 │   ├── service/            # business services; GetState is the authoritative snapshot exit
 │   ├── updater/            # check/download/verify/install/rollback (SHA256 + Ed25519)
 │   └── util/fs.go          # the single disk-write helper: 0777 + explicit chmod after write
 ├── pkg/                    # version / port / archive / disk / dockerutil / errs (27 error codes)
-├── frontend/src/           # Vue 3.5 + TS 5 + Vite + Pinia: 12 views / 20 business components / 17 api / 8 stores
+├── frontend/src/           # Vue 3.5 + TS 5 + Vite + Pinia: 12 views / 20 business components / 18 api / 8 stores
 ├── build/                  # packaging resources for three platforms (NSIS script, nfpm config, icons, desktop entry)
 ├── scripts/                # the five gates + signing/checksum/version helpers
 ├── test/integration/       # 11 real-environment live tests
@@ -345,7 +347,8 @@ A few trade-offs the design genuinely cares about:
 | Files missing from a backup | No longer fatal: unreadable entries are skipped and the log lists what's missing, aggregated per directory; database contents are covered by the logical dumps under `dump/` |
 | Database empty/stale after a restore | Restore **replays the cold copy only; it never auto-replays dumps** (auto-applying SQL would overwrite your existing database — an irreversible risk). For cross-machine recovery where you need the data, import that `.sql` / `.rdb` from the archive by hand |
 | Port already in use | New site: warning only, the site is still created in a degraded state, your port is kept as typed — free the port or change it once and it self-heals. Changing an existing site's port: automatically advances to the first free port in 1–65535. Service port: error, change it yourself |
-| I clicked "Apply and rebuild" for extensions and the dialog vanished instantly | Expected. That's a background task taking tens of seconds; the dialog closes on submit and progress plus failures live in the log drawer. Next time you open "Manage extensions", the pre-checked set is exactly the last set that **succeeded** |
+| I clicked "Apply and rebuild" for extensions and the dialog vanished instantly | Expected. That's a background task taking tens of seconds; the dialog closes on submit and progress plus failures live in the log drawer. Next time you open "Manage extensions", the pre-checked set is **what is genuinely loaded in that PHP version's container right now** (the backend probes `php -m` on the spot and writes the result back) — not what you last asked it to install |
+| Pulling an image over the network is slow or times out | Settings page → "Docker registry mirrors": one acceleration address per line → **Check** to see each source's reachability latency (how long it takes to connect and get an answer, *not* download speed) → Save. From then on only the step that genuinely has to go online uses them, tried fastest first; if none are reachable it falls back to the official registry and the install continues. Cache hits and rebuilding the cache from an image already in local Docker never touch the network, so they're unaffected |
 | I want a clean slate | Aggressive cleanup on the Cleanup page (volumes kept by default; deleting a volume asks twice); deleted site directories go to the trash and stay 7 days |
 
 ---

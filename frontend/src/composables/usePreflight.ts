@@ -1,5 +1,5 @@
 // usePreflight：preflight() 的前端镜像（§0.2 #14：UI 即时反馈；最终裁决在 internal/preflight/）
-// 逐字迁移原型 PF 文案 + validateVersion/Port/Domain/SiteRoot/Ext + preflight(action, ctx) 19 action。
+// 逐字迁移原型 PF 文案 + validateVersion/Port/Domain/SiteRoot/Ext + preflight(action, ctx) 20 action。
 import { useAppState } from '@/stores/appState'
 import { useCacheStore } from '@/stores/cacheStore'
 import { hasBackend } from '@/api/site'
@@ -35,6 +35,7 @@ const PF = {
   fileMissing: '待导入的文件不存在',
   extTypeInvalid: '缓存文件类型只能是 image / apk / pecl',
   dataDirPending: '正在运行，数据目录要重建容器后才生效',
+  registryHost: '镜像源地址不正确',
 }
 
 export interface PreflightResult {
@@ -77,12 +78,35 @@ function hasTraversal(p: string): boolean {
   return /(^|\/)\.\.(\/|$)/.test(String(p || ''))
 }
 
-// NEEDS_HOME：17 个动作（后端 preflight.needsHome 镜像；root-set 写 config.yaml、cache-import 写缓存根，两根未就绪即拒绝）
+// reRegistryHost 与 config.reRegistryHost 同一条正则：只认「主机」或「主机:端口」，不带路径
+const reRegistryHost = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?(:[0-9]{1,5})?$/
+
+// normalizeRegistryHost 与 config.NormalizeRegistryHost 同步：去空白 → 剥 http(s):// → 去结尾斜杠 → 去尾部 /v2
+function normalizeRegistryHost(s: string): string {
+  let h = String(s ?? '').trim()
+  for (const p of ['https://', 'http://']) if (h.startsWith(p)) h = h.slice(p.length)
+  h = h.replace(/\/+$/, '')
+  if (h.endsWith('/v2')) h = h.slice(0, -3)
+  return h.trim()
+}
+
+// validateRegistryHost 与 config.ValidateRegistryHost 同判据、同文案（UI 这层只作即时反馈，最终裁决在后端）
+function validateRegistryHost(s: string): ValResult {
+  const h = normalizeRegistryHost(s)
+  if (!h) return { ok: false, msg: `${PF.registryHost}: 不能为空` }
+  if (/[ \t\x00]/.test(h)) return { ok: false, msg: `${PF.registryHost}: ${s}（不能含空白字符）` }
+  if (h.includes('/')) return { ok: false, msg: `${PF.registryHost}: ${s}（只填主机名或「主机:端口」，不要带路径）` }
+  if (!reRegistryHost.test(h)) return { ok: false, msg: `${PF.registryHost}: ${s}` }
+  return { ok: true, value: h }
+}
+
+// NEEDS_HOME：18 个动作（后端 preflight.needsHome 镜像；root-set 写 config.yaml、cache-import 写缓存根、
+// docker-source-set 写 config.yaml，两根未就绪即拒绝）
 const NEEDS_HOME = new Set([
   'install', 'uninstall', 'service-stop', 'service-start', 'update-config',
   'site-add', 'site-remove', 'site-port', 'site-vhost', 'rewrite',
   'extensions', 'service-config', 'backup', 'restore', 'offline-prune',
-  'root-set', 'cache-import',
+  'root-set', 'cache-import', 'docker-source-set',
 ])
 
 interface ValResult { ok: boolean; msg?: string; value?: string | number; outsideWww?: boolean }
@@ -369,6 +393,19 @@ export function usePreflight() {
         if (field !== 'image' && field !== 'apk' && field !== 'pecl') errors.push(`${PF.extTypeInvalid}，得 ${field}`)
         else if ((field === 'apk' || field === 'pecl') && kind !== 'php') errors.push(`${field} 扩展只能导入到 php 缓存`)
         if (!String(newValue ?? '').trim()) errors.push(PF.fileMissing)
+        break
+      }
+      // docker-source-set：设置页的 Docker 镜像源清单（一行一个「主机[:端口]」）。与后端 rules_docker.go 同判据
+      // （共用 config.ValidateRegistryHosts：忽略空行、逐行合形、首个坏值点名）；可达性不在这里判——
+      // 填了连不上的源照样保存，拉取时逐个点名后回落直连官方（最小限制：不拿「此刻不通」拦住用户的配置）。
+      case 'docker-source-set': {
+        const rows: string[] = Array.isArray(c.sources) ? c.sources : []
+        const kept = rows.filter((x) => String(x ?? '').trim() !== '')
+        for (const raw of kept) {
+          const hv = validateRegistryHost(raw)
+          if (!hv.ok) { errors.push(hv.msg!); break }
+        }
+        if (!kept.length) warnings.push('未填写镜像源，拉取将直连官方（docker.io）')
         break
       }
     }
