@@ -352,8 +352,8 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 				}
 				args := extDisableArgs(e)
 				log.Log(string(model.LogCmd), "停用扩展 "+e+": "+strings.Join(args, " "))
-				if err := s.runInContainer(ctx, name, log, args); err != nil {
-					return extFailed(log, e, "停用", err)
+				if _, err := s.runInContainer(ctx, name, log, args); err != nil {
+					return extFailed(log, e, "停用", err, nil)
 				}
 				log.Log(string(model.LogOk), "已停用扩展: "+e)
 			}
@@ -366,7 +366,7 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 			if len(added) > 0 {
 				// 暂存目录必须在 commit 之前清掉：包文件留在容器层就会被固化进 phpo/php:{version}
 				log.Log(string(model.LogCmd), "清空容器暂存目录: "+strings.Join(config.ExtStagingCleanupCmd, " "))
-				if err := s.runInContainer(ctx, name, log, config.ExtStagingCleanupCmd); err != nil {
+				if _, err := s.runInContainer(ctx, name, log, config.ExtStagingCleanupCmd); err != nil {
 					return err
 				}
 			}
@@ -464,27 +464,61 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 }
 
 // runInContainer 在容器内执行 cmd，并把 stdout/stderr 逐行实时转写进任务日志（§5.6.2 每步都要回流）。
-func (s *ExtensionService) runInContainer(ctx context.Context, name string, log task.StepLog, cmd []string) error {
-	out := &extLogWriter{log: log, level: string(model.LogMeta)}
+// 第二个返回值是本次输出里被 configure 报「找不到」的系统开发包名（多半为空）——扩展编译失败时
+// 要靠它把「该装什么」说给用户（§5.16.6）。
+func (s *ExtensionService) runInContainer(ctx context.Context, name string, log task.StepLog, cmd []string) ([]string, error) {
+	missing := map[string]bool{}
+	out := &extLogWriter{log: log, level: string(model.LogMeta), missing: missing}
 	defer out.flush()
-	errOut := &extLogWriter{log: log, level: string(model.LogDim)}
+	errOut := &extLogWriter{log: log, level: string(model.LogDim), missing: missing}
 	defer errOut.flush()
-	return s.rt.ExecStream(ctx, name, cmd, out, errOut)
+	err := s.rt.ExecStream(ctx, name, cmd, out, errOut)
+	// 返回前要先把不足一行的尾巴落地，否则最后一句 configure 报错进不了 missing
+	//（defer 那两份保留着兜 panic 路径；flush 在 buf 已空时不产行）
+	out.flush()
+	errOut.flush()
+	return sortedSet(missing), err
+}
+
+// sortedSet 把收集袋拍平成字典序切片：日志与 toast 要有稳定形状，不能随 map 迭代顺序漂
+func sortedSet(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // extFailed 失败必须点名是哪个扩展：错误消息会被前端 toast 原样弹出，
 // 而「容器内命令失败（退出码 2）」不告诉用户该改哪一项；输出细节已逐行进日志，这里只补一行 err 级定位。
-func extFailed(log task.StepLog, name, verb string, err error) error {
+// missing 非空时再多说两句：光说「扩展 gd 安装失败」，用户看不见这次真正缺的是系统开发包 zlib，
+// 只能反复点「应用并重建」反复失败（真机即如此）；包名按基座两种写法都给出，因为 phpo 不代装系统包。
+func extFailed(log task.StepLog, name, verb string, err error, missing []string) error {
 	log.Log(string(model.LogErr), fmt.Sprintf("扩展 %s %s失败：%v", name, verb, err))
-	return fmt.Errorf("扩展 %s %s失败，本次扩展集未应用", name, verb)
+	if len(missing) == 0 {
+		return fmt.Errorf("扩展 %s %s失败，本次扩展集未应用", name, verb)
+	}
+	hints := make([]string, 0, len(missing))
+	for _, p := range missing {
+		hints = append(hints, config.ExtSysPkgHint(p))
+	}
+	log.Log(string(model.LogErr), fmt.Sprintf("扩展 %s 缺编译要用的系统开发包: %s", name, strings.Join(hints, "、")))
+	log.Log(string(model.LogDim), "phpo 不代装系统包：先在正在运行的这个 php 容器里装上上面这些包（Debian 基座 apt-get install -y、Alpine 基座 apk add），再点一次「应用并重建」——装进容器的那一份会随扩展镜像一起固化，下次不用再装。")
+	return fmt.Errorf("扩展 %s %s失败（缺系统开发包 %s），本次扩展集未应用", name, verb, strings.Join(missing, "、"))
 }
 
 // extLogWriter 按行落地容器内命令输出：configure/make 可达数百行且是流式产出，
 // 攒成整串再打印等于让用户盯着一段时长未知的「执行中」。无换行的超长进度条按 extLineMax 强制断行。
+// missing 非 nil 时顺带认出 configure 报「找不到」的系统开发包名（只收集，不改写日志）。
 type extLogWriter struct {
-	log   task.StepLog
-	level string
-	buf   []byte
+	log     task.StepLog
+	level   string
+	buf     []byte
+	missing map[string]bool
 }
 
 const extLineMax = 4096
@@ -515,9 +549,14 @@ func (w *extLogWriter) flush() {
 }
 
 func (w *extLogWriter) emit(line string) {
-	if s := strings.TrimRight(line, " \r"); s != "" {
-		w.log.Log(w.level, s)
+	s := strings.TrimRight(line, " \r")
+	if s == "" {
+		return
 	}
+	for _, d := range config.ExtMissingDepNames(s) {
+		w.missing[d] = true
+	}
+	w.log.Log(w.level, s)
 }
 
 // installExt 装一项扩展：先让**包文件**离线可得（命中缓存即零网络回填容器暂存目录，未命中则下载 → 取回 → 提升），
@@ -536,8 +575,9 @@ func (s *ExtensionService) installExt(ctx context.Context, ctr, version, tmpDir,
 func (s *ExtensionService) runCmds(ctx context.Context, ctr, ext string, cmds [][]string, log task.StepLog) error {
 	for _, c := range cmds {
 		log.Log(string(model.LogCmd), "安装扩展 "+ext+": "+strings.Join(c, " "))
-		if err := s.runInContainer(ctx, ctr, log, c); err != nil {
-			return extFailed(log, ext, "安装", err)
+		missing, err := s.runInContainer(ctx, ctr, log, c)
+		if err != nil {
+			return extFailed(log, ext, "安装", err, missing)
 		}
 	}
 	return nil
@@ -571,7 +611,7 @@ func (s *ExtensionService) peclPackage(ctx context.Context, ctr, version, tmpDir
 		Kind: string(model.KindPHP), Version: version, Action: "download"})
 	cmd := config.ExtPeclDownloadCmd(ext)
 	log.Log(string(model.LogCmd), "取扩展包到容器暂存目录: "+strings.Join(cmd, " "))
-	if e := s.runInContainer(ctx, ctr, log, cmd); e != nil {
+	if _, e := s.runInContainer(ctx, ctr, log, cmd); e != nil {
 		log.Log(string(model.LogDim), "pecl download 失败，退回在线编译: "+e.Error())
 		return ""
 	}
@@ -628,7 +668,7 @@ func (s *ExtensionService) prefetchBuildDeps(ctx context.Context, ctr, version, 
 
 	cmd := config.ExtApkPrefetchCmd()
 	log.Log(string(model.LogCmd), "预取构建依赖: "+strings.Join(cmd, " "))
-	if err := s.runInContainer(ctx, ctr, log, cmd); err != nil {
+	if _, err := s.runInContainer(ctx, ctr, log, cmd); err != nil {
 		log.Log(string(model.LogDim), "构建依赖预取失败（不影响扩展编译）: "+err.Error())
 		return
 	}

@@ -653,6 +653,64 @@ func TestExtension_Apply_FailureNamesExtension(t *testing.T) {
 	}
 }
 
+// TestExtension_Apply_FailureNamesMissingSysPkg 真机上反复装不上扩展的那一批，失败原因从来不是扩展本身：
+// configure 在容器里找不到它要用的**系统开发包**（php:8.x-fpm 基座只带了运行库，没带 -dev）。
+// 光说「扩展 gd 安装失败，本次扩展集未应用」，用户看不见要装 zlib1g-dev，只能反复点反复失败——
+// 现要求把缺的包名（两种基座各一个写法）连同「怎么回来」一起摊进日志与 toast。
+// 下面两句 execOut 是真机 gd 编译失败的日志原文形状。
+func TestExtension_Apply_FailureNamesMissingSysPkg(t *testing.T) {
+	svc, rt, _, _, em, _ := newExtSvc(t)
+	rt.execFailOn = "docker-php-ext-install gd"
+	rt.execOut = "configure: error: Package requirements (zlib >= 1.2.11) were not met:\n" +
+		"\n" +
+		"Package 'zlib', required by 'virtual:world', not found\n"
+	err := svc.Apply(context.Background(), "8.4", []string{"gd"})
+	if err == nil {
+		t.Fatal("编译失败应报错")
+	}
+	if want := "扩展 gd 安装失败（缺系统开发包 zlib），本次扩展集未应用"; err.Error() != want {
+		t.Fatalf("toast 要同时点名扩展与缺的包\n期望 %q\n实得 %q", want, err.Error())
+	}
+	// 一行 err 点名缺哪个包、两种基座各自装什么
+	var namedPkg, howToBack bool
+	for i, l := range em.levels {
+		line := em.logs[i]
+		if l == "err" && strings.Contains(line, "缺编译要用的系统开发包") &&
+			strings.Contains(line, "Debian: zlib1g-dev") && strings.Contains(line, "Alpine: zlib-dev") {
+			namedPkg = true
+		}
+		if l == "dim" && strings.Contains(line, "phpo 不代装系统包") && strings.Contains(line, "应用并重建") {
+			howToBack = true
+		}
+	}
+	if !namedPkg {
+		t.Fatalf("应有一行 err 点名缺失的系统开发包与两种基座的包名，实得 %+v %v", em.levels, em.logs)
+	}
+	if !howToBack {
+		t.Fatalf("应有一行 dim 说清怎么回来（自己装进容器再点一次），实得 %+v %v", em.levels, em.logs)
+	}
+}
+
+// TestExtension_Apply_DisableFailureDoesNotBlameSysPkg 「缺系统开发包」只属于编译失败。
+// 停用只是 rm -f 一份 ini，它失败与依赖包无关——把那句挂上去等于给用户指一条装了也没用的路。
+func TestExtension_Apply_DisableFailureDoesNotBlameSysPkg(t *testing.T) {
+	svc, rt, _, st, _, _ := newExtSvc(t)
+	_ = st.SetPHPExtensions("8.4", []string{"redis"})
+	rt.hasImages = []string{engine.CommittedPHPRef("8.4")}
+	rt.iniFiles = []string{"docker-php-ext-redis.ini"}
+	rt.execFailOn = "rm -f /usr/local/etc/php/conf.d/docker-php-ext-redis.ini"
+	// 即便同一次 exec 的输出里出现了依赖包那句，停用分支也不得据此加提示
+	rt.execOut = "Package 'zlib', required by 'virtual:world', not found\n"
+
+	err := svc.Apply(context.Background(), "8.4", []string{"gd"})
+	if err == nil {
+		t.Fatal("停用失败应报错")
+	}
+	if want := "扩展 redis 停用失败，本次扩展集未应用"; err.Error() != want {
+		t.Fatalf("停用失败的消息不该出现缺系统开发包那半句\n期望 %q\n实得 %q", want, err.Error())
+	}
+}
+
 // ---- 重载 Nginx 这一步的三种缺席情形（§5.16.3「未接入 nginx 时 dim 跳过重载，不得静默」）----
 
 // fakeReloader 记录 nginx 重载被调了几次、返回什么
