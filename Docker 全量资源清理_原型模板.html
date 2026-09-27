@@ -1,0 +1,2155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Docker 全量资源清理（原型模板）</title>
+
+<!--
+============================================================================
+  【重要说明】本文件是一个「原型模板」，不得更改外观样式，如果必须更改需要提前请求告知，
+   这是一个任意服务，任意版本……等等的任意用户任意安装任意的服务的必须支持全量资源清理，完整彻底清理的功能需求，
+   需要真实的数据必须与系统docker实时获取，必须实时同步数据一致性，各种清理的必须彻底毫无任何残留。
+============================================================================
+
+  代码里所有的数据、操作都带有如下标记，请仔细阅读：
+
+  🟡【仿真】  = 示例/假数据，仅用于原型演示
+                生产环境必须替换为真实数据或整段删除
+
+  🟢【真实】  = 需要从后端 API 获取的真实数据
+                代码里调用了接口，但后端未实现时会 fallback 到仿真数据
+
+  🔴【实接】  = 生产环境必须真实调用后端，不能留仿真
+                （例如：清理命令、任务提交、导出下载、终端连接）
+
+  🔵【实时】  = 需要实时刷新或轮询的数据
+                （例如：任务进度、资源数量、phpo 资源检索结果）
+
+  所有需要接后端的地方，都在代码里用注释写清楚了：
+    - 该调哪个接口
+    - 请求体长什么样
+    - 响应体期望什么格式
+
+  文件末尾有一节「后端 API 契约」，是给后端工程师看的对接说明。
+
+============================================================================
+  我们的沟通需求（业务逻辑）
+============================================================================
+
+  1. 页面上有一个「其他」面板，用来清理 Docker 的各种资源。
+
+  2. 有两个模式卡片：
+
+     🔵 保留模式（蓝色）：
+        - phpo 相关项 → 默认灰色、不可点（locked）
+        - 其他项 → 默认全部勾选
+        - 用户手动点灰的 phpo 项 → 弹框提示后果 → 确认后才解锁勾选
+
+     🔴 清理模式（红色）：
+        - 全部项（含 phpo）→ 全部勾选
+
+  3. 【三种勾选入口行为完全一致】
+     保留模式下，用户想勾选【任何包含 phpo 项的东西】都要弹框提示：
+       - 单项复选框（.item-row input[type=checkbox]）
+       - 分组复选框（.group-row input[type=checkbox]）
+       - 表头全选框（#selectAllCheckbox）
+     取消勾选则直接执行，不弹框（取消是安全操作）。
+
+  4. 状态条颜色跟着模式走（保留=蓝，清理=红）。
+
+  5. 危险操作，必须勾「我已知情」确认后才能删除。
+
+============================================================================
+-->
+
+<style>
+  :root {
+    --bg: #0f1419;
+    --surface: #1a1f2e;
+    --surface2: #232938;
+    --border: #2d3548;
+    --text: #e1e7f0;
+    --text-mute: #8892a6;
+    --accent: #4a9eff;
+    --accent-dim: #1e3a5f;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --warn-dim: #3a2f0a;
+    --danger: #f87171;
+    --danger-dim: #3b1a1a;
+    --danger-border: #5a2020;
+    --locked: #4a5568;
+    --locked-dim: #1e2432;
+    --sample: #fbbf24;
+    --sample-dim: #3a2f0a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 13.5px; line-height: 1.5; padding: 24px;
+  }
+  .page-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+
+  .table-wrap {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden; margin-bottom: 24px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    background: var(--surface2); color: var(--text-mute); font-weight: 500; font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: .04em; padding: 10px 14px; text-align: left;
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 11.5px; font-weight: 500; }
+  .chip-accent { background: var(--accent-dim); color: var(--accent); }
+
+  .status-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500; }
+  .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: inline-block; }
+  .pill-ok { color: var(--ok); }
+  .pill-warn { color: var(--warn); }
+  .pill-danger { color: var(--danger); }
+  .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+    font-size: 12px; font-weight: 500; cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:active { transform: scale(.97); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-sm { padding: 4px 10px; font-size: 11.5px; }
+  .btn.danger { border-color: var(--danger-border); background: var(--danger-dim); color: var(--danger); }
+  .btn.danger:hover { border-color: var(--danger); background: #4a1a1a; }
+  .btn.warn { border-color: #5a4a10; background: var(--warn-dim); color: var(--warn); }
+
+  input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+
+  .other-head {
+    display: flex; align-items: center; justify-content: space-between; padding: 14px 18px;
+    border-bottom: 1px solid var(--border); gap: 12px; flex-wrap: wrap;
+  }
+  .other-head.collapsed { border-bottom: none; }
+  .other-head-left { display: flex; align-items: center; gap: 10px; }
+  .collapse-arrow {
+    display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border-radius: 6px; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--accent); font-size: 13px; flex-shrink: 0; transition: transform .2s;
+    cursor: pointer;
+  }
+  .collapse-arrow.collapsed { transform: rotate(-90deg); }
+  .collapse-arrow:hover { background: var(--accent-dim); border-color: var(--accent); }
+  .other-head-text h3 { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+  .other-desc { font-size: 12px; color: var(--text-mute); }
+  .other-head-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  .collapse-body { display: block; }
+  .collapse-body.collapsed { display: none; }
+
+  .scope-section { padding: 16px 18px; border-bottom: 1px solid var(--border); background: var(--surface2); }
+  .scope-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .scope-subtitle { font-size: 11.5px; color: var(--text-mute); margin-bottom: 12px; }
+  .scope-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .scope-card {
+    position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px;
+    border-radius: 10px; border: 2px solid var(--border); background: var(--surface);
+    cursor: pointer; transition: all .18s;
+  }
+  .scope-card:hover { border-color: #4a5568; }
+  .scope-card .card-icon { font-size: 24px; flex-shrink: 0; margin-top: 2px; }
+  .scope-card .card-body { flex: 1; min-width: 0; }
+  .scope-card .card-title { font-size: 13.5px; font-weight: 600; margin-bottom: 4px; }
+  .scope-card .card-desc { font-size: 11.5px; color: var(--text-mute); line-height: 1.55; }
+  .scope-card .card-check { position: absolute; top: 10px; right: 12px; font-size: 14px; color: transparent; }
+
+  .scope-card[data-mode="keep"].active {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, var(--accent-dim), var(--surface));
+    box-shadow: 0 0 0 3px rgba(74,158,255,.12);
+  }
+  .scope-card[data-mode="keep"].active .card-title { color: var(--accent); }
+  .scope-card[data-mode="keep"].active .card-check { color: var(--accent); }
+
+  .scope-card[data-mode="remove"].active {
+    border-color: var(--danger);
+    background: linear-gradient(135deg, var(--danger-dim), var(--surface));
+    box-shadow: 0 0 0 3px rgba(248,113,113,.12);
+  }
+  .scope-card[data-mode="remove"].active .card-title { color: var(--danger); }
+  .scope-card[data-mode="remove"].active .card-check { color: var(--danger); }
+
+  .status-banner { padding: 12px 18px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+  .status-banner.keep { background: var(--accent-dim); color: var(--accent); border-bottom-color: #2a4a6a; }
+  .status-banner.remove { background: var(--danger-dim); color: var(--danger); border-bottom-color: var(--danger-border); }
+
+  .banner-row-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .banner-row-main .banner-icon { font-size: 17px; }
+  .banner-row-main .banner-title { font-size: 13px; font-weight: 700; }
+  .banner-row-main .banner-summary { font-size: 12px; opacity: .95; }
+  .banner-actions { margin-left: auto; display: flex; gap: 6px; }
+  .banner-actions .btn { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.12); color: inherit; font-size: 11.5px; padding: 3px 9px; }
+  .banner-detail { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.1); }
+  .banner-detail.open { display: block; }
+  .detail-note { font-size: 11px; opacity: .75; margin-bottom: 8px; }
+  .detail-cat { margin-bottom: 8px; }
+  .detail-cat .cat-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 5px; }
+  .detail-cat .cat-head .count { padding: 0 6px; border-radius: 8px; font-size: 10.5px; font-weight: 600; background: rgba(255,255,255,.12); }
+  .detail-cat .cat-items { display: flex; flex-wrap: wrap; gap: 5px; }
+  .detail-cat .cat-items .tag { padding: 2px 8px; border-radius: 4px; font-family: monospace; font-size: 11px; }
+  .status-banner.keep .tag { background: rgba(74,158,255,.16); border: 1px solid #2a4a6a; color: var(--accent); }
+  .status-banner.remove .tag { background: rgba(248,113,113,.16); border: 1px solid var(--danger-border); color: var(--danger); }
+
+  .table-toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 12px 18px; background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+  }
+  .table-toolbar .spacer { flex: 1; }
+
+  .sample-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 20px;
+    background: var(--sample-dim); border: 1px solid #5a4a10;
+    color: var(--sample); font-size: 11px; font-weight: 600; white-space: nowrap;
+  }
+  .sample-badge::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--sample); animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  .group-row td {
+    background: linear-gradient(90deg, rgba(74,158,255,.10), rgba(74,158,255,.02));
+    border-left: 4px solid var(--accent); padding: 12px 14px 12px 10px;
+    cursor: pointer; user-select: none; border-bottom: 1px solid var(--border);
+  }
+  .group-row:hover td { background: linear-gradient(90deg, rgba(74,158,255,.18), rgba(74,158,255,.05)); }
+  .group-toggle { display: flex; align-items: center; gap: 10px; font-size: 13.5px; font-weight: 700; color: var(--accent); }
+  .group-arrow {
+    display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+    font-size: 12px; background: rgba(74,158,255,.15); border-radius: 4px; transition: transform .2s;
+  }
+  .group-row.collapsed .group-arrow { transform: rotate(-90deg); }
+  .group-icon { font-size: 15px; }
+  .group-count { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: rgba(74,158,255,.15); color: var(--accent); margin-left: 6px; }
+  .group-count.selected { background: var(--accent); color: #fff; }
+
+  tr.item-row td { background: var(--surface); border-bottom: 1px solid rgba(45,53,72,.5); }
+  tr.item-row:hover td { background: rgba(74,158,255,.04); }
+  tr.item-row td:first-child { position: relative; padding-left: 46px; }
+  tr.item-row td:first-child::before {
+    content: ""; position: absolute; left: 24px; top: 0; bottom: 0; width: 1px; background: rgba(74,158,255,.25);
+  }
+  tr.item-row td:first-child::after {
+    content: ""; position: absolute; left: 24px; top: 50%; width: 12px; height: 1px; background: rgba(74,158,255,.35);
+  }
+  tr.item-row.last-child td:first-child::before { height: 50%; }
+  tr.item-row.hidden-by-group { display: none; }
+
+  tr.item-row.locked-phpo td { background: var(--locked-dim); color: var(--locked); }
+  tr.item-row.locked-phpo:hover td { background: rgba(74, 85, 104, 0.25); cursor: not-allowed; }
+  tr.item-row.locked-phpo input[type="checkbox"] { accent-color: var(--locked); cursor: not-allowed; opacity: .7; }
+  tr.item-row.locked-phpo .locked-badge { display: inline-block; }
+  .locked-badge {
+    display: none; font-size: 10.5px; padding: 2px 7px; border-radius: 4px;
+    background: rgba(74, 85, 104, 0.3); border: 1px solid var(--locked);
+    color: #a0aec0; font-weight: 600; white-space: nowrap;
+  }
+
+  .row-actions { display: flex; align-items: center; gap: 4px; justify-content: flex-end; flex-wrap: nowrap; }
+  .icon-btn {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 6px; border: 1px solid transparent;
+    background: transparent; color: var(--text-mute); cursor: pointer;
+    transition: all .15s; flex-shrink: 0; padding: 0;
+  }
+  .icon-btn:hover { background: var(--surface2); border-color: var(--border); color: var(--accent); }
+  .icon-btn:active { transform: scale(.94); }
+  .icon-btn svg { width: 15px; height: 15px; stroke-width: 1.8; stroke: currentColor; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .icon-btn.danger { color: #c98b8b; }
+  .icon-btn.danger:hover { background: var(--danger-dim); border-color: var(--danger-border); color: var(--danger); }
+  .icon-btn::after {
+    content: attr(data-tip); position: absolute; bottom: 100%; left: 50%;
+    transform: translateX(-50%) translateY(-2px); padding: 4px 8px;
+    background: #0a0e14; border: 1px solid var(--border); border-radius: 5px;
+    color: var(--text); font-size: 11px; font-weight: 500; white-space: nowrap;
+    opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+  }
+  .icon-btn:hover::after { opacity: 1; }
+  .icon-btn.tip-right::after { left: auto; right: 0; transform: translateY(-2px); }
+
+  .other-actions {
+    display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+    border-top: 1px solid var(--border); flex-wrap: wrap; background: var(--surface2);
+  }
+  .other-actions .spacer { flex: 1; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7);
+    z-index: 1000; align-items: center; justify-content: center; padding: 24px;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    max-width: 720px; width: 100%; max-height: 82vh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .modal-header h4 { font-size: 15px; font-weight: 600; }
+  .modal-close { background: none; border: none; color: var(--text-mute); font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+  .modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
+  .modal-body pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px;
+    font-size: 12px; overflow-x: auto; color: var(--text-mute); margin-top: 8px;
+  }
+  .warn-box { background: var(--danger-dim); border: 1px solid var(--danger-border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; font-size: 12.5px; color: var(--danger); }
+  .warn-box strong { display: block; margin-bottom: 4px; }
+  .info-box { background: var(--accent-dim); border: 1px solid #2a4a6a; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 12.5px; color: var(--accent); }
+  .consent-row {
+    display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--surface2);
+    cursor: pointer; user-select: none;
+  }
+  .consent-row:hover { border-color: var(--danger); }
+  .consent-row input { margin-top: 2px; flex-shrink: 0; }
+  .consent-row span { font-size: 12.5px; line-height: 1.6; }
+  ul.plain-tags { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  ul.plain-tags li {
+    padding: 2px 8px; border-radius: 5px; background: var(--surface2); border: 1px solid var(--border);
+    font-size: 11.5px; color: var(--text-mute);
+  }
+  .loading-row td { text-align: center; color: var(--text-mute); font-style: italic; padding: 24px; }
+  .error-box {
+    margin: 16px 18px; padding: 12px 14px;
+    background: var(--danger-dim); border: 1px solid var(--danger-border); border-radius: 8px;
+    color: var(--danger); font-size: 12.5px;
+  }
+  .error-box strong { display: block; margin-bottom: 4px; }
+  .error-box code { font-family: monospace; font-size: 11.5px; color: #f0a0a0; }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 18px; font-size: 13px; color: var(--text); z-index: 2000;
+    opacity: 0; transform: translateY(12px); transition: all .25s; pointer-events: none;
+    max-width: 420px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.ok { border-color: var(--ok); }
+  .toast.err { border-color: var(--danger); }
+
+  @media (max-width: 760px) {
+    .scope-cards { grid-template-columns: 1fr; }
+    .other-head { flex-direction: column; align-items: stretch; }
+    .other-head-right { justify-content: flex-end; }
+    .other-actions { flex-direction: column; align-items: stretch; }
+    .other-actions .spacer { display: none; }
+    thead th, tbody td { padding: 8px 10px; }
+    body { padding: 12px; }
+    tr.item-row td:first-child { padding-left: 32px; }
+    tr.item-row td:first-child::before { left: 16px; }
+    tr.item-row td:first-child::after { left: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<section class="table-wrap" id="otherPanel">
+
+  <div class="other-head collapsed" id="otherHead">
+    <div class="other-head-left">
+      <div class="collapse-arrow collapsed" id="panelArrow" onclick="togglePanelCollapse()">▾</div>
+      <div class="other-head-text">
+        <h3>其他</h3>
+        <p class="other-desc">Docker 全量资源清理 · 终端 · 导出 · 预览</p>
+      </div>
+    </div>
+
+    <div class="other-head-right" id="headRightActions">
+      <button class="btn btn-sm danger" onclick="cleanSelected()">彻底清空选中</button>
+    </div>
+  </div>
+
+  <div class="collapse-body collapsed" id="panelBody">
+
+    <div id="errorBox" style="display:none;"></div>
+
+    <div class="scope-section">
+      <div class="scope-title">清理范围</div>
+      <div class="scope-subtitle">选择清理 Docker 资源时，phpo 相关项如何处理</div>
+      <div class="scope-cards">
+        <div class="scope-card" data-mode="keep" id="cardKeep" onclick="setScopeMode('keep')">
+          <div class="card-icon">🔒</div>
+          <div class="card-body">
+            <div class="card-title">保留 phpo 服务</div>
+            <div class="card-desc">
+              phpo 相关项 <strong>灰色不可选</strong>（如需要可手动勾选，但会弹框提示后果）。<br>
+              <span style="color:var(--accent);">其他项默认全部选中</span>，表示其他默认全部可卸载。
+            </div>
+          </div>
+          <div class="card-check">✓</div>
+        </div>
+
+        <div class="scope-card" data-mode="remove" id="cardRemove" onclick="setScopeMode('remove')">
+          <div class="card-icon">🔓</div>
+          <div class="card-body">
+            <div class="card-title">一起清理 phpo 服务</div>
+            <div class="card-desc">
+              <span style="color:var(--danger);">全部勾选</span>（含 phpo 相关项），所有资源都会被清理。
+            </div>
+          </div>
+          <div class="card-check">✓</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-banner keep" id="statusBanner">
+      <div class="banner-row-main">
+        <span class="banner-icon" id="bannerIcon">🔒</span>
+        <span class="banner-title" id="bannerTitle">保留模式</span>
+        <span class="banner-summary" id="bannerSummary"><span class="loading-text">加载中…</span></span>
+        <span class="banner-actions">
+          <button class="btn" id="detailToggleBtn" onclick="toggleBannerDetail()">查看详情 ▾</button>
+          <button class="btn" onclick="loadPhpoResources(true)">↻ 重新检索</button>
+        </span>
+      </div>
+      <div class="banner-detail" id="bannerDetail">
+        <div class="detail-note">🔍 以下结果由系统实时检索</div>
+        <div id="bannerDetailBody"></div>
+      </div>
+    </div>
+
+    <div class="table-toolbar">
+      <button class="btn btn-sm" onclick="selectAllOther()">全选</button>
+      <button class="btn btn-sm" onclick="invertOther()">反选</button>
+      <button class="btn btn-sm" onclick="clearOther()">清空选择</button>
+      <button class="btn btn-sm" onclick="reloadAll()">↻ 刷新</button>
+      <span class="chip chip-accent" id="selectedCount">已选 0</span>
+      <div class="spacer"></div>
+      <!-- 🟡【仿真】徽章：连上真实 API 后会自动隐藏 -->
+      <span class="sample-badge" id="sampleBadge">示例数据（非真实）</span>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:42px;">
+            <input type="checkbox" id="selectAllCheckbox" onclick="onSelectAllClick(event)">
+          </th>
+          <th style="width:18%;">类型</th>
+          <th style="width:30%;">范围 / 说明</th>
+          <th style="width:13%;">数量 / 占用</th>
+          <th style="width:9%;">风险</th>
+          <th style="width:10%;">状态</th>
+          <th style="width:130px; text-align:right;">操作</th>
+        </tr>
+      </thead>
+      <tbody id="otherTableBody">
+        <tr class="loading-row"><td colspan="7">加载中…</td></tr>
+      </tbody>
+    </table>
+
+    <div class="other-actions">
+      <button class="btn btn-sm" onclick="previewSelected()">预览选中</button>
+      <button class="btn btn-sm danger" onclick="cleanSelected()">彻底清空选中</button>
+    </div>
+
+  </div>
+</section>
+
+<div class="modal-overlay" id="previewModal">
+  <div class="modal">
+    <div class="modal-header"><h4>清理预览</h4><button class="modal-close" onclick="closeModal('previewModal')">&times;</button></div>
+    <div class="modal-body" id="previewBody"><div class="loading-text">加载中…</div></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('previewModal')">取消</button>
+      <button class="btn danger" id="previewNextBtn" disabled>下一步：二次确认</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal">
+    <div class="modal-header"><h4 id="confirmTitle">危险操作确认</h4><button class="modal-close" onclick="closeModal('confirmModal')">&times;</button></div>
+    <div class="modal-body">
+      <div class="warn-box"><strong>⚠️ 不可逆操作</strong><span id="confirmWarnText">此操作将永久删除所选资源，无法恢复。</span></div>
+      <div id="confirmScopeBlock"></div>
+      <p style="font-size:12.5px;color:var(--text-mute);margin-bottom:10px;">
+        本次将清理 <strong id="confirmCount" style="color:var(--danger);">0</strong> 项资源。
+      </p>
+      <label class="consent-row" for="consentCheckbox">
+        <input type="checkbox" id="consentCheckbox" onchange="onConsentChange(this)">
+        <span>我已知情并同意：本次清理会永久删除所选 Docker 资源，可能导致容器、镜像、卷、网络、构建缓存、日志等数据丢失，且不可恢复。我确认继续执行。</span>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('confirmModal')">取消</button>
+      <button class="btn danger" id="confirmExecuteBtn" disabled>确认执行</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="unlockModal">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-header">
+      <h4 id="unlockTitle">手动勾选 phpo 相关项</h4>
+      <button class="modal-close" onclick="closeUnlockModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="warn-box" id="unlockWarnBox">
+        <strong id="unlockWarnTitle">⚠️ 你正在勾选受保护的 phpo 相关项</strong>
+        <span id="unlockWarnText">该项属于 phpo 服务的相关资源，勾选后会被一起清理。这可能导致 phpo 服务无法正常运行，数据永久丢失。</span>
+      </div>
+      <div id="unlockItemInfo" style="padding:10px 12px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:14px;font-size:12.5px;"></div>
+
+      <label class="consent-row" for="unlockConsentCheckbox">
+        <input type="checkbox" id="unlockConsentCheckbox" onchange="onUnlockConsentChange(this)">
+        <span id="unlockConsentText">我已知情并同意：我明白该项属于 phpo 服务相关资源，勾选后会被清理，可能导致 phpo 服务异常或数据丢失，我确认手动勾选该项。</span>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeUnlockModal()">取消</button>
+      <button class="btn danger" id="unlockExecuteBtn" disabled>确认勾选</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================================
+ *
+ *   ██████  ██████   ██████  ████████  ██████  ████████ ██    ██ ██████  ███████
+ *   ██   ██ ██   ██ ██    ██    ██    ██    ██    ██    ██    ██ ██   ██ ██
+ *   ██████  ██████  ██    ██    ██    ██    ██    ██    ██    ██ ██████  █████
+ *   ██      ██   ██ ██    ██    ██    ██    ██    ██    ██    ██ ██   ██ ██
+ *   ██      ██   ██  ██████     ██     ██████     ██     ██████  ██   ██ ███████
+ *
+ *   这是一个原型模板，不是生产代码。
+ *   所有接后端、接真实数据的地方都用注释标注了。
+ *
+ * ============================================================================
+ *
+ *   标记说明：
+ *
+ *     🟡【仿真】  = 示例/假数据，仅用于原型演示
+ *                   生产环境必须替换为真实数据或整段删除
+ *
+ *     🟢【真实】  = 需要从后端 API 获取的真实数据
+ *                   代码里调用了接口，后端未实现时 fallback 到仿真数据
+ *
+ *     🔴【实接】  = 生产环境必须真实调用后端，不能留仿真
+ *                   （例如：清理命令、任务提交、导出下载、终端连接）
+ *
+ *     🔵【实时】  = 需要实时刷新或轮询的数据
+ *                   （例如：任务进度、资源数量、phpo 资源检索结果）
+ *
+ * ============================================================================
+ */
+
+
+/* ============================================================================
+ * 🔴【实接】后端 API 基地址
+ *
+ * 说明：
+ *   真实部署时必须改成后端的实际地址。
+ *   例如：
+ *     const API_BASE = 'https://your-docker-server.com';
+ *     const API_BASE = 'http://localhost:8080';
+ *
+ *   如果前后端同域（同一个域名下，前端由后端静态托管），可以留空 ''。
+ *
+ *   生产环境要求：
+ *     - 必须是 https
+ *     - 必须带登录凭证（credentials: 'same-origin' 已配置）
+ * ============================================================================
+ */
+const API_BASE = '';
+
+
+/* ============================================================================
+ * 🟡【仿真】phpo 相关资源清单
+ *
+ * 说明：
+ *   这些是假数据！是为了让原型能跑起来，展示「保留模式下详情区能显示什么」。
+ *
+ * 真实数据来源：
+ *   🔵【实时】GET /api/docker/phpo-resources
+ *   这个接口必须由后端实时检索 Docker，返回真实的 phpo 相关资源。
+ *
+ * 接后端时：
+ *   1. 后端实现 /api/docker/phpo-resources
+ *   2. 前端 loadPhpoResources() 会自动覆盖这份数据
+ *   3. 覆盖后顶部徽章「示例数据」会自动隐藏
+ *
+ * ⚠️ 生产环境必须删除此常量，或改成从 API 加载。
+ * ============================================================================
+ */
+const SAMPLE_PHPO_RESOURCES = {
+  container: ['phpo-php-8.4（示例）','phpo-php-8.2（示例）','phpo-mysql-5.7（示例）','phpo-pgsql-17（示例）','phpo-redis-8（示例）','phpo-nginx-1.25（示例）'],
+  image:     ['php:8.4-fpm（示例）','php:8.2-fpm（示例）','mysql:5.7（示例）','postgres:17（示例）','redis:8（示例）','nginx:1.25（示例）'],
+  volume:    ['phpo-mysql-data（示例）','phpo-pgsql-data（示例）','phpo-redis-data（示例）','phpo-nginx-conf（示例）'],
+  network:   ['phpo-network（示例）'],
+  compose:   ['phpo（示例）'],
+  swarm:     ['phpo-stack（示例）']
+};
+
+
+/* ============================================================================
+ * 🟡【仿真】Docker 资源清单（分组 + 子项）
+ *
+ * 说明：
+ *   这些是假数据！仅用于原型演示 UI 效果。
+ *
+ *   - count 字段：假数量（真实应由后端返回）
+ *   - size 字段：假占用（真实应由后端返回）
+ *   - status 字段：假状态（真实应由后端返回）
+ *   - isPhpo 字段：**这个字段是真实的业务标记**，不是仿真！
+ *                  它告诉前端每一项是不是 phpo 相关资源
+ *
+ * 真实数据来源：
+ *   🟢【真实】GET /api/docker/other/summary
+ *   后端需要返回所有分组 + 每项的真实数量、占用、状态、isPhpo 标记。
+ *
+ * 接后端时：
+ *   1. 后端实现 /api/docker/other/summary
+ *   2. 前端 loadSummary() 会自动覆盖这份数据
+ *   3. 覆盖后顶部徽章「示例数据」会自动隐藏
+ *
+ * ⚠️ 生产环境必须删除此常量，或改成从 API 加载。
+ * ============================================================================
+ */
+const SAMPLE_GROUPS = [
+  {
+    key: 'container', label: '容器', icon: '📦',
+    items: [
+      { key: 'container.all',        label: '所有容器',                    desc: '运行中、已停止、暂停、创建、重启、Dead、Compose、孤立容器（示例）', risk: 'high',   count: 12, size: '1.2 GB', status: '12 个', isPhpo: true },
+      { key: 'container.running',    label: '运行中容器',                  desc: '先停止再删除，会影响正在运行的业务（示例）',                       risk: 'high',   count: 6,  size: '860 MB', status: '6 个',  isPhpo: true },
+      { key: 'container.stopped',    label: '已停止容器',                  desc: '退出、创建、Dead 状态的容器（示例）',                             risk: 'low',    count: 4,  size: '260 MB', status: '4 个',  isPhpo: true },
+      { key: 'container.paused',     label: '已暂停容器',                  desc: '暂停状态的容器（示例）',                                           risk: 'medium', count: 1,  size: '60 MB',  status: '1 个',  isPhpo: true },
+      { key: 'container.orphan',     label: '孤立容器',                    desc: '无 Compose / Swarm 服务归属的容器（示例）',                        risk: 'low',    count: 1,  size: '40 MB',  status: '1 个',  isPhpo: true },
+      { key: 'container.checkpoint', label: '容器检查点',                  desc: 'checkpoint 实验特性数据（示例）',                                 risk: 'medium', count: 0,  size: '0 B',    status: '无',    isPhpo: true },
+      { key: 'container.layer',      label: '容器可写层',                  desc: '容器运行时写入的 overlay2 可写层数据（示例）',                     risk: 'high',   count: 12, size: '320 MB', status: '12 个', isPhpo: true },
+      { key: 'container.meta',       label: '容器元数据 / exec / mount',   desc: '容器配置、状态、exec 会话、挂载点（示例）',                        risk: 'high',   count: 12, size: '2 MB',   status: '12 个', isPhpo: true },
+      { key: 'container.cgroup',     label: 'cgroup / namespace / socket', desc: 'cgroup、命名空间、socket、pid、锁文件残留（示例）',               risk: 'high',   count: 12, size: '1 MB',   status: '12 个', isPhpo: true },
+    ]
+  },
+  {
+    key: 'image', label: '镜像', icon: '💿',
+    items: [
+      { key: 'image.all',       label: '所有镜像',                  desc: '含被引用镜像、多标签镜像、中间层（示例）',        risk: 'high',   count: 18, size: '4.6 GB', status: '18 个', isPhpo: true },
+      { key: 'image.dangling',  label: '悬空镜像',                  desc: '无标签的中间镜像（示例）',                        risk: 'low',    count: 3,  size: '420 MB', status: '3 个',  isPhpo: true },
+      { key: 'image.unused',    label: '未使用镜像',                desc: '无容器引用的镜像（示例）',                        risk: 'medium', count: 5,  size: '1.8 GB', status: '5 个',  isPhpo: true },
+      { key: 'image.layer',     label: '镜像层 / blob / manifest',  desc: '底层内容、构建历史层、manifest 列表（示例）',     risk: 'high',   count: 42, size: '4.5 GB', status: '42 个', isPhpo: true },
+      { key: 'image.meta',      label: '镜像元数据',                desc: 'repositories / index / 元数据（示例）',           risk: 'high',   count: 18, size: '3 MB',   status: '18 个', isPhpo: true },
+      { key: 'image.sign',      label: '签名 / attestation / SBOM',  desc: '镜像签名、证明、SBOM 数据（示例）',               risk: 'medium', count: 0,  size: '0 B',    status: '无',    isPhpo: true },
+      { key: 'image.multiarch', label: '多平台镜像缓存',            desc: '多架构镜像的本地缓存（示例）',                    risk: 'medium', count: 2,  size: '240 MB', status: '2 个',  isPhpo: true },
+    ]
+  },
+  {
+    key: 'volume', label: '卷', icon: '💾',
+    items: [
+      { key: 'volume.all',    label: '所有卷',              desc: '匿名卷、命名卷、被容器占用的卷（示例）', risk: 'high',   count: 6, size: '820 MB', status: '6 个', isPhpo: true },
+      { key: 'volume.unused', label: '未使用卷',            desc: '无容器引用的卷（示例）',                  risk: 'medium', count: 2, size: '180 MB', status: '2 个', isPhpo: true },
+      { key: 'volume.data',   label: '卷数据 / 元数据',     desc: '卷的实际数据与元数据（示例）',            risk: 'high',   count: 6, size: '820 MB', status: '6 个', isPhpo: true },
+      { key: 'volume.driver', label: '卷驱动插件数据',      desc: '第三方卷驱动的持久化数据（示例）',        risk: 'high',   count: 0, size: '0 B',    status: '无',   isPhpo: true },
+      { key: 'volume.bind',   label: '绑定挂载残留',        desc: 'bind mount 的 mountpoint 目录残留（示例）', risk: 'high', count: 0, size: '0 B',    status: '无',   isPhpo: true },
+    ]
+  },
+  {
+    key: 'network', label: '网络', icon: '🌐',
+    items: [
+      { key: 'network.all',      label: '所有网络',                      desc: '自定义 bridge、overlay、macvlan、ipvlan（示例）', risk: 'high',   count: 5, size: '—', status: '5 个', isPhpo: true },
+      { key: 'network.unused',   label: '未使用网络',                    desc: '无容器连接的网络（示例）',                          risk: 'medium', count: 2, size: '—', status: '2 个', isPhpo: true },
+      { key: 'network.bridge',   label: 'docker0 / br-* 网桥',           desc: 'Docker 默认网桥与用户自定义网桥（示例）',           risk: 'high',   count: 3, size: '—', status: '3 个', isPhpo: true },
+      { key: 'network.veth',     label: 'veth 配对设备',                 desc: '容器网络命名空间的主机侧 veth 设备（示例）',        risk: 'high',   count: 12, size: '—', status: '12 个', isPhpo: true },
+      { key: 'network.netns',    label: '网络命名空间 /var/run/netns/',  desc: '容器网络命名空间残留（示例）',                      risk: 'high',   count: 0, size: '—', status: '无',   isPhpo: true },
+      { key: 'network.iptables', label: 'iptables / nftables 规则',      desc: 'DOCKER / DOCKER-USER 链、NAT 规则（示例）',       risk: 'high',   count: 24, size: '—', status: '24 条', isPhpo: true },
+      { key: 'network.cni',      label: 'CNI 网络配置残留',              desc: '/var/lib/cni/ 下的网络配置（示例）',                risk: 'medium', count: 0, size: '—', status: '无',   isPhpo: true },
+    ]
+  },
+  {
+    key: 'build', label: '构建缓存', icon: '🔨',
+    items: [
+      { key: 'build.cache',    label: '构建缓存',              desc: '传统 docker builder 缓存（示例）',              risk: 'low',    count: 8, size: '620 MB', status: '8 条', isPhpo: false },
+      { key: 'build.buildkit', label: 'BuildKit 缓存',         desc: 'BuildKit 缓存、辅助镜像、前端镜像（示例）',      risk: 'low',    count: 14, size: '1.2 GB', status: '14 条', isPhpo: false },
+      { key: 'build.buildx',   label: 'Buildx 构建器',         desc: 'Buildx 构建器实例与状态（示例）',               risk: 'medium', count: 1, size: '—', status: '1 个', isPhpo: false },
+      { key: 'build.context',  label: '构建上下文 / 缓存挂载',  desc: '构建上下文与 cache mount 数据（示例）',          risk: 'medium', count: 0, size: '0 B', status: '无', isPhpo: false },
+    ]
+  },
+  {
+    key: 'log', label: '日志', icon: '📄',
+    items: [
+      { key: 'log.container', label: '容器日志',              desc: 'stdout / stderr / json-file 日志（示例）',       risk: 'low',    count: 12, size: '180 MB', status: '12 个', isPhpo: false },
+      { key: 'log.daemon',    label: 'Docker daemon 日志',    desc: '/var/log/docker.log、containerd 日志（示例）',  risk: 'medium', count: 2, size: '42 MB',  status: '2 个',  isPhpo: false },
+      { key: 'log.journald',  label: 'journald Docker 日志',  desc: 'journald 中 Docker 相关日志（示例）',            risk: 'medium', count: 1, size: '88 MB',  status: '1 个',  isPhpo: false },
+      { key: 'log.rotate',    label: '日志轮转文件',          desc: '*-json.log.* 轮转残留（示例）',                  risk: 'low',    count: 6, size: '60 MB',  status: '6 个',  isPhpo: false },
+      { key: 'log.build',     label: '构建 / 插件 / 事件日志',  desc: '构建日志、插件日志、事件日志（示例）',            risk: 'low',    count: 3, size: '12 MB',  status: '3 个',  isPhpo: false },
+    ]
+  },
+  {
+    key: 'plugin', label: '插件', icon: '🔌',
+    items: [
+      { key: 'plugin.all',    label: '所有插件',            desc: '卷、网络、授权、日志、设备插件（示例）', risk: 'high', count: 2, size: '180 MB', status: '2 个', isPhpo: false },
+      { key: 'plugin.config', label: '插件配置',            desc: '/var/lib/docker/plugins/plugins.json（示例）', risk: 'high', count: 1, size: '2 KB', status: '1 个', isPhpo: false },
+      { key: 'plugin.data',   label: '插件 rootfs / 数据',  desc: '插件运行时的 rootfs 与持久化数据（示例）',  risk: 'high', count: 2, size: '180 MB', status: '2 个', isPhpo: false },
+    ]
+  },
+  {
+    key: 'swarm', label: 'Swarm', icon: '🐝',
+    items: [
+      { key: 'swarm.service', label: '服务 / 任务',            desc: 'Swarm 服务与任务（示例）',                risk: 'high', count: 0, size: '—', status: '无', isPhpo: true },
+      { key: 'swarm.config',  label: '配置 / 密钥',            desc: 'configs / secrets（示例）',               risk: 'high', count: 0, size: '—', status: '无', isPhpo: true },
+      { key: 'swarm.node',    label: '节点 / 集群状态',        desc: '节点信息与集群状态（示例）',               risk: 'high', count: 0, size: '—', status: '无', isPhpo: true },
+      { key: 'swarm.stack',   label: '栈 / overlay / ingress', desc: '栈、overlay 网络、ingress 网络（示例）',   risk: 'high', count: 0, size: '—', status: '无', isPhpo: true },
+      { key: 'swarm.volume',  label: 'Swarm 卷',               desc: 'Swarm 服务使用的卷（示例）',               risk: 'high', count: 0, size: '—', status: '无', isPhpo: true },
+      { key: 'swarm.leave',   label: '离开 Swarm 集群',        desc: 'docker swarm leave --force（示例）',       risk: 'high', count: 0, size: '—', status: '无', isPhpo: true },
+    ]
+  },
+  {
+    key: 'compose', label: 'Compose', icon: '🧩',
+    items: [
+      { key: 'compose.project', label: 'Compose 项目',     desc: '项目容器、网络、卷、镜像、孤儿资源（示例）',  risk: 'high',   count: 1, size: '—', status: '1 个', isPhpo: true },
+      { key: 'compose.config',  label: 'Compose 配置缓存',  desc: 'Compose 配置与缓存（示例）',                 risk: 'medium', count: 1, size: '120 KB', status: '1 个', isPhpo: true },
+    ]
+  },
+  {
+    key: 'system', label: '系统 / 运行时', icon: '⚙️',
+    items: [
+      { key: 'system.containerd', label: 'containerd 内容 / 快照 / 任务',     desc: 'containerd 底层数据（示例）',                            risk: 'high',     count: 24, size: '2.8 GB', status: '24 个', isPhpo: false },
+      { key: 'system.tmp',        label: 'Docker 临时文件 / overlay2 死目录', desc: '/var/lib/docker/tmp、overlay2 死目录（示例）',        risk: 'high',     count: 4,  size: '120 MB', status: '4 个',  isPhpo: false },
+      { key: 'system.builder',    label: 'builder / buildkit / runtimes',    desc: '/var/lib/docker 下的 builder、buildkit（示例）',       risk: 'high',     count: 2,  size: '420 MB', status: '2 个',  isPhpo: false },
+      { key: 'system.trust',      label: 'trust / swarm 数据',               desc: '/var/lib/docker/trust、swarm（示例）',                risk: 'high',     count: 0,  size: '0 B',    status: '无',    isPhpo: false },
+      { key: 'system.config',     label: 'systemd 服务 / /etc/docker/',      desc: 'docker.service、daemon.json、证书（示例）',            risk: 'high',     count: 2,  size: '18 KB',  status: '2 个',  isPhpo: false },
+      { key: 'system.user',       label: '~/.docker/ 用户配置',              desc: '上下文、凭证、CLI 插件、配置（示例）',                    risk: 'medium',   count: 4,  size: '24 KB',  status: '4 个',  isPhpo: false },
+      { key: 'system.group',      label: 'Docker 用户组 / 残留文件',         desc: 'docker 用户组、socket、pid、锁文件（示例）',              risk: 'high',     count: 3,  size: '4 KB',   status: '3 个',  isPhpo: false },
+      { key: 'system.root',       label: 'Docker 数据根重置',                desc: '删除 /var/lib/docker 和 /var/lib/containerd（示例）',   risk: 'critical', count: 1,  size: '12 GB',  status: '1 个',  isPhpo: false },
+    ]
+  },
+  {
+    key: 'other', label: '其他', icon: '📁',
+    items: [
+      { key: 'other.events',  label: 'Docker 事件数据 / 检查点',      desc: '事件与检查点数据（示例）',              risk: 'low',    count: 1, size: '8 MB',  status: '1 个', isPhpo: false },
+      { key: 'other.scout',   label: 'Docker Scout 数据',             desc: '镜像扫描与 Scout 缓存（示例）',         risk: 'low',    count: 1, size: '24 MB', status: '1 个', isPhpo: false },
+      { key: 'other.desktop', label: 'Docker Desktop / Model Runner', desc: 'Desktop 数据、Model Runner（示例）',    risk: 'medium', count: 0, size: '0 B',   status: '无',   isPhpo: false },
+      { key: 'other.cache',   label: 'system df / 版本 / 信息缓存',    desc: '缓存信息与版本元数据（示例）',          risk: 'low',    count: 3, size: '2 MB',  status: '3 个', isPhpo: false },
+    ]
+  }
+];
+
+
+/* ============================================================================
+ * 🟢【真实】fetch 封装
+ *
+ * 说明：
+ *   这个函数是真实调用后端的，不是仿真。
+ *   - 15 秒超时
+ *   - 自动解析 JSON
+ *   - 非 2xx 会抛错，错误信息会透传到 UI
+ *
+ * 生产环境要求：
+ *   - 所有接口必须校验登录态
+ *   - 所有接口必须校验权限
+ *   - 危险操作接口必须校验 previewToken（防重放）
+ * ============================================================================
+ */
+async function api(path, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(API_BASE + path, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      signal: controller.signal,
+      credentials: 'same-origin'
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const b = await res.json(); if (b.message) msg = b.message; } catch (_) {}
+      throw new Error(msg);
+    }
+    return await res.json();
+  } catch (e) {
+    clearTimeout(timeout);
+    if (e.name === 'AbortError') throw new Error('请求超时（15s）');
+    throw e;
+  }
+}
+
+
+/* ============================================================================
+ * 🟢【真实】SVG 图标（纯前端，无需后端）
+ * ============================================================================
+ */
+const ICONS = {
+  preview: '<svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  clean:   '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  terminal:'<svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+  export:  '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'
+};
+
+
+/* ============================================================================
+ * 🟢【真实】全局状态（前端状态管理，无需后端）
+ *
+ * 字段说明：
+ *   groups               → 当前显示的 Docker 资源清单（可能来自仿真，也可能来自真实 API）
+ *   phpoResources        → 当前显示的 phpo 相关资源（可能来自仿真，也可能来自真实 API）
+ *   phpoResourcesLoading → phpo 资源是否正在加载（UI loading 用）
+ *   scopeMode            → 'keep' 保留模式 / 'remove' 清理模式
+ *   selectedOther        → 已勾选的 key 列表
+ *   unlockedPhpoKeys     → 保留模式下用户手动解锁的 phpo 项 key
+ *   bannerDetailOpen     → 状态条详情是否展开
+ *   panelCollapsed       → 整个面板是否折叠
+ *   collapsedGroups      → 每个分组是否折叠
+ *   currentPreviewToken  → 🔴【实接】预览时后端返回的一次性 token，
+ *                          提交清理任务时必须回传，防止重放攻击
+ *   usingSampleData      → 当前是否在用仿真数据（用于显示徽章）
+ * ============================================================================
+ */
+let state = {
+  groups: [],
+  phpoResources: null,
+  phpoResourcesLoading: false,
+  scopeMode: 'keep',
+  selectedOther: [],
+  unlockedPhpoKeys: new Set(),
+  bannerDetailOpen: false,
+  panelCollapsed: true,
+  collapsedGroups: {},
+  currentPreviewToken: null,
+  usingSampleData: true
+};
+
+/* 待解锁场景：'具体key' / 'ALL' / 'GROUP:xxx' */
+let pendingUnlockKey = null;
+
+
+/* ============================================================================
+ * 🟢【真实】错误框显示/清除（纯前端 UI）
+ * ============================================================================
+ */
+function showError(msg, detail) {
+  const box = document.getElementById('errorBox');
+  box.style.display = 'block';
+  box.className = 'error-box';
+  box.innerHTML = `<strong>⚠️ 请求失败</strong>${msg}${detail ? `<br><code>${detail}</code>` : ''}`;
+}
+function clearError() {
+  const box = document.getElementById('errorBox');
+  box.style.display = 'none';
+  box.innerHTML = '';
+}
+
+
+/* ============================================================================
+ * 🟢【真实】工具：找出所有 phpo / 非 phpo 项的 key
+ *
+ * 说明：
+ *   依据 item.isPhpo 字段判断。这个字段是业务标记，不是仿真数据。
+ *   真实 API 返回的每项也必须带这个字段。
+ * ============================================================================
+ */
+function getPhpoKeys() {
+  const keys = [];
+  state.groups.forEach(group => {
+    (group.items || []).forEach(item => {
+      if (item.isPhpo === true) keys.push(item.key);
+    });
+  });
+  return keys;
+}
+function getNonPhpoKeys() {
+  const keys = [];
+  state.groups.forEach(group => {
+    (group.items || []).forEach(item => {
+      if (item.isPhpo !== true) keys.push(item.key);
+    });
+  });
+  return keys;
+}
+function getGroupPhpoKeys(groupKey) {
+  const group = findGroup(groupKey);
+  if (!group) return [];
+  return (group.items || []).filter(i => i.isPhpo === true).map(i => i.key);
+}
+function getGroupAllKeys(groupKey) {
+  const group = findGroup(groupKey);
+  if (!group) return [];
+  return (group.items || []).map(i => i.key);
+}
+function getAllKeys() { return state.groups.flatMap(g => (g.items || []).map(i => i.key)); }
+
+
+/* ============================================================================
+ * 🟢【真实】应用模式到勾选状态（纯前端逻辑）
+ *
+ * 保留模式：
+ *   非 phpo 项 → 全部勾选
+ *   phpo 项 → 不勾选（除非在 unlockedPhpoKeys 里）
+ *
+ * 清理模式：
+ *   全部项 → 全部勾选
+ * ============================================================================
+ */
+function applyScopeToSelection(mode) {
+  if (mode === 'keep') {
+    const nonPhpo = getNonPhpoKeys();
+    const unlocked = Array.from(state.unlockedPhpoKeys);
+    state.selectedOther = [...nonPhpo, ...unlocked];
+  } else if (mode === 'remove') {
+    state.selectedOther = [...getAllKeys()];
+  }
+  updateSelectedCount();
+}
+
+
+/* ============================================================================
+ * 🟡【仿真】加载仿真数据
+ *
+ * 说明：
+ *   页面初始加载时调用，让 UI 能先渲染。
+ *   后端接上后，这份数据会被真实 API 覆盖。
+ *
+ * ⚠️ 生产环境应在接上真实 API 后，删除此函数及所有调用点。
+ * ============================================================================
+ */
+function loadSampleData() {
+  state.groups = JSON.parse(JSON.stringify(SAMPLE_GROUPS));
+  state.phpoResources = JSON.parse(JSON.stringify(SAMPLE_PHPO_RESOURCES));
+  state.usingSampleData = true;
+  state.groups.forEach(g => {
+    if (state.collapsedGroups[g.key] === undefined) state.collapsedGroups[g.key] = true;
+  });
+  renderOtherPanel();
+  applyScopeToSelection(state.scopeMode);
+  updateBannerMain();
+  updateSampleBadge();
+}
+
+
+/* ============================================================================
+ * 🟢【真实】更新「示例数据」徽章（纯前端 UI）
+ *
+ * 说明：
+ *   当 usingSampleData = true  → 显示「示例数据（非真实）」
+ *   当 usingSampleData = false → 隐藏徽章
+ * ============================================================================
+ */
+function updateSampleBadge() {
+  const badge = document.getElementById('sampleBadge');
+  if (state.usingSampleData) {
+    badge.style.display = '';
+    badge.textContent = '示例数据（非真实）';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+
+/* ============================================================================
+ * 🔵【实时】从后端加载 Docker 资源清单
+ *
+ * 接口：
+ *   GET /api/docker/other/summary
+ *
+ * 说明：
+ *   - 这是真实接口，后端必须实现
+ *   - 返回后覆盖 state.groups
+ *   - 覆盖后 usingSampleData = false，徽章消失
+ *   - 后端未实现时 → 保留仿真数据 + 显示错误提示
+ *
+ * 期望返回格式：
+ *   {
+ *     "groups": [
+ *       {
+ *         "key": "container",          // 分组唯一标识
+ *         "label": "容器",             // 分组显示名
+ *         "icon": "📦",                // 分组图标
+ *         "items": [
+ *           {
+ *             "key": "container.all",  // 项唯一标识
+ *             "label": "所有容器",      // 项显示名
+ *             "desc": "说明文字",
+ *             "risk": "high",          // low/medium/high/critical
+ *             "count": 12,             // 🟢 真实数量
+ *             "size": "1.2 GB",        // 🟢 真实占用
+ *             "status": "12 个",       // 🟢 真实状态
+ *             "isPhpo": true           // 🟢 真实业务标记
+ *           }
+ *         ]
+ *       }
+ *     ]
+ *   }
+ * ============================================================================
+ */
+async function loadSummary() {
+  clearError();
+  try {
+    const data = await api('/api/docker/other/summary');
+    if (data && Array.isArray(data.groups) && data.groups.length > 0) {
+      state.groups = data.groups;
+      state.usingSampleData = false;
+      state.groups.forEach(g => {
+        if (state.collapsedGroups[g.key] === undefined) state.collapsedGroups[g.key] = true;
+      });
+      renderOtherPanel();
+      applyScopeToSelection(state.scopeMode);
+      updateSampleBadge();
+    }
+  } catch (e) {
+    // 🟡 后端未实现 → 保留仿真数据 + 显示错误提示
+    showError('无法加载真实 Docker 资源清单，当前显示示例数据（演示用）', e.message);
+  }
+}
+
+
+/* ============================================================================
+ * 🔵【实时】从后端检索 phpo 相关资源
+ *
+ * 接口：
+ *   GET /api/docker/phpo-resources
+ *
+ * 说明：
+ *   - 这是真实接口，后端必须实时检索 Docker
+ *   - 后端需要判断哪些容器/镜像/卷/网络属于 phpo 服务
+ *
+ * 期望返回格式：
+ *   {
+ *     "container": ["phpo-php-8.4", "phpo-php-8.2", ...],
+ *     "image":     ["php:8.4-fpm", "mysql:5.7", ...],
+ *     "volume":    ["phpo-mysql-data", ...],
+ *     "network":   ["phpo-network"],
+ *     "compose":   ["phpo"],
+ *     "swarm":     ["phpo-stack"]
+ *   }
+ * ============================================================================
+ */
+async function loadPhpoResources(showToastWhenDone = false) {
+  state.phpoResourcesLoading = true;
+  updateBannerMain();
+  if (state.bannerDetailOpen) renderBannerDetail();
+
+  try {
+    const data = await api('/api/docker/phpo-resources');
+    if (data && typeof data === 'object') {
+      state.phpoResources = data;
+      state.usingSampleData = false;
+      updateSampleBadge();
+    }
+    if (showToastWhenDone) showToast('已重新检索 phpo 相关资源', 'ok');
+  } catch (e) {
+    if (showToastWhenDone) showToast('检索失败：' + e.message, 'err');
+    showError('无法检索 phpo 相关资源，当前显示示例数据（演示用）', e.message);
+  } finally {
+    state.phpoResourcesLoading = false;
+    updateBannerMain();
+    if (state.bannerDetailOpen) renderBannerDetail();
+  }
+}
+
+
+/* ============================================================================
+ * 🔵【实时】刷新全部（用户点“↻ 刷新”或清理任务完成后调用）
+ * ============================================================================
+ */
+async function reloadAll() {
+  clearError();
+  await Promise.all([loadSummary(), loadPhpoResources(false)]);
+}
+
+
+/* ============================================================================
+ * 🟢【真实】面板 / 分组折叠（纯前端 UI）
+ * ============================================================================
+ */
+function togglePanelCollapse() {
+  state.panelCollapsed = !state.panelCollapsed;
+  document.getElementById('panelBody').classList.toggle('collapsed', state.panelCollapsed);
+  document.getElementById('otherHead').classList.toggle('collapsed', state.panelCollapsed);
+  document.getElementById('panelArrow').classList.toggle('collapsed', state.panelCollapsed);
+}
+
+function toggleGroupCollapse(groupKey, e) {
+  if (e) e.stopPropagation();
+  state.collapsedGroups[groupKey] = !state.collapsedGroups[groupKey];
+  applyGroupCollapse();
+}
+
+function applyGroupCollapse() {
+  state.groups.forEach(group => {
+    const isCollapsed = !!state.collapsedGroups[group.key];
+    const row = document.querySelector(`.group-row[data-group="${group.key}"]`);
+    if (row) row.classList.toggle('collapsed', isCollapsed);
+    const items = document.querySelectorAll(`#otherTableBody tr.item-row[data-group="${group.key}"]`);
+    items.forEach((tr, idx) => {
+      tr.classList.toggle('hidden-by-group', isCollapsed);
+      tr.classList.toggle('last-child', idx === items.length - 1);
+    });
+  });
+}
+
+
+/* ============================================================================
+ * 🟢【真实】切换清理模式（纯前端交互）
+ *
+ * 保留模式：
+ *   清空 unlockedPhpoKeys → 所有 phpo 项回归锁定态
+ *   非 phpo 项全部勾选
+ *
+ * 清理模式：
+ *   全部项全部勾选
+ * ============================================================================
+ */
+function setScopeMode(mode) {
+  state.scopeMode = mode;
+  if (mode === 'keep') {
+    state.unlockedPhpoKeys.clear();
+  }
+  document.getElementById('cardKeep').classList.toggle('active', mode === 'keep');
+  document.getElementById('cardRemove').classList.toggle('active', mode === 'remove');
+  renderOtherPanel();
+  applyScopeToSelection(mode);
+  updateBannerMain();
+}
+
+
+/* ============================================================================
+ * 🟢【真实】状态提示条
+ *
+ * 保留模式 → 蓝色条
+ * 清理模式 → 红色条
+ *
+ * 数字统计（nonPhpoCount / phpoCount / unlockedCount）
+ * 都是从当前 state 里实时算的，不是仿真数据。
+ * ============================================================================
+ */
+function updateBannerMain() {
+  const banner = document.getElementById('statusBanner');
+  const icon = document.getElementById('bannerIcon');
+  const title = document.getElementById('bannerTitle');
+  const summary = document.getElementById('bannerSummary');
+
+  const isKeep = state.scopeMode === 'keep';
+  banner.className = 'status-banner ' + (isKeep ? 'keep' : 'remove');
+  icon.textContent = isKeep ? '🔒' : '🔓';
+  title.textContent = isKeep ? '保留模式' : '清理模式';
+
+  if (state.phpoResourcesLoading) {
+    summary.innerHTML = `<span class="loading-text">正在检索 phpo 相关资源…</span>`;
+    return;
+  }
+
+  if (isKeep) {
+    const nonPhpoCount = getNonPhpoKeys().length;
+    const phpoCount = getPhpoKeys().length;
+    const unlockedCount = state.unlockedPhpoKeys.size;
+    let text = `phpo 相关项（${phpoCount} 项）默认灰色不可选，其他项（${nonPhpoCount} 项）默认全部选中`;
+    if (unlockedCount > 0) text += ` · 已手动解锁 ${unlockedCount} 个 phpo 项`;
+    summary.textContent = text;
+  } else {
+    const total = getAllKeys().length;
+    const phpoCount = getPhpoKeys().length;
+    summary.textContent = `全部勾选（含 phpo 相关项 ${phpoCount} 项），共 ${total} 项将被清理`;
+  }
+}
+
+function toggleBannerDetail() {
+  state.bannerDetailOpen = !state.bannerDetailOpen;
+  document.getElementById('bannerDetail').classList.toggle('open', state.bannerDetailOpen);
+  document.getElementById('detailToggleBtn').textContent = state.bannerDetailOpen ? '收起 ▴' : '查看详情 ▾';
+  if (state.bannerDetailOpen) renderBannerDetail();
+}
+
+/*
+ * 🔵【实时】渲染状态条详情
+ *   显示 phpo 资源的具体列表 —— 这些数据来自 /api/docker/phpo-resources
+ */
+function renderBannerDetail() {
+  const body = document.getElementById('bannerDetailBody');
+  if (state.phpoResourcesLoading) { body.innerHTML = '<div class="loading-text">正在检索…</div>'; return; }
+  if (!state.phpoResources) { body.innerHTML = '<div class="loading-text">未检索到结果</div>'; return; }
+  let html = '';
+  Object.keys(state.phpoResources).forEach(k => {
+    const list = state.phpoResources[k] || [];
+    if (list.length === 0) return;
+    html += `<div class="detail-cat">
+      <div class="cat-head"><span>${k}</span><span class="count">${list.length}</span></div>
+      <div class="cat-items">${list.map(i => `<span class="tag">${i}</span>`).join('')}</div>
+    </div>`;
+  });
+  if (!html) html = '<div class="loading-text">未检索到 phpo 相关资源</div>';
+  body.innerHTML = html;
+}
+
+
+/* ============================================================================
+ * 🟢【真实】查找工具（纯前端）
+ * ============================================================================
+ */
+function findItem(itemKey) {
+  for (const g of state.groups) {
+    const it = (g.items || []).find(i => i.key === itemKey);
+    if (it) return it;
+  }
+  return null;
+}
+function findGroup(groupKey) { return state.groups.find(g => g.key === groupKey); }
+
+
+/* ============================================================================
+ * 🟢【真实】渲染主表（纯前端，用当前 state.groups 渲染）
+ *
+ * 注意：
+ *   如果 state.groups 来自仿真数据 → 表格显示仿真数据
+ *   如果来自真实 API → 表格显示真实数据
+ *   前端渲染逻辑不变
+ * ============================================================================
+ */
+function renderOtherPanel() {
+  const tbody = document.getElementById('otherTableBody');
+  if (!state.groups || state.groups.length === 0) {
+    tbody.innerHTML = '<tr class="loading-row"><td colspan="7">暂无数据</td></tr>';
+    return;
+  }
+
+  let html = '';
+  state.groups.forEach(group => {
+    const groupIcon = group.icon || '📁';
+    const total = (group.items || []).length;
+
+    html += `<tr class="group-row collapsed" data-group="${group.key}">
+      <td onclick="event.stopPropagation();">
+        <input type="checkbox" onclick="onGroupClick('${group.key}', event)">
+      </td>
+      <td colspan="6" onclick="toggleGroupCollapse('${group.key}', event)">
+        <div class="group-toggle">
+          <span class="group-arrow">▾</span>
+          <span class="group-icon">${groupIcon}</span>
+          <span>${group.label}</span>
+          <span class="group-count" data-group-count="${group.key}">0/${total}</span>
+        </div>
+      </td>
+    </tr>`;
+
+    (group.items || []).forEach((item, idx) => {
+      const isLast = idx === total - 1;
+      const riskLabel = { low: '安全', medium: '注意', high: '危险', critical: '极高' }[item.risk] || '注意';
+      const riskClass = { low: 'pill-ok', medium: 'pill-warn', high: 'pill-danger', critical: 'pill-danger' }[item.risk] || 'pill-warn';
+
+      const isLocked = state.scopeMode === 'keep'
+                    && item.isPhpo === true
+                    && !state.unlockedPhpoKeys.has(item.key);
+      const lockedClass = isLocked ? 'locked-phpo' : '';
+
+      html += `<tr class="item-row hidden-by-group ${isLast ? 'last-child' : ''} ${lockedClass}"
+                   data-key="${item.key}" data-group="${group.key}">
+        <td><input type="checkbox" value="${item.key}" onclick="onItemClick('${item.key}', event)"></td>
+        <td>${item.label}</td>
+        <td style="color:var(--text-mute);font-size:12px;">${item.desc || ''}</td>
+        <td class="mono" style="font-size:11.5px;color:var(--text-mute);">
+          ${item.count != null ? item.count : '—'} / ${item.size != null ? item.size : '—'}
+        </td>
+        <td><span class="status-pill ${riskClass}"><span class="pill-dot"></span>${riskLabel}</span></td>
+        <td>
+          <span class="locked-badge">🔒 已锁定</span>
+          ${!isLocked && item.status ? `<span class="mono" style="font-size:11px;color:var(--text-mute);">${item.status}</span>` : ''}
+        </td>
+        <td>
+          <div class="row-actions">
+            <button class="icon-btn" data-tip="预览" onclick="previewItem('${item.key}')">${ICONS.preview}</button>
+            <button class="icon-btn danger" data-tip="彻底清空" onclick="cleanItem('${item.key}')">${ICONS.clean}</button>
+            <button class="icon-btn" data-tip="终端" onclick="openTerminalItem('${item.key}')">${ICONS.terminal}</button>
+            <button class="icon-btn tip-right" data-tip="导出" onclick="exportItem('${item.key}')">${ICONS.export}</button>
+          </div>
+        </td>
+      </tr>`;
+    });
+  });
+
+  tbody.innerHTML = html;
+  applyGroupCollapse();
+  updateGroupCounts();
+  syncCheckboxes();
+}
+
+function updateGroupCounts() {
+  state.groups.forEach(group => {
+    const total = (group.items || []).length;
+    const selected = (group.items || []).filter(i => state.selectedOther.includes(i.key)).length;
+    const el = document.querySelector(`.group-count[data-group-count="${group.key}"]`);
+    if (el) {
+      el.textContent = `${selected}/${total}`;
+      el.classList.toggle('selected', selected > 0);
+    }
+  });
+}
+
+function syncCheckboxes() {
+  document.querySelectorAll('#otherTableBody tr.item-row').forEach(tr => {
+    const cb = tr.querySelector('input[type=checkbox]');
+    if (cb) cb.checked = state.selectedOther.includes(tr.dataset.key);
+  });
+  state.groups.forEach(group => {
+    const keys = (group.items || []).map(i => i.key);
+    const checkedCount = keys.filter(k => state.selectedOther.includes(k)).length;
+    const groupCb = document.querySelector(`.group-row[data-group="${group.key}"] input[type=checkbox]`);
+    if (groupCb) {
+      groupCb.checked = keys.length > 0 && checkedCount === keys.length;
+      groupCb.indeterminate = checkedCount > 0 && checkedCount < keys.length;
+    }
+  });
+  const all = getAllKeys();
+  const allCb = document.getElementById('selectAllCheckbox');
+  allCb.checked = state.selectedOther.length === all.length && all.length > 0;
+  allCb.indeterminate = state.selectedOther.length > 0 && state.selectedOther.length < all.length;
+  updateGroupCounts();
+}
+
+
+/* ============================================================================
+ * 🟢【真实】用户点单项复选框
+ *
+ * 逻辑：
+ *   保留模式 + phpo 项 + 未解锁 → 弹框（不直接勾选）
+ *   其他情况 → 正常勾选/取消
+ * ============================================================================
+ */
+function onItemClick(key, event) {
+  const item = findItem(key);
+  if (!item) return;
+
+  if (state.scopeMode === 'keep'
+      && item.isPhpo === true
+      && !state.unlockedPhpoKeys.has(key)) {
+    event.preventDefault();
+    event.target.checked = false;
+    openUnlockModal(key);
+    return;
+  }
+
+  const cb = event.target;
+  if (cb.checked) {
+    if (!state.selectedOther.includes(key)) state.selectedOther.push(key);
+  } else {
+    state.selectedOther = state.selectedOther.filter(k => k !== key);
+  }
+  syncCheckboxes();
+  updateSelectedCount();
+}
+
+
+/* ============================================================================
+ * 🟢【真实】用户点分组复选框
+ *
+ * 逻辑和单项、全选完全一致：
+ *   清理模式 → 直接全选/取消该组
+ *   保留模式 + 取消 → 直接取消该组
+ *   保留模式 + 勾选 → 检查组内 phpo 项：
+ *                      都解锁了 → 直接勾选
+ *                      有未解锁的 → 弹框
+ * ============================================================================
+ */
+function onGroupClick(groupKey, event) {
+  const cb = event.target;
+  const groupAllKeys = getGroupAllKeys(groupKey);
+
+  if (state.scopeMode !== 'keep') {
+    if (cb.checked) {
+      groupAllKeys.forEach(k => {
+        if (!state.selectedOther.includes(k)) state.selectedOther.push(k);
+      });
+    } else {
+      state.selectedOther = state.selectedOther.filter(k => !groupAllKeys.includes(k));
+    }
+    syncCheckboxes();
+    updateSelectedCount();
+    return;
+  }
+
+  if (!cb.checked) {
+    state.selectedOther = state.selectedOther.filter(k => !groupAllKeys.includes(k));
+    syncCheckboxes();
+    updateSelectedCount();
+    return;
+  }
+
+  const groupPhpoKeys = getGroupPhpoKeys(groupKey);
+  const allGroupPhpoUnlocked = groupPhpoKeys.every(k => state.unlockedPhpoKeys.has(k));
+
+  if (allGroupPhpoUnlocked || groupPhpoKeys.length === 0) {
+    groupAllKeys.forEach(k => {
+      if (!state.selectedOther.includes(k)) state.selectedOther.push(k);
+    });
+    syncCheckboxes();
+    updateSelectedCount();
+    return;
+  }
+
+  cb.checked = false;
+  openUnlockModal('GROUP:' + groupKey);
+}
+
+
+/* ============================================================================
+ * 🟢【真实】用户点表头全选框
+ *
+ * 逻辑和单项、分组一致：
+ *   清理模式 → 正常全选/取消
+ *   保留模式 + 取消 → 直接清空
+ *   保留模式 + 全选 → 检查 phpo 项：
+ *                      都解锁了 → 直接全选
+ *                      有未解锁的 → 弹框
+ * ============================================================================
+ */
+function onSelectAllClick(event) {
+  const cb = event.target;
+
+  if (state.scopeMode !== 'keep') {
+    if (cb.checked) {
+      state.selectedOther = [...getAllKeys()];
+    } else {
+      state.selectedOther = [];
+    }
+    syncCheckboxes();
+    updateSelectedCount();
+    return;
+  }
+
+  if (!cb.checked) {
+    state.selectedOther = [];
+    syncCheckboxes();
+    updateSelectedCount();
+    return;
+  }
+
+  const phpoKeys = getPhpoKeys();
+  const allPhpoUnlocked = phpoKeys.every(k => state.unlockedPhpoKeys.has(k));
+
+  if (allPhpoUnlocked) {
+    state.selectedOther = [...getAllKeys()];
+    syncCheckboxes();
+    updateSelectedCount();
+    return;
+  }
+
+  cb.checked = false;
+  openUnlockModal('ALL');
+}
+
+
+/* ============================================================================
+ * 🟢【真实】打开解锁确认弹框（支持 3 种场景）
+ *
+ * keyOrAll:
+ *   '具体key'      → 单项解锁
+ *   'ALL'          → 全选解锁
+ *   'GROUP:xxx'    → 分组解锁
+ *
+ * 弹框里显示的信息（数量/占用）来自当前 state，可能来自仿真也可能来自真实 API。
+ * ============================================================================
+ */
+function openUnlockModal(keyOrAll) {
+  pendingUnlockKey = keyOrAll;
+
+  const titleEl = document.getElementById('unlockTitle');
+  const warnTitleEl = document.getElementById('unlockWarnTitle');
+  const warnTextEl = document.getElementById('unlockWarnText');
+  const infoEl = document.getElementById('unlockItemInfo');
+  const consentTextEl = document.getElementById('unlockConsentText');
+
+  if (keyOrAll === 'ALL') {
+    const phpoKeys = getPhpoKeys();
+    const unlockedCount = phpoKeys.filter(k => state.unlockedPhpoKeys.has(k)).length;
+    const lockedCount = phpoKeys.length - unlockedCount;
+
+    titleEl.textContent = '全选（含 phpo 相关项）';
+    warnTitleEl.textContent = '⚠️ 你正在全选，包含受保护的 phpo 相关项';
+    warnTextEl.textContent = '全选会勾选所有项，其中包括属于 phpo 服务的相关资源。这些资源被清理后可能导致 phpo 服务异常或数据丢失。';
+
+    infoEl.innerHTML = `
+      <div style="margin-bottom:4px;"><strong>全选所有项</strong></div>
+      <div style="color:var(--text-mute);font-size:11.5px;margin-bottom:6px;">
+        共 <strong>${getAllKeys().length}</strong> 项，其中 <strong style="color:var(--danger);">${phpoKeys.length}</strong> 项为 phpo 相关资源。
+      </div>
+      <div style="font-size:11.5px;color:var(--text-mute);">
+        当前未解锁的 phpo 项：<span style="color:var(--danger);">${lockedCount}</span> 项
+        （确认后这些都会一并被勾选并清理）
+      </div>
+    `;
+    consentTextEl.textContent = '我已知情并同意：全选后，包括所有 phpo 相关资源在内的全部项都会被勾选并可能被清理，可能导致 phpo 服务异常或数据丢失，我确认执行全选。';
+
+  } else if (keyOrAll.startsWith('GROUP:')) {
+    const groupKey = keyOrAll.substring(6);
+    const group = findGroup(groupKey);
+    if (!group) return;
+
+    const groupPhpoKeys = getGroupPhpoKeys(groupKey);
+    const unlockedCount = groupPhpoKeys.filter(k => state.unlockedPhpoKeys.has(k)).length;
+    const lockedCount = groupPhpoKeys.length - unlockedCount;
+    const groupAllKeys = getGroupAllKeys(groupKey);
+
+    titleEl.textContent = `勾选分组：${group.label}（含 phpo 相关项）`;
+    warnTitleEl.textContent = `⚠️ 你正在勾选「${group.label}」，包含受保护的 phpo 相关项`;
+    warnTextEl.textContent = `该分组里包含属于 phpo 服务的相关资源。勾选后这些资源会被一起清理，可能导致 phpo 服务异常或数据丢失。`;
+
+    infoEl.innerHTML = `
+      <div style="margin-bottom:4px;"><strong>${group.icon || '📁'} ${group.label}</strong></div>
+      <div style="color:var(--text-mute);font-size:11.5px;margin-bottom:6px;">
+        该组共 <strong>${groupAllKeys.length}</strong> 项，其中 <strong style="color:var(--danger);">${groupPhpoKeys.length}</strong> 项为 phpo 相关资源。
+      </div>
+      <div style="font-size:11.5px;color:var(--text-mute);">
+        当前未解锁的 phpo 项：<span style="color:var(--danger);">${lockedCount}</span> 项
+        （确认后该组所有项都会被勾选，未解锁的 phpo 项也会被解锁并勾选）
+      </div>
+    `;
+    consentTextEl.textContent = `我已知情并同意：勾选「${group.label}」分组后，包含该组内所有 phpo 相关资源在内的全部项都会被勾选并可能被清理，可能导致 phpo 服务异常或数据丢失，我确认执行勾选。`;
+
+  } else {
+    const item = findItem(keyOrAll);
+    if (!item) return;
+
+    titleEl.textContent = '手动勾选 phpo 相关项';
+    warnTitleEl.textContent = '⚠️ 你正在勾选受保护的 phpo 相关项';
+    warnTextEl.textContent = '该项属于 phpo 服务的相关资源，勾选后会被一起清理。这可能导致 phpo 服务无法正常运行，数据永久丢失。';
+
+    infoEl.innerHTML = `
+      <div style="margin-bottom:4px;"><strong>${item.label}</strong></div>
+      <div style="color:var(--text-mute);font-size:11.5px;margin-bottom:6px;">${item.desc || ''}</div>
+      <div style="font-size:11.5px;color:var(--text-mute);">
+        数量 / 占用：<span class="mono">${item.count != null ? item.count : '—'} / ${item.size != null ? item.size : '—'}</span>
+        &nbsp;&nbsp;类型：<span style="color:var(--danger);">phpo 相关</span>
+      </div>
+    `;
+    consentTextEl.textContent = '我已知情并同意：我明白该项属于 phpo 服务相关资源，勾选后会被清理，可能导致 phpo 服务异常或数据丢失，我确认手动勾选该项。';
+  }
+
+  document.getElementById('unlockConsentCheckbox').checked = false;
+  document.getElementById('unlockExecuteBtn').disabled = true;
+  document.getElementById('unlockModal').classList.add('active');
+}
+
+function closeUnlockModal() {
+  closeModal('unlockModal');
+  pendingUnlockKey = null;
+}
+
+function onUnlockConsentChange(cb) {
+  document.getElementById('unlockExecuteBtn').disabled = !cb.checked;
+}
+
+document.getElementById('unlockExecuteBtn').addEventListener('click', () => {
+  const consent = document.getElementById('unlockConsentCheckbox');
+  if (!consent.checked || !pendingUnlockKey) return;
+
+  if (pendingUnlockKey === 'ALL') {
+    state.selectedOther = [...getAllKeys()];
+    getPhpoKeys().forEach(k => state.unlockedPhpoKeys.add(k));
+    closeModal('unlockModal');
+    renderOtherPanel();
+    updateBannerMain();
+    showToast('已解锁全部 phpo 项并全选', 'ok');
+
+  } else if (pendingUnlockKey.startsWith('GROUP:')) {
+    const groupKey = pendingUnlockKey.substring(6);
+    const groupAllKeys = getGroupAllKeys(groupKey);
+    const groupPhpoKeys = getGroupPhpoKeys(groupKey);
+
+    groupAllKeys.forEach(k => {
+      if (!state.selectedOther.includes(k)) state.selectedOther.push(k);
+    });
+    groupPhpoKeys.forEach(k => state.unlockedPhpoKeys.add(k));
+
+    closeModal('unlockModal');
+    renderOtherPanel();
+    updateBannerMain();
+    const group = findGroup(groupKey);
+    showToast(`已解锁「${group ? group.label : groupKey}」并勾选该组全部项`, 'ok');
+
+  } else {
+    const key = pendingUnlockKey;
+    state.unlockedPhpoKeys.add(key);
+    if (!state.selectedOther.includes(key)) {
+      state.selectedOther.push(key);
+    }
+    closeModal('unlockModal');
+    renderOtherPanel();
+    updateBannerMain();
+    showToast('已解锁并勾选：' + (findItem(key)?.label || key), 'ok');
+  }
+  pendingUnlockKey = null;
+});
+
+
+/* ============================================================================
+ * 🟢【真实】选择逻辑工具（纯前端）
+ * ============================================================================
+ */
+function updateSelectedCount() {
+  document.getElementById('selectedCount').textContent = `已选 ${state.selectedOther.length}`;
+  syncCheckboxes();
+}
+
+function selectAllOther() {
+  if (state.scopeMode === 'keep') {
+    const phpoKeys = getPhpoKeys();
+    const allPhpoUnlocked = phpoKeys.every(k => state.unlockedPhpoKeys.has(k));
+    if (!allPhpoUnlocked) {
+      openUnlockModal('ALL');
+      return;
+    }
+  }
+  state.selectedOther = [...getAllKeys()];
+  if (state.scopeMode === 'keep') {
+    getPhpoKeys().forEach(k => state.unlockedPhpoKeys.add(k));
+    renderOtherPanel();
+    updateBannerMain();
+  }
+  syncCheckboxes();
+  updateSelectedCount();
+}
+
+function invertOther() {
+  const all = getAllKeys();
+  state.selectedOther = all.filter(k => !state.selectedOther.includes(k));
+  if (state.scopeMode === 'keep') {
+    state.selectedOther.forEach(k => {
+      const item = findItem(k);
+      if (item && item.isPhpo) state.unlockedPhpoKeys.add(k);
+    });
+    renderOtherPanel();
+    updateBannerMain();
+  }
+  syncCheckboxes();
+  updateSelectedCount();
+}
+
+function clearOther() {
+  state.selectedOther = [];
+  syncCheckboxes();
+  updateSelectedCount();
+}
+
+
+/* ============================================================================
+ * 🔴【实接】预览清理操作
+ *
+ * 接口：
+ *   POST /api/docker/other/preview
+ *
+ * 请求体：
+ *   {
+ *     "targets": ["container.all", "image.dangling", ...],
+ *     "dryRun": true
+ *   }
+ *
+ * 期望返回：
+ *   {
+ *     "previewToken": "一次性token",   // 🔴 提交清理时必须回传
+ *     "commands": ["docker rm -f xxx", ...],  // 🟢 后端生成的真实命令
+ *     "willDelete": [                          // 🟢 后端返回的真实删除对象
+ *       { "type": "container", "name": "phpo-php-8.4", "size": "120 MB" }
+ *     ],
+ *     "warnings": ["将停止 3 个运行中容器"]     // 🟢 后端警告
+ *   }
+ *
+ * 说明：
+ *   这是生产环境必须真实调用的接口。
+ *   后端需要真实调 Docker API 做 dry-run，不能返回假数据。
+ * ============================================================================
+ */
+async function previewItem(key) { await openPreview([key], '清理预览'); }
+async function previewSelected() {
+  if (state.selectedOther.length === 0) { showToast('请先选择要清理的资源', 'err'); return; }
+  await openPreview(state.selectedOther, '清理预览');
+}
+
+async function openPreview(targets, title) {
+  document.querySelector('#previewModal .modal-header h4').textContent = title;
+  document.getElementById('previewBody').innerHTML = '<div class="loading-text">正在向后端请求预览…</div>';
+  document.getElementById('previewNextBtn').disabled = true;
+  document.getElementById('previewModal').classList.add('active');
+
+  // 🟡 仿真模式：后端未接上时，本地生成假预览命令（仅供演示）
+  if (state.usingSampleData) {
+    document.getElementById('previewBody').innerHTML = `
+      <div class="warn-box">
+        <strong>⚠️ 当前为示例数据（演示用）</strong>
+        后端未连接，以下预览为本地生成的假命令，生产环境必须由后端真实返回。
+      </div>
+      ${buildScopeBlockHtml()}
+      <p style="margin-bottom:6px;">将执行以下命令（假）：</p>
+      <pre>${targets.map(t => `# 假命令 for ${t}\ndocker xxx ${t}`).join('\n')}</pre>
+      <p style="margin-top:12px;">将删除 <strong>${targets.length}</strong> 项（假）。</p>
+    `;
+    document.getElementById('previewNextBtn').disabled = false;
+    document.getElementById('previewNextBtn').onclick = () => {
+      closeModal('previewModal');
+      openConfirm('彻底清空确认', `即将清理 ${targets.length} 项资源（演示）。`, targets);
+    };
+    return;
+  }
+
+  // 🔴 真实模式：调后端
+  try {
+    const res = await api('/api/docker/other/preview', {
+      method: 'POST',
+      body: JSON.stringify({ targets, dryRun: true })
+    });
+    state.currentPreviewToken = res.previewToken;
+    const willDeleteHtml = (res.willDelete || []).length
+      ? `<ul class="plain-tags">${res.willDelete.map(d => `<li>${d.type}: ${d.name}${d.size ? ' (' + d.size + ')' : ''}</li>`).join('')}</ul>`
+      : '<div class="loading-text">无</div>';
+    const warnHtml = (res.warnings || []).length
+      ? `<div class="warn-box"><strong>⚠️ 后端警告</strong>${res.warnings.join('<br>')}</div>`
+      : '';
+
+    document.getElementById('previewBody').innerHTML = `
+      ${buildScopeBlockHtml()}
+      ${warnHtml}
+      <p style="margin-bottom:6px;">将执行以下命令：</p>
+      <pre>${(res.commands || []).join('\n') || '# 无命令'}</pre>
+      <p style="margin-top:12px;margin-bottom:6px;">将删除对象：</p>
+      ${willDeleteHtml}
+    `;
+    document.getElementById('previewNextBtn').disabled = false;
+    document.getElementById('previewNextBtn').onclick = () => {
+      closeModal('previewModal');
+      openConfirm('彻底清空确认', `即将清理 ${targets.length} 项资源。此操作不可恢复。`, targets);
+    };
+  } catch (e) {
+    document.getElementById('previewBody').innerHTML =
+      `<div class="error-box"><strong>预览失败</strong>${e.message}</div>`;
+    showToast('预览失败：' + e.message, 'err');
+  }
+}
+
+
+/* ============================================================================
+ * 🟢【真实】打开二次确认弹窗（纯前端）
+ * ============================================================================
+ */
+async function cleanItem(key) { await openPreview([key], '清理预览'); }
+async function cleanSelected() {
+  if (state.selectedOther.length === 0) { showToast('请先选择要清理的资源', 'err'); return; }
+  await openPreview(state.selectedOther, '清理预览');
+}
+
+let confirmTargets = [];
+
+function openConfirm(title, warnText, targets) {
+  confirmTargets = targets;
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmWarnText').textContent = warnText;
+  document.getElementById('confirmCount').textContent = targets.length;
+  document.getElementById('confirmScopeBlock').innerHTML = buildScopeBlockHtml();
+  document.getElementById('consentCheckbox').checked = false;
+  document.getElementById('confirmExecuteBtn').disabled = true;
+  document.getElementById('confirmModal').classList.add('active');
+}
+
+function onConsentChange(cb) {
+  document.getElementById('confirmExecuteBtn').disabled = !cb.checked;
+}
+
+
+/* ============================================================================
+ * 🔴【实接】提交清理任务
+ *
+ * 接口：
+ *   POST /api/docker/other/clean
+ *
+ * 请求体：
+ *   {
+ *     "targets": ["container.all", ...],       // 要清理的项
+ *     "previewToken": "xxx",                    // 🔴 必须回传，后端校验
+ *     "consent": true                           // 🔴 用户已勾选知情同意
+ *   }
+ *
+ * 期望返回：
+ *   {
+ *     "taskId": "task-20260101-abc123"          // 🔴 任务 ID，前端用于轮询
+ *   }
+ *
+ * 说明：
+ *   这是生产环境必须真实调用的接口。
+ *   后端要求：
+ *     1. 必须校验 previewToken（一次性、5 分钟过期）
+ *     2. 必须校验 consent = true
+ *     3. 必须真实调 Docker API 做清理
+ *     4. 必须写审计日志
+ * ============================================================================
+ */
+document.getElementById('confirmExecuteBtn').addEventListener('click', async () => {
+  const consent = document.getElementById('consentCheckbox');
+  if (!consent.checked) return;
+
+  const btn = document.getElementById('confirmExecuteBtn');
+  btn.disabled = true;
+  btn.textContent = '提交中…';
+
+  // 🟡 仿真模式：不调后端，只提示
+  if (state.usingSampleData) {
+    setTimeout(() => {
+      closeModal('confirmModal');
+      showToast('⚠️ 当前为示例数据，未调用后端。请连接真实 API 后重试。', 'err');
+      btn.disabled = false;
+      btn.textContent = '确认执行';
+    }, 600);
+    return;
+  }
+
+  // 🔴 真实模式：调后端提交
+  try {
+    const res = await api('/api/docker/other/clean', {
+      method: 'POST',
+      body: JSON.stringify({
+        targets: confirmTargets,
+        previewToken: state.currentPreviewToken,
+        consent: true
+      })
+    });
+    closeModal('confirmModal');
+    showToast('已提交清理任务，任务 ID：' + res.taskId, 'ok');
+    if (res.taskId) pollTask(res.taskId);
+  } catch (e) {
+    showToast('提交失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '确认执行';
+  }
+});
+
+
+/* ============================================================================
+ * 🔵【实时】轮询清理任务进度
+ *
+ * 接口：
+ *   GET /api/docker/other/tasks/:taskId
+ *
+ * 期望返回：
+ *   {
+ *     "status": "running" | "done" | "failed",
+ *     "progress": 45,
+ *     "message": "正在删除卷..."
+ *   }
+ *
+ * 说明：
+ *   - 每 5 秒轮询一次
+ *   - 最多轮询 120 次（约 10 分钟）
+ *   - 完成后会自动刷新资源清单
+ * ============================================================================
+ */
+async function pollTask(taskId) {
+  const maxAttempts = 120;
+  let attempts = 0;
+  const timer = setInterval(async () => {
+    attempts++;
+    try {
+      const res = await api(`/api/docker/other/tasks/${taskId}`);
+      if (res.status === 'done') {
+        clearInterval(timer);
+        showToast(`清理任务完成：${taskId}`, 'ok');
+        reloadAll();
+      } else if (res.status === 'failed') {
+        clearInterval(timer);
+        showToast(`清理任务失败：${res.message || taskId}`, 'err');
+      }
+    } catch (e) {
+      clearInterval(timer);
+      showToast('查询任务失败：' + e.message, 'err');
+    }
+    if (attempts >= maxAttempts) {
+      clearInterval(timer);
+      showToast('任务轮询超时，请到审计日志查看', 'err');
+    }
+  }, 5000);
+}
+
+
+/* ============================================================================
+ * 🔴【实接】打开终端
+ *
+ * 接口：
+ *   POST /api/docker/other/terminal
+ *
+ * 请求体：
+ *   { "targets": ["container.all", ...] }
+ *
+ * 期望返回：
+ *   {
+ *     "wsUrl": "wss://your-server.com/terminal/abc123",   // 🔴 真实 WebSocket 地址
+ *     "sessionId": "abc123"
+ *   }
+ *
+ * 说明：
+ *   这是生产环境必须真实调用的接口。
+ *   后端要真实起一个终端会话，返回可连接的 WebSocket 地址。
+ * ============================================================================
+ */
+async function openTerminalItem(key) { await openTerminal([key]); }
+async function openTerminal(targets) {
+  if (state.usingSampleData) {
+    showToast('⚠️ 当前为示例数据，未连接后端终端', 'err');
+    return;
+  }
+  try {
+    const res = await api('/api/docker/other/terminal', {
+      method: 'POST', body: JSON.stringify({ targets })
+    });
+    if (!res.wsUrl) throw new Error('后端未返回 wsUrl');
+    window.open(res.wsUrl, '_blank');
+    showToast('终端已打开', 'ok');
+  } catch (e) {
+    showToast('打开终端失败：' + e.message, 'err');
+  }
+}
+
+
+/* ============================================================================
+ * 🔴【实接】导出
+ *
+ * 接口：
+ *   POST /api/docker/other/export
+ *
+ * 请求体：
+ *   { "targets": ["container.all", ...], "format": "json" }
+ *
+ * 期望返回：
+ *   {
+ *     "downloadUrl": "/api/docker/other/export/abc123.json",
+ *     "filename": "docker-export-2026.json"
+ *   }
+ *
+ * 说明：
+ *   这是生产环境必须真实调用的接口。
+ *   后端要真实生成导出文件，返回可下载的 URL。
+ * ============================================================================
+ */
+async function exportItem(key) { await exportTargets([key]); }
+async function exportTargets(targets) {
+  if (state.usingSampleData) {
+    showToast('⚠️ 当前为示例数据，未连接后端导出', 'err');
+    return;
+  }
+  try {
+    const res = await api('/api/docker/other/export', {
+      method: 'POST', body: JSON.stringify({ targets, format: 'json' })
+    });
+    if (!res.downloadUrl) throw new Error('后端未返回 downloadUrl');
+    const a = document.createElement('a');
+    a.href = res.downloadUrl;
+    a.download = res.filename || '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast('导出已开始', 'ok');
+  } catch (e) {
+    showToast('导出失败：' + e.message, 'err');
+  }
+}
+
+
+/* ============================================================================
+ * 🟢【真实】弹窗里显示当前范围（纯前端）
+ *   数据来自 state.phpoResources（可能仿真也可能真实）
+ * ============================================================================
+ */
+function buildScopeBlockHtml() {
+  const isKeep = state.scopeMode === 'keep';
+  const cls = isKeep ? 'info-box' : 'warn-box';
+  const title = isKeep
+    ? '🔒 保留模式（phpo 相关项默认灰色不可选）：'
+    : '🔓 清理模式（全部勾选，含 phpo 相关项）：';
+
+  if (!state.phpoResources) {
+    return `<div class="${cls}"><strong>${title}</strong><div class="loading-text">暂无 phpo 资源数据</div></div>`;
+  }
+  let itemsHtml = '';
+  Object.keys(state.phpoResources).forEach(k => {
+    const list = state.phpoResources[k] || [];
+    if (list.length === 0) return;
+    itemsHtml += `<div class="detail-cat">
+      <div class="cat-head"><span>${k}</span><span class="count">${list.length}</span></div>
+      <div class="cat-items">${list.map(i => `<span class="tag">${i}</span>`).join('')}</div>
+    </div>`;
+  });
+  if (!itemsHtml) itemsHtml = '<div class="loading-text">未检索到 phpo 相关资源</div>';
+
+  return `<div class="${cls}">
+    <strong>${title}</strong>
+    <div class="detail-note" style="opacity:.75;font-size:11px;margin-bottom:8px;">🔍 以下结果由系统实时检索</div>
+    ${itemsHtml}
+  </div>`;
+}
+
+
+/* ============================================================================
+ * 🟢【真实】小工具 / Toast / 关闭弹窗（纯前端）
+ * ============================================================================
+ */
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+let toastTimer = null;
+function showToast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + (type === 'ok' ? 'ok' : type === 'err' ? 'err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, 3200);
+}
+
+
+/* ============================================================================
+ * 🟢【真实】初始化
+ *
+ * 流程：
+ *   1. 默认保留模式
+ *   2. 面板默认折叠
+ *   3. 🟡 先用仿真数据渲染 → 页面立刻有东西看
+ *   4. 🟢 尝试拉真实数据 → 成功则覆盖仿真；失败则保留仿真 + 显示提示
+ * ============================================================================
+ */
+async function init() {
+  setScopeMode('keep');
+  document.getElementById('panelBody').classList.add('collapsed');
+  document.getElementById('otherHead').classList.add('collapsed');
+  document.getElementById('panelArrow').classList.add('collapsed');
+
+  loadSampleData();
+
+  await Promise.all([
+    loadSummary(),
+    loadPhpoResources(false)
+  ]);
+}
+
+init();
+</script>
+
+<!--
+============================================================================
+  【后端 API 契约】—— 给后端工程师看的对接说明
+============================================================================
+
+  ▍接口 1：GET /api/docker/other/summary
+  ▍用途：🟢 获取 Docker 资源清单（分组 + 每项数量/占用/状态/isPhpo）
+  ▍响应格式：
+      {
+        "groups": [
+          {
+            "key": "container",
+            "label": "容器",
+            "icon": "📦",
+            "items": [
+              {
+                "key": "container.all",
+                "label": "所有容器",
+                "desc": "运行中、已停止、暂停...",
+                "risk": "high",            // low / medium / high / critical
+                "count": 12,                // 🟢 真实数量
+                "size": "1.2 GB",           // 🟢 真实占用
+                "status": "12 个",          // 🟢 真实状态
+                "isPhpo": true              // 🟢 真实业务标记
+              }
+            ]
+          }
+        ]
+      }
+
+  ▍接口 2：GET /api/docker/phpo-resources
+  ▍用途：🔵 实时检索 phpo 相关资源
+  ▍响应格式：
+      {
+        "container": ["phpo-php-8.4", "phpo-php-8.2", ...],
+        "image":     ["php:8.4-fpm", "mysql:5.7", ...],
+        "volume":    ["phpo-mysql-data", ...],
+        "network":   ["phpo-network"],
+        "compose":   ["phpo"],
+        "swarm":     ["phpo-stack"]
+      }
+
+  ▍接口 3：POST /api/docker/other/preview
+  ▍用途：🔴 预览要执行的命令（dry-run）
+  ▍请求：{ "targets": ["container.all", ...], "dryRun": true }
+  ▍响应：
+      {
+        "previewToken": "一次性token（提交清理时回传）",
+        "commands": ["docker rm -f xxx", ...],
+        "willDelete": [
+          { "type": "container", "name": "phpo-php-8.4", "size": "120 MB" }
+        ],
+        "warnings": ["将停止 3 个运行中容器"]
+      }
+
+  ▍接口 4：POST /api/docker/other/clean
+  ▍用途：🔴 提交清理任务
+  ▍请求：
+      {
+        "targets": ["container.all", ...],
+        "previewToken": "xxx",           // 必须校验，一次性，5分钟过期
+        "consent": true                  // 必须为 true
+      }
+  ▍响应：{ "taskId": "task-20260101-abc123" }
+  ▍安全要求：
+      - 必须校验登录态和权限
+      - 必须校验 previewToken（防重放）
+      - 必须真实调 Docker API，不能假装
+      - 必须写审计日志
+
+  ▍接口 5：GET /api/docker/other/tasks/:taskId
+  ▍用途：🔵 轮询任务进度
+  ▍响应：
+      {
+        "status": "running" | "done" | "failed",
+        "progress": 45,
+        "message": "正在删除卷..."
+      }
+
+  ▍接口 6：POST /api/docker/other/terminal
+  ▍用途：🔴 打开终端
+  ▍请求：{ "targets": ["container.all", ...] }
+  ▍响应：{ "wsUrl": "wss://...", "sessionId": "abc123" }
+
+  ▍接口 7：POST /api/docker/other/export
+  ▍用途：🔴 导出
+  ▍请求：{ "targets": ["container.all", ...], "format": "json" }
+  ▍响应：{ "downloadUrl": "/api/.../abc.json", "filename": "docker-export.json" }
+
+============================================================================
+  【接后端时前端需要改的地方】
+============================================================================
+
+  1. 🔴 API_BASE
+     改成后端地址。同域可留 ''。
+
+  2. 🟡 删除 SAMPLE_PHPO_RESOURCES 常量
+     后端接上后不需要。
+
+  3. 🟡 删除 SAMPLE_GROUPS 常量
+     后端接上后不需要。
+
+  4. 🟡 删除 loadSampleData() 函数
+     以及 init() 里的调用。
+
+  5. 🟡 简化 loadSummary() / loadPhpoResources()
+     去掉 catch 里的 fallback 逻辑。
+
+  6. 🟡 简化 openPreview() / 提交清理
+     去掉 usingSampleData 分支。
+
+  7. 🟡 删除 usingSampleData 字段和「示例数据」徽章
+     或者改成「数据已连接」的绿色标识。
+
+============================================================================
+-->
+</body>
+</html>
