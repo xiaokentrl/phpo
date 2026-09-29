@@ -8,6 +8,7 @@ import { toast } from '@/composables/useToast'
 import { runDoctor, fixDoctor } from '@/api/doctor'
 import { useModals } from '@/composables/useModals'
 import { SVC_META } from '@/constants/service'
+import DockerCleanPanel from '@/components/business/DockerCleanPanel.vue'
 import type { DoctorReport, DoctorStatus, ServiceKind } from '@/types'
 
 const { t } = useI18n()
@@ -148,6 +149,8 @@ function jump(kind: ServiceKind) {
         </table>
       </div>
     </template>
+
+    <DockerCleanPanel />
   </div>
 </template>
 

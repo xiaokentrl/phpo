@@ -729,6 +729,54 @@ func (a *App) OperationList(limit int) ([]model.Operation, error) {
 	return a.container.CleanupService.ListOperations(limit)
 }
 
+// ---- Docker 全量资源清理绑定：60 行清单 + 逐项预览 + 一次彻底清空（总览页底部面板）----
+
+// DockerCleanScan 数一遍 60 行。deep=false 只问 Docker（快）；deep=true 再去读宿主上的文件，
+// 那一步要管理员授权，且只在用户点「详细扫描」时才做一次（扫描期间照常建站、启停，不入任务队列）。
+func (a *App) DockerCleanScan(ctx context.Context, deep bool) (model.CleanScanReport, error) {
+	if a.container.DockerCleanService == nil {
+		return model.CleanScanReport{}, errNotReady
+	}
+	return a.container.DockerCleanService.Scan(ctx, deep)
+}
+
+// DockerCleanSupported 回答「详细扫描这一颗能不能点」：macOS / Windows 上 Docker 在虚拟机里，
+// 宿主那 28 行读不到东西，点了也不会多出一数（这些行仍显示，数字给「—」）。
+func (a *App) DockerCleanSupported(ctx context.Context) bool {
+	if a.container.DockerCleanService == nil {
+		return false
+	}
+	return a.container.DockerCleanService.HostScanSupported(ctx)
+}
+
+// DockerCleanRefreshRow 只重数一行：授权被拒的那几行给一个逐行重试的入口，不必整页再来一遍。
+func (a *App) DockerCleanRefreshRow(ctx context.Context, key string) (model.CleanRow, error) {
+	if a.container.DockerCleanService == nil {
+		return model.CleanRow{}, errNotReady
+	}
+	return a.container.DockerCleanService.RefreshRow(ctx, key)
+}
+
+// DockerCleanPreview 把勾中的那几行摊成具体对象清单，并发一张一次性凭据（点「彻底清空」前先看这一份）。
+func (a *App) DockerCleanPreview(ctx context.Context, rows []string) (model.CleanPreview, error) {
+	if a.container.DockerCleanService == nil {
+		return model.CleanPreview{}, errNotReady
+	}
+	return a.container.DockerCleanService.Preview(ctx, rows)
+}
+
+// DockerCleanExecute 按一次性凭据删掉勾中的那些东西：一个任务、逐项一行、单颗失败不中断其余。
+func (a *App) DockerCleanExecute(ctx context.Context, req model.CleanRequest) (model.CleanExecuteReport, error) {
+	if a.container.DockerCleanService == nil {
+		return model.CleanExecuteReport{}, errNotReady
+	}
+	rep, err := a.container.DockerCleanService.Execute(ctx, req)
+	if rep == nil {
+		return model.CleanExecuteReport{}, err
+	}
+	return *rep, err
+}
+
 // ---- M6 离线缓存绑定：§5.14.10 全量缓存服务层 API（T606）----
 
 // OfflineListEntries 遍历离线缓存条目并聚合 manifest 计数/校验态

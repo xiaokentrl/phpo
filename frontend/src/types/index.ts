@@ -262,3 +262,85 @@ export interface MirrorSource {
   ok: boolean
   error?: string
 }
+
+// ---- Docker 全量资源清理（总览页底部 60 行面板）----
+// 形状与后端 internal/model/docker_clean.go 的 JSON 标签逐字对齐（硬红线 4：数字只来自后端）。
+
+// CleanRow 面板上的一行：静态属性（档位/危险/风险）+ 这次扫到的真实数字。
+// 按钮给不给、要不要单独确认，后端已经算好带上，前端不再推第二套判据。
+export interface CleanRow {
+  key: string
+  group: string
+  tier: number
+  deletable: boolean
+  dangerous: boolean
+  isPhpo: boolean
+  risk: 'low' | 'medium' | 'high' | 'critical' | string
+  status: 'ok' | 'no_perm' | 'not_supported' | 'unavailable' | string
+  count: number
+  bytes: number
+  hasBytes: boolean
+  message?: string
+  scannedAt: string
+}
+
+export interface CleanScanReport {
+  rows: CleanRow[]
+  totalCount: number
+  totalBytes: number
+  scannedAt: string
+  deepScanned: boolean
+  warnings: string[]
+}
+
+// CleanTarget 确认框里的一项具体对象（一个容器、一个卷、一份宿主目录…），带一颗开关。
+export interface CleanTarget {
+  row: string
+  kind: string
+  id: string
+  name: string
+  size: number
+  inUse: boolean
+  foreign: boolean
+  needsRoot: boolean
+}
+
+export interface CleanInstalled {
+  kind: string
+  version: string
+}
+
+// CleanPreview 一次预览的凭据：token 是一次性的，过期或用过就得重新预览。
+export interface CleanPreview {
+  token: string
+  expiresAt: string
+  rows: string[]
+  targets: CleanTarget[]
+  warnings: string[]
+  consentRequired: boolean
+  installed: CleanInstalled[]
+}
+
+export interface CleanRequest {
+  token: string
+  ids: string[]
+  consent: boolean
+  uninstall: boolean
+}
+
+// CleanedItem（逐项结果）复用上面清理三模式那一份形状：type 是 DockerResourceType，
+// 宿主那五种类型（host_path / host_netdev / host_netns / host_cgroup / host_group_user）
+// 由后端原样透出，前端只当文字显示，不参与任何判定。
+
+// CleanExecuteReport 一次彻底清空的收尾：逐项结果 + 四个计数。
+// skipped 是「预览时还在、动手时已经不在了」的那些，不判死整单，只逐行说明。
+export interface CleanExecuteReport {
+  taskId: string
+  status: string
+  items: CleanedItem[]
+  removed: number
+  failed: number
+  skipped: number
+  freedBytes: number
+  trashed: string[]
+}

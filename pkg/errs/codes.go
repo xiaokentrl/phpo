@@ -1,5 +1,6 @@
-// PF 校验错误码表：preflight 返回的用户级错误文案（原型 PF 直译 + 生产新增，共 27 条；
-// 原型的 lastPhp「至少保留一个 PHP 版本」已随 §1.11 最小限制裁决删除，见 AGENTS.md）
+// PF 校验错误码表：preflight 返回的用户级错误文案（原型 PF 直译 + 生产新增，共 28 条；
+// 原型 PF 表本身 28 条，其中 lastPhp「至少保留一个 PHP 版本」已随 §1.11 最小限制裁决删除，
+// 生产侧另加 FileMissing 一条，故 27 + 1 = 28，口径见 AGENTS.md §0.3）
 package errs
 
 // 错误码 → 中文文案；占位符 {from} {to} {version} 等由 preflight 填充
@@ -35,7 +36,7 @@ const (
 )
 
 // CodeCount 供对账测试：PF 表条目数
-const CodeCount = 27
+const CodeCount = 28
 
 // AllCodes 返回全部错误码文案（测试对账用）
 func AllCodes() []string {

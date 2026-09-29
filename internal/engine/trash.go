@@ -2,6 +2,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,18 +28,59 @@ func (t *Trash) Move(origPath string) (string, error) {
 	if err := util.MkdirAll(t.Root); err != nil {
 		return "", fmt.Errorf("创建回收站失败: %w", err)
 	}
-	dest := filepath.Join(t.Root, filepath.Base(origPath))
 	if _, err := os.Stat(origPath); err != nil {
 		if os.IsNotExist(err) {
-			return dest, nil // 已被回收：幂等
+			// 已被回收：幂等，给出当初那个预期落点（不加后缀——没搬过就不该多出一个时间戳名）
+			return filepath.Join(t.Root, filepath.Base(origPath)), nil
 		}
 		return "", err
 	}
+	dest := t.destFor(origPath)
+	if err := os.Rename(origPath, dest); err != nil {
+		return "", fmt.Errorf("移入回收站失败 %s → %s: %w", origPath, dest, err)
+	}
+	return dest, nil
+}
+
+// destFor 给出这份东西在回收站里该落在哪：同名就追加纳秒后缀。
+//
+// 单独抽出来是因为「提权挪」那一条路（MoveElevated）必须在**发起授权之前**就把目标定好——
+// `mv -n` 撞名时静默退出码 0 却不搬，用它就等于「以为收走了，其实还在原处」。
+func (t *Trash) destFor(origPath string) string {
+	dest := filepath.Join(t.Root, filepath.Base(origPath))
 	if _, err := os.Stat(dest); err == nil {
 		dest = fmt.Sprintf("%s.%d", dest, time.Now().UnixNano())
 	}
-	if err := os.Rename(origPath, dest); err != nil {
-		return "", fmt.Errorf("移入回收站失败 %s → %s: %w", origPath, dest, err)
+	return dest
+}
+
+// MoveElevated 把 origPath 用提权方式挪进回收站，返回落地路径。
+//
+// 为什么要它：Docker 卷的数据目录属主是容器内那个 uid（rootful 守护进程下即 root），
+// 宿主用户自己的 `os.Rename` 对它无效——而这类东西按需求必须先进回收站留 7 天，不能直接删。
+// 走的是 `pkexec mv -- 源 目标`，argv 传入、不经 shell。
+//
+// 两条要交代给用户的代价（调用方负责写进日志）：
+//   - 挪进去的那份内容属主仍是 root，phpo 自己既读不动也删不动，
+//     因此「从回收站恢复」与「到期清理」这两步同样得再授权一次。
+//   - 跨文件系统时 mv 是复制+删除，大卷会等上一阵子。
+func (t *Trash) MoveElevated(ctx context.Context, origPath string) (string, error) {
+	if t.Root == "" {
+		return "", fmt.Errorf("回收站根目录未配置")
+	}
+	if err := util.MkdirAll(t.Root); err != nil {
+		return "", fmt.Errorf("创建回收站失败: %w", err)
+	}
+	if _, err := os.Stat(origPath); err != nil {
+		if os.IsNotExist(err) {
+			// 已经不在了：给既有/预期目标，与 Move 同口径（幂等）
+			return filepath.Join(t.Root, filepath.Base(origPath)), nil
+		}
+		return "", err
+	}
+	dest := t.destFor(origPath)
+	if _, err := runDeleteCmd(ctx, true, "mv", "--", origPath, dest); err != nil {
+		return "", fmt.Errorf("提权移入回收站失败 %s → %s: %w", origPath, dest, err)
 	}
 	return dest, nil
 }

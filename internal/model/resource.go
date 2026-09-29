@@ -1,13 +1,21 @@
-// Docker 资源模型：孤儿扫描与清理的对象（全部带 phpo- 前缀命名空间）
+// Docker 资源模型：孤儿扫描与清理的对象
 package model
 
+// 前四种带 phpo- 前缀命名空间（§5.13.5 孤儿扫描只报托管资源）；
+// 后五种是「Docker 全量资源清理」面板会逐项删除的对象——插件与 Swarm 那几样不在 phpo- 命名空间里，
+// 但删除结果同样要按类型点名，否则日志里只有一串 ID，用户看不出清掉的是什么（§5.16.3 失败点名的同一口径）。
 type ResourceType string
 
 const (
-	ResContainer ResourceType = "container"
-	ResVolume    ResourceType = "volume"
-	ResNetwork   ResourceType = "network"
-	ResImage     ResourceType = "image"
+	ResContainer    ResourceType = "container"
+	ResVolume       ResourceType = "volume"
+	ResNetwork      ResourceType = "network"
+	ResImage        ResourceType = "image"
+	ResPlugin       ResourceType = "plugin"
+	ResSwarmService ResourceType = "swarm_service"
+	ResSwarmConfig  ResourceType = "swarm_config"
+	ResSwarmSecret  ResourceType = "swarm_secret"
+	ResBuildCache   ResourceType = "buildcache"
 )
 
 type DockerResource struct {

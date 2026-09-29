@@ -52,6 +52,9 @@ type Container struct {
 	// M6 清理门面：孤儿三模式清理 + 回收站 + 审计（T605）；启动后非 nil
 	CleanupService *service.CleanupService
 
+	// Docker 全量资源清理门面：总览页那 60 行的扫描 / 逐项预览 / 一次彻底清空；启动后非 nil
+	DockerCleanService *service.DockerCleanService
+
 	// M6 离线缓存门面：§5.14.10 统计/校验/三模式清理/单条删除/lookup/promote/临时目录（T606）；启动后非 nil
 	OfflineService *service.OfflineService
 
@@ -296,6 +299,12 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	auditPath, _ := config.AuditLogPath() // 解析失败留空 → 审计降级为仅落表，不阻断清理
 	c.CleanupService = service.NewCleanupService(
 		cli, st, engine.NewTrash(trashRoot), cacheMgr, engine.NewAudit(auditPath), c.Emitter, tm,
+	)
+
+	// Docker 全量资源清理门面：60 行清单（浅扫问 Docker、深扫读宿主）→ 逐项预览 → 一次性凭据彻底清空。
+	// 删除复用 engine 那一套（不另立第二套删除、不另立第二个回收站），卸载走 AppService 另起一单。
+	c.DockerCleanService = service.NewDockerCleanService(
+		cli, st, engine.NewAudit(auditPath), c.AppService, engine.NewTrash(trashRoot), c.Emitter, tm,
 	)
 
 	// M6 离线缓存门面（T606）：§5.14.10 统计/校验/三模式清理/单条删除/lookup/promote/临时目录全接真

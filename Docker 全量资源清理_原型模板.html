@@ -6,11 +6,11 @@
 <title>Docker 全量资源清理（原型模板）</title>
 
 <!--
-============================================================================
+==
   【重要说明】本文件是一个「原型模板」，不得更改外观样式，如果必须更改需要提前请求告知，
    这是一个任意服务，任意版本……等等的任意用户任意安装任意的服务的必须支持全量资源清理，完整彻底清理的功能需求，
    需要真实的数据必须与系统docker实时获取，必须实时同步数据一致性，各种清理的必须彻底毫无任何残留。
-============================================================================
+==
 
   代码里所有的数据、操作都带有如下标记，请仔细阅读：
 
@@ -33,9 +33,9 @@
 
   文件末尾有一节「后端 API 契约」，是给后端工程师看的对接说明。
 
-============================================================================
+==
   我们的沟通需求（业务逻辑）
-============================================================================
+==
 
   1. 页面上有一个「其他」面板，用来清理 Docker 的各种资源。
 
@@ -60,7 +60,7 @@
 
   5. 危险操作，必须勾「我已知情」确认后才能删除。
 
-============================================================================
+==
 -->
 
 <style>
@@ -250,9 +250,11 @@
   tr.item-row.last-child td:first-child::before { height: 50%; }
   tr.item-row.hidden-by-group { display: none; }
 
+  /* 🔧 经用户批准，第 8 条修复：锁定项的 cursor 由 not-allowed 改为 pointer，
+     与「实际可点、点了弹解锁框」的真实行为保持一致。其余视觉样式未改动。 */
   tr.item-row.locked-phpo td { background: var(--locked-dim); color: var(--locked); }
-  tr.item-row.locked-phpo:hover td { background: rgba(74, 85, 104, 0.25); cursor: not-allowed; }
-  tr.item-row.locked-phpo input[type="checkbox"] { accent-color: var(--locked); cursor: not-allowed; opacity: .7; }
+  tr.item-row.locked-phpo:hover td { background: rgba(74, 85, 104, 0.25); cursor: pointer; }
+  tr.item-row.locked-phpo input[type="checkbox"] { accent-color: var(--locked); cursor: pointer; opacity: .7; }
   tr.item-row.locked-phpo .locked-badge { display: inline-block; }
   .locked-badge {
     display: none; font-size: 10.5px; padding: 2px 7px; border-radius: 4px;
@@ -368,7 +370,7 @@
       <div class="collapse-arrow collapsed" id="panelArrow" onclick="togglePanelCollapse()">▾</div>
       <div class="other-head-text">
         <h3>其他</h3>
-        <p class="other-desc">Docker 全量资源清理 · 终端 · 导出 · 预览</p>
+        <p class="other-desc">Docker 全量资源清理 · 预览</p>
       </div>
     </div>
 
@@ -428,12 +430,11 @@
 
     <div class="table-toolbar">
       <button class="btn btn-sm" onclick="selectAllOther()">全选</button>
-      <button class="btn btn-sm" onclick="invertOther()">反选</button>
       <button class="btn btn-sm" onclick="clearOther()">清空选择</button>
       <button class="btn btn-sm" onclick="reloadAll()">↻ 刷新</button>
       <span class="chip chip-accent" id="selectedCount">已选 0</span>
       <div class="spacer"></div>
-      <!-- 🟡【仿真】徽章：连上真实 API 后会自动隐藏 -->
+      <!-- 🟡【仿真】徽章：连接真实 API 成功后自动隐藏（由 updateSampleBadge() 控制） -->
       <span class="sample-badge" id="sampleBadge">示例数据（非真实）</span>
     </div>
 
@@ -448,7 +449,7 @@
           <th style="width:13%;">数量 / 占用</th>
           <th style="width:9%;">风险</th>
           <th style="width:10%;">状态</th>
-          <th style="width:130px; text-align:right;">操作</th>
+          <th style="width:90px; text-align:right;">操作</th>
         </tr>
       </thead>
       <tbody id="otherTableBody">
@@ -524,18 +525,12 @@
 <div class="toast" id="toast"></div>
 
 <script>
-/* ============================================================================
- *
- *   ██████  ██████   ██████  ████████  ██████  ████████ ██    ██ ██████  ███████
- *   ██   ██ ██   ██ ██    ██    ██    ██    ██    ██    ██    ██ ██   ██ ██
- *   ██████  ██████  ██    ██    ██    ██    ██    ██    ██    ██ ██████  █████
- *   ██      ██   ██ ██    ██    ██    ██    ██    ██    ██    ██ ██   ██ ██
- *   ██      ██   ██  ██████     ██     ██████     ██     ██████  ██   ██ ███████
+/* ==
  *
  *   这是一个原型模板，不是生产代码。
  *   所有接后端、接真实数据的地方都用注释标注了。
  *
- * ============================================================================
+ * ==
  *
  *   标记说明：
  *
@@ -551,11 +546,11 @@
  *     🔵【实时】  = 需要实时刷新或轮询的数据
  *                   （例如：任务进度、资源数量、phpo 资源检索结果）
  *
- * ============================================================================
+ * ==
  */
 
 
-/* ============================================================================
+/* ==
  * 🔴【实接】后端 API 基地址
  *
  * 说明：
@@ -569,12 +564,12 @@
  *   生产环境要求：
  *     - 必须是 https
  *     - 必须带登录凭证（credentials: 'same-origin' 已配置）
- * ============================================================================
+ * ==
  */
 const API_BASE = '';
 
 
-/* ============================================================================
+/* ==
  * 🟡【仿真】phpo 相关资源清单
  *
  * 说明：
@@ -590,7 +585,7 @@ const API_BASE = '';
  *   3. 覆盖后顶部徽章「示例数据」会自动隐藏
  *
  * ⚠️ 生产环境必须删除此常量，或改成从 API 加载。
- * ============================================================================
+ * ==
  */
 const SAMPLE_PHPO_RESOURCES = {
   container: ['phpo-php-8.4（示例）','phpo-php-8.2（示例）','phpo-mysql-5.7（示例）','phpo-pgsql-17（示例）','phpo-redis-8（示例）','phpo-nginx-1.25（示例）'],
@@ -602,7 +597,7 @@ const SAMPLE_PHPO_RESOURCES = {
 };
 
 
-/* ============================================================================
+/* ==
  * 🟡【仿真】Docker 资源清单（分组 + 子项）
  *
  * 说明：
@@ -624,7 +619,7 @@ const SAMPLE_PHPO_RESOURCES = {
  *   3. 覆盖后顶部徽章「示例数据」会自动隐藏
  *
  * ⚠️ 生产环境必须删除此常量，或改成从 API 加载。
- * ============================================================================
+ * ==
  */
 const SAMPLE_GROUPS = [
   {
@@ -745,7 +740,7 @@ const SAMPLE_GROUPS = [
 ];
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】fetch 封装
  *
  * 说明：
@@ -758,7 +753,7 @@ const SAMPLE_GROUPS = [
  *   - 所有接口必须校验登录态
  *   - 所有接口必须校验权限
  *   - 危险操作接口必须校验 previewToken（防重放）
- * ============================================================================
+ * ==
  */
 async function api(path, options = {}) {
   const controller = new AbortController();
@@ -785,19 +780,17 @@ async function api(path, options = {}) {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】SVG 图标（纯前端，无需后端）
- * ============================================================================
+ * ==
  */
 const ICONS = {
   preview: '<svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
-  clean:   '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
-  terminal:'<svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
-  export:  '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'
+  clean:   '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>'
 };
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】全局状态（前端状态管理，无需后端）
  *
  * 字段说明：
@@ -813,7 +806,9 @@ const ICONS = {
  *   currentPreviewToken  → 🔴【实接】预览时后端返回的一次性 token，
  *                          提交清理任务时必须回传，防止重放攻击
  *   usingSampleData      → 当前是否在用仿真数据（用于显示徽章）
- * ============================================================================
+ *   summaryRealData      → 🟢 资源清单是否已成功从真实 API 加载
+ *   phpoRealData         → 🟢 phpo 资源是否已成功从真实 API 加载
+ * ==
  */
 let state = {
   groups: [],
@@ -826,16 +821,18 @@ let state = {
   panelCollapsed: true,
   collapsedGroups: {},
   currentPreviewToken: null,
-  usingSampleData: true
+  usingSampleData: true,
+  summaryRealData: false,  // 🟢 资源清单是否来自真实 API
+  phpoRealData: false      // 🟢 phpo 资源是否来自真实 API
 };
 
 /* 待解锁场景：'具体key' / 'ALL' / 'GROUP:xxx' */
 let pendingUnlockKey = null;
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】错误框显示/清除（纯前端 UI）
- * ============================================================================
+ * ==
  */
 function showError(msg, detail) {
   const box = document.getElementById('errorBox');
@@ -850,13 +847,13 @@ function clearError() {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】工具：找出所有 phpo / 非 phpo 项的 key
  *
  * 说明：
  *   依据 item.isPhpo 字段判断。这个字段是业务标记，不是仿真数据。
  *   真实 API 返回的每项也必须带这个字段。
- * ============================================================================
+ * ==
  */
 function getPhpoKeys() {
   const keys = [];
@@ -889,7 +886,7 @@ function getGroupAllKeys(groupKey) {
 function getAllKeys() { return state.groups.flatMap(g => (g.items || []).map(i => i.key)); }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】应用模式到勾选状态（纯前端逻辑）
  *
  * 保留模式：
@@ -898,10 +895,32 @@ function getAllKeys() { return state.groups.flatMap(g => (g.items || []).map(i =
  *
  * 清理模式：
  *   全部项 → 全部勾选
- * ============================================================================
+ *
+ * ⚠️ 说明：
+ *   默认行为（preserveSelection = false）会完全重置 selectedOther，
+ *   只应在切换模式时被调用，以应用该模式的默认勾选策略。
+ *
+ *   🔵 刷新场景（preserveSelection = true）：
+ *   会把 previousSelection 里、且在新数据中仍存在的 key 保留下来，
+ *   避免「点刷新后用户之前勾的项被静默清空」。
+ * ==
  */
-function applyScopeToSelection(mode) {
-  if (mode === 'keep') {
+function applyScopeToSelection(mode, options = {}) {
+  const preserveSelection = !!options.preserveSelection;
+  const previousSelection = Array.isArray(options.previousSelection) ? options.previousSelection : null;
+
+  if (preserveSelection && previousSelection) {
+    // 🔵 刷新场景：只保留旧勾选中仍存在的 key，其余按当前模式默认策略之外不做补足
+    const allKeys = new Set(getAllKeys());
+    const prevSet = new Set(previousSelection);
+    state.selectedOther = state.selectedOther.filter(k => allKeys.has(k) && prevSet.has(k));
+    // 把旧勾选里存在但默认策略没给勾上的补回来
+    previousSelection.forEach(k => {
+      if (allKeys.has(k) && !state.selectedOther.includes(k)) {
+        state.selectedOther.push(k);
+      }
+    });
+  } else if (mode === 'keep') {
     const nonPhpo = getNonPhpoKeys();
     const unlocked = Array.from(state.unlockedPhpoKeys);
     state.selectedOther = [...nonPhpo, ...unlocked];
@@ -912,7 +931,7 @@ function applyScopeToSelection(mode) {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟡【仿真】加载仿真数据
  *
  * 说明：
@@ -920,12 +939,14 @@ function applyScopeToSelection(mode) {
  *   后端接上后，这份数据会被真实 API 覆盖。
  *
  * ⚠️ 生产环境应在接上真实 API 后，删除此函数及所有调用点。
- * ============================================================================
+ * ==
  */
 function loadSampleData() {
   state.groups = JSON.parse(JSON.stringify(SAMPLE_GROUPS));
   state.phpoResources = JSON.parse(JSON.stringify(SAMPLE_PHPO_RESOURCES));
   state.usingSampleData = true;
+  state.summaryRealData = false;
+  state.phpoRealData = false;
   state.groups.forEach(g => {
     if (state.collapsedGroups[g.key] === undefined) state.collapsedGroups[g.key] = true;
   });
@@ -936,26 +957,27 @@ function loadSampleData() {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】更新「示例数据」徽章（纯前端 UI）
  *
  * 说明：
- *   当 usingSampleData = true  → 显示「示例数据（非真实）」
- *   当 usingSampleData = false → 隐藏徽章
- * ============================================================================
+ *   当 summary 与 phpo 资源都成功从真实 API 加载后，自动隐藏徽章。
+ *   只要有一个还没接上，就显示「示例数据（非真实）」。
+ * ==
  */
 function updateSampleBadge() {
   const badge = document.getElementById('sampleBadge');
-  if (state.usingSampleData) {
+  const allReal = state.summaryRealData && state.phpoRealData;
+  if (allReal) {
+    badge.style.display = 'none';
+  } else {
     badge.style.display = '';
     badge.textContent = '示例数据（非真实）';
-  } else {
-    badge.style.display = 'none';
   }
 }
 
 
-/* ============================================================================
+/* ==
  * 🔵【实时】从后端加载 Docker 资源清单
  *
  * 接口：
@@ -964,45 +986,60 @@ function updateSampleBadge() {
  * 说明：
  *   - 这是真实接口，后端必须实现
  *   - 返回后覆盖 state.groups
- *   - 覆盖后 usingSampleData = false，徽章消失
+ *   - 成功后将 summaryRealData 置为 true
+ *   - 🔵 后端返回空数组（{groups: []}）时也视为「已连上后端但无资源」，
+ *     会清空表格 + 隐藏示例徽章（区别于「后端未实现」）
  *   - 后端未实现时 → 保留仿真数据 + 显示错误提示
  *
  * 期望返回格式：
  *   {
  *     "groups": [
  *       {
- *         "key": "container",          // 分组唯一标识
- *         "label": "容器",             // 分组显示名
- *         "icon": "📦",                // 分组图标
+ *         "key": "container",
+ *         "label": "容器",
+ *         "icon": "📦",
  *         "items": [
  *           {
- *             "key": "container.all",  // 项唯一标识
- *             "label": "所有容器",      // 项显示名
+ *             "key": "container.all",
+ *             "label": "所有容器",
  *             "desc": "说明文字",
- *             "risk": "high",          // low/medium/high/critical
- *             "count": 12,             // 🟢 真实数量
- *             "size": "1.2 GB",        // 🟢 真实占用
- *             "status": "12 个",       // 🟢 真实状态
- *             "isPhpo": true           // 🟢 真实业务标记
+ *             "risk": "high",
+ *             "count": 12,
+ *             "size": "1.2 GB",
+ *             "status": "12 个",
+ *             "isPhpo": true
  *           }
  *         ]
  *       }
  *     ]
  *   }
- * ============================================================================
+ * ==
  */
-async function loadSummary() {
+async function loadSummary(options = {}) {
+  const preserveSelection = !!options.preserveSelection;
+  const previousSelection = Array.isArray(options.previousSelection) ? options.previousSelection : null;
+
   clearError();
   try {
     const data = await api('/api/docker/other/summary');
-    if (data && Array.isArray(data.groups) && data.groups.length > 0) {
+    if (data && Array.isArray(data.groups)) {
       state.groups = data.groups;
-      state.usingSampleData = false;
+      state.summaryRealData = true;
+      state.usingSampleData = !(state.summaryRealData && state.phpoRealData);
+
+      // 🔵 清理已不存在的 unlockedPhpoKeys
+      const allKeySet = new Set(getAllKeys());
+      state.unlockedPhpoKeys = new Set(
+        Array.from(state.unlockedPhpoKeys).filter(k => allKeySet.has(k))
+      );
+
       state.groups.forEach(g => {
         if (state.collapsedGroups[g.key] === undefined) state.collapsedGroups[g.key] = true;
       });
+
       renderOtherPanel();
-      applyScopeToSelection(state.scopeMode);
+      applyScopeToSelection(state.scopeMode, { preserveSelection, previousSelection });
+      updateBannerMain();
       updateSampleBadge();
     }
   } catch (e) {
@@ -1012,7 +1049,7 @@ async function loadSummary() {
 }
 
 
-/* ============================================================================
+/* ==
  * 🔵【实时】从后端检索 phpo 相关资源
  *
  * 接口：
@@ -1021,6 +1058,7 @@ async function loadSummary() {
  * 说明：
  *   - 这是真实接口，后端必须实时检索 Docker
  *   - 后端需要判断哪些容器/镜像/卷/网络属于 phpo 服务
+ *   - 成功后将 phpoRealData 置为 true
  *
  * 期望返回格式：
  *   {
@@ -1031,7 +1069,7 @@ async function loadSummary() {
  *     "compose":   ["phpo"],
  *     "swarm":     ["phpo-stack"]
  *   }
- * ============================================================================
+ * ==
  */
 async function loadPhpoResources(showToastWhenDone = false) {
   state.phpoResourcesLoading = true;
@@ -1042,7 +1080,8 @@ async function loadPhpoResources(showToastWhenDone = false) {
     const data = await api('/api/docker/phpo-resources');
     if (data && typeof data === 'object') {
       state.phpoResources = data;
-      state.usingSampleData = false;
+      state.phpoRealData = true;
+      state.usingSampleData = !(state.summaryRealData && state.phpoRealData);
       updateSampleBadge();
     }
     if (showToastWhenDone) showToast('已重新检索 phpo 相关资源', 'ok');
@@ -1057,19 +1096,30 @@ async function loadPhpoResources(showToastWhenDone = false) {
 }
 
 
-/* ============================================================================
+/* ==
  * 🔵【实时】刷新全部（用户点“↻ 刷新”或清理任务完成后调用）
- * ============================================================================
+ *
+ * ⚠️ 修复：
+ *   刷新时会保存当前 selectedOther 快照，刷新后按新 key 集合保留用户已勾选的项，
+ *   避免「点刷新后用户之前勾的项被静默清空」的问题。
+ * ==
  */
 async function reloadAll() {
   clearError();
-  await Promise.all([loadSummary(), loadPhpoResources(false)]);
+  const snapshot = [...state.selectedOther];
+  await Promise.all([
+    loadSummary({ preserveSelection: true, previousSelection: snapshot }),
+    loadPhpoResources(false)
+  ]);
+  // 双保险：两个请求并发完成后再统一刷新一次 banner / 徽章
+  updateBannerMain();
+  updateSampleBadge();
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】面板 / 分组折叠（纯前端 UI）
- * ============================================================================
+ * ==
  */
 function togglePanelCollapse() {
   state.panelCollapsed = !state.panelCollapsed;
@@ -1098,7 +1148,7 @@ function applyGroupCollapse() {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】切换清理模式（纯前端交互）
  *
  * 保留模式：
@@ -1107,22 +1157,27 @@ function applyGroupCollapse() {
  *
  * 清理模式：
  *   全部项全部勾选
- * ============================================================================
+ *
+ * ⚠️ 重要：切换「保留 phpo 服务」和「一起清理 phpo 服务」时，
+ *    始终重置列表中默认的勾选项，不保留用户之前的任何手动勾选/取消状态。
+ * ==
  */
 function setScopeMode(mode) {
   state.scopeMode = mode;
+  // ⚠️ 切换到保留模式时，先清空手动解锁的 phpo 项，确保 phpo 项回到默认锁定状态
   if (mode === 'keep') {
     state.unlockedPhpoKeys.clear();
   }
   document.getElementById('cardKeep').classList.toggle('active', mode === 'keep');
   document.getElementById('cardRemove').classList.toggle('active', mode === 'remove');
   renderOtherPanel();
+  // ⚠️ 应用该模式的默认勾选策略，完全重置 selectedOther
   applyScopeToSelection(mode);
   updateBannerMain();
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】状态提示条
  *
  * 保留模式 → 蓝色条
@@ -1130,7 +1185,7 @@ function setScopeMode(mode) {
  *
  * 数字统计（nonPhpoCount / phpoCount / unlockedCount）
  * 都是从当前 state 里实时算的，不是仿真数据。
- * ============================================================================
+ * ==
  */
 function updateBannerMain() {
   const banner = document.getElementById('statusBanner');
@@ -1191,9 +1246,9 @@ function renderBannerDetail() {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】查找工具（纯前端）
- * ============================================================================
+ * ==
  */
 function findItem(itemKey) {
   for (const g of state.groups) {
@@ -1205,14 +1260,14 @@ function findItem(itemKey) {
 function findGroup(groupKey) { return state.groups.find(g => g.key === groupKey); }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】渲染主表（纯前端，用当前 state.groups 渲染）
  *
  * 注意：
  *   如果 state.groups 来自仿真数据 → 表格显示仿真数据
  *   如果来自真实 API → 表格显示真实数据
  *   前端渲染逻辑不变
- * ============================================================================
+ * ==
  */
 function renderOtherPanel() {
   const tbody = document.getElementById('otherTableBody');
@@ -1267,8 +1322,6 @@ function renderOtherPanel() {
           <div class="row-actions">
             <button class="icon-btn" data-tip="预览" onclick="previewItem('${item.key}')">${ICONS.preview}</button>
             <button class="icon-btn danger" data-tip="彻底清空" onclick="cleanItem('${item.key}')">${ICONS.clean}</button>
-            <button class="icon-btn" data-tip="终端" onclick="openTerminalItem('${item.key}')">${ICONS.terminal}</button>
-            <button class="icon-btn tip-right" data-tip="导出" onclick="exportItem('${item.key}')">${ICONS.export}</button>
           </div>
         </td>
       </tr>`;
@@ -1315,13 +1368,13 @@ function syncCheckboxes() {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】用户点单项复选框
  *
  * 逻辑：
  *   保留模式 + phpo 项 + 未解锁 → 弹框（不直接勾选）
  *   其他情况 → 正常勾选/取消
- * ============================================================================
+ * ==
  */
 function onItemClick(key, event) {
   const item = findItem(key);
@@ -1347,7 +1400,7 @@ function onItemClick(key, event) {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】用户点分组复选框
  *
  * 逻辑和单项、全选完全一致：
@@ -1356,7 +1409,7 @@ function onItemClick(key, event) {
  *   保留模式 + 勾选 → 检查组内 phpo 项：
  *                      都解锁了 → 直接勾选
  *                      有未解锁的 → 弹框
- * ============================================================================
+ * ==
  */
 function onGroupClick(groupKey, event) {
   const cb = event.target;
@@ -1399,7 +1452,7 @@ function onGroupClick(groupKey, event) {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】用户点表头全选框
  *
  * 逻辑和单项、分组一致：
@@ -1408,45 +1461,55 @@ function onGroupClick(groupKey, event) {
  *   保留模式 + 全选 → 检查 phpo 项：
  *                      都解锁了 → 直接全选
  *                      有未解锁的 → 弹框
- * ============================================================================
+ *
+ * 🔵 修复：与工具栏「全选」按钮共用 doSelectAll()，避免逻辑漂移。
+ * ==
  */
 function onSelectAllClick(event) {
   const cb = event.target;
 
-  if (state.scopeMode !== 'keep') {
-    if (cb.checked) {
-      state.selectedOther = [...getAllKeys()];
-    } else {
-      state.selectedOther = [];
-    }
-    syncCheckboxes();
-    updateSelectedCount();
-    return;
-  }
-
   if (!cb.checked) {
+    // 取消是全选的反操作，直接清空（安全操作，不弹框）
     state.selectedOther = [];
     syncCheckboxes();
     updateSelectedCount();
     return;
   }
 
-  const phpoKeys = getPhpoKeys();
-  const allPhpoUnlocked = phpoKeys.every(k => state.unlockedPhpoKeys.has(k));
+  doSelectAll();
+}
 
-  if (allPhpoUnlocked) {
+
+/* ==
+ * 🟢【真实】全选逻辑（工具栏「全选」按钮 + 表头全选框共用）
+ * ==
+ */
+function doSelectAll() {
+  const allCb = document.getElementById('selectAllCheckbox');
+
+  if (state.scopeMode === 'keep') {
+    const phpoKeys = getPhpoKeys();
+    const allPhpoUnlocked = phpoKeys.every(k => state.unlockedPhpoKeys.has(k));
+    if (!allPhpoUnlocked) {
+      if (allCb) allCb.checked = false;
+      openUnlockModal('ALL');
+      return;
+    }
     state.selectedOther = [...getAllKeys()];
-    syncCheckboxes();
+    getPhpoKeys().forEach(k => state.unlockedPhpoKeys.add(k));
+    renderOtherPanel();
+    updateBannerMain();
     updateSelectedCount();
     return;
   }
 
-  cb.checked = false;
-  openUnlockModal('ALL');
+  state.selectedOther = [...getAllKeys()];
+  syncCheckboxes();
+  updateSelectedCount();
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】打开解锁确认弹框（支持 3 种场景）
  *
  * keyOrAll:
@@ -1455,7 +1518,7 @@ function onSelectAllClick(event) {
  *   'GROUP:xxx'    → 分组解锁
  *
  * 弹框里显示的信息（数量/占用）来自当前 state，可能来自仿真也可能来自真实 API。
- * ============================================================================
+ * ==
  */
 function openUnlockModal(keyOrAll) {
   pendingUnlockKey = keyOrAll;
@@ -1556,6 +1619,7 @@ document.getElementById('unlockExecuteBtn').addEventListener('click', () => {
     closeModal('unlockModal');
     renderOtherPanel();
     updateBannerMain();
+    updateSelectedCount();
     showToast('已解锁全部 phpo 项并全选', 'ok');
 
   } else if (pendingUnlockKey.startsWith('GROUP:')) {
@@ -1571,6 +1635,7 @@ document.getElementById('unlockExecuteBtn').addEventListener('click', () => {
     closeModal('unlockModal');
     renderOtherPanel();
     updateBannerMain();
+    updateSelectedCount();
     const group = findGroup(groupKey);
     showToast(`已解锁「${group ? group.label : groupKey}」并勾选该组全部项`, 'ok');
 
@@ -1583,54 +1648,23 @@ document.getElementById('unlockExecuteBtn').addEventListener('click', () => {
     closeModal('unlockModal');
     renderOtherPanel();
     updateBannerMain();
+    updateSelectedCount();
     showToast('已解锁并勾选：' + (findItem(key)?.label || key), 'ok');
   }
   pendingUnlockKey = null;
 });
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】选择逻辑工具（纯前端）
- * ============================================================================
+ * ==
  */
 function updateSelectedCount() {
   document.getElementById('selectedCount').textContent = `已选 ${state.selectedOther.length}`;
   syncCheckboxes();
 }
 
-function selectAllOther() {
-  if (state.scopeMode === 'keep') {
-    const phpoKeys = getPhpoKeys();
-    const allPhpoUnlocked = phpoKeys.every(k => state.unlockedPhpoKeys.has(k));
-    if (!allPhpoUnlocked) {
-      openUnlockModal('ALL');
-      return;
-    }
-  }
-  state.selectedOther = [...getAllKeys()];
-  if (state.scopeMode === 'keep') {
-    getPhpoKeys().forEach(k => state.unlockedPhpoKeys.add(k));
-    renderOtherPanel();
-    updateBannerMain();
-  }
-  syncCheckboxes();
-  updateSelectedCount();
-}
-
-function invertOther() {
-  const all = getAllKeys();
-  state.selectedOther = all.filter(k => !state.selectedOther.includes(k));
-  if (state.scopeMode === 'keep') {
-    state.selectedOther.forEach(k => {
-      const item = findItem(k);
-      if (item && item.isPhpo) state.unlockedPhpoKeys.add(k);
-    });
-    renderOtherPanel();
-    updateBannerMain();
-  }
-  syncCheckboxes();
-  updateSelectedCount();
-}
+function selectAllOther() { doSelectAll(); }
 
 function clearOther() {
   state.selectedOther = [];
@@ -1639,7 +1673,7 @@ function clearOther() {
 }
 
 
-/* ============================================================================
+/* ==
  * 🔴【实接】预览清理操作
  *
  * 接口：
@@ -1654,17 +1688,16 @@ function clearOther() {
  * 期望返回：
  *   {
  *     "previewToken": "一次性token",   // 🔴 提交清理时必须回传
- *     "commands": ["docker rm -f xxx", ...],  // 🟢 后端生成的真实命令
- *     "willDelete": [                          // 🟢 后端返回的真实删除对象
+ *     "willDelete": [
  *       { "type": "container", "name": "phpo-php-8.4", "size": "120 MB" }
  *     ],
- *     "warnings": ["将停止 3 个运行中容器"]     // 🟢 后端警告
+ *     "warnings": ["将停止 3 个运行中容器"]
  *   }
  *
  * 说明：
  *   这是生产环境必须真实调用的接口。
  *   后端需要真实调 Docker API 做 dry-run，不能返回假数据。
- * ============================================================================
+ * ==
  */
 async function previewItem(key) { await openPreview([key], '清理预览'); }
 async function previewSelected() {
@@ -1678,16 +1711,16 @@ async function openPreview(targets, title) {
   document.getElementById('previewNextBtn').disabled = true;
   document.getElementById('previewModal').classList.add('active');
 
-  // 🟡 仿真模式：后端未接上时，本地生成假预览命令（仅供演示）
+  // 🟡 仿真模式：后端未接上时，本地生成假预览（仅供演示）
   if (state.usingSampleData) {
+    // ⚠️ 修复：仿真模式下清空 previewToken，防止脏 token 泄漏到后续提交
+    state.currentPreviewToken = null;
     document.getElementById('previewBody').innerHTML = `
       <div class="warn-box">
         <strong>⚠️ 当前为示例数据（演示用）</strong>
-        后端未连接，以下预览为本地生成的假命令，生产环境必须由后端真实返回。
+        后端未连接，以下预览为本地生成，生产环境必须由后端真实返回。
       </div>
       ${buildScopeBlockHtml()}
-      <p style="margin-bottom:6px;">将执行以下命令（假）：</p>
-      <pre>${targets.map(t => `# 假命令 for ${t}\ndocker xxx ${t}`).join('\n')}</pre>
       <p style="margin-top:12px;">将删除 <strong>${targets.length}</strong> 项（假）。</p>
     `;
     document.getElementById('previewNextBtn').disabled = false;
@@ -1705,19 +1738,23 @@ async function openPreview(targets, title) {
       body: JSON.stringify({ targets, dryRun: true })
     });
     state.currentPreviewToken = res.previewToken;
-    const willDeleteHtml = (res.willDelete || []).length
-      ? `<ul class="plain-tags">${res.willDelete.map(d => `<li>${d.type}: ${d.name}${d.size ? ' (' + d.size + ')' : ''}</li>`).join('')}</ul>`
+
+    // 🟢【真实】预览返回的删除对象列表
+    const willDeleteList = res.willDelete || res.items || res.deleteList || [];
+    const willDeleteHtml = willDeleteList.length
+      ? `<ul class="plain-tags">${willDeleteList.map(d => `<li>${d.type || ''}: ${d.name || ''}${d.size ? ' (' + d.size + ')' : ''}</li>`).join('')}</ul>`
       : '<div class="loading-text">无</div>';
-    const warnHtml = (res.warnings || []).length
-      ? `<div class="warn-box"><strong>⚠️ 后端警告</strong>${res.warnings.join('<br>')}</div>`
+
+    // 🟢【真实】预览返回的警告列表
+    const warnList = res.warnings || res.messages || res.alerts || [];
+    const warnHtml = warnList.length
+      ? `<div class="warn-box"><strong>⚠️ 后端警告</strong>${warnList.join('<br>')}</div>`
       : '';
 
     document.getElementById('previewBody').innerHTML = `
       ${buildScopeBlockHtml()}
       ${warnHtml}
-      <p style="margin-bottom:6px;">将执行以下命令：</p>
-      <pre>${(res.commands || []).join('\n') || '# 无命令'}</pre>
-      <p style="margin-top:12px;margin-bottom:6px;">将删除对象：</p>
+      <p style="margin-bottom:6px;">将删除对象：</p>
       ${willDeleteHtml}
     `;
     document.getElementById('previewNextBtn').disabled = false;
@@ -1733,14 +1770,18 @@ async function openPreview(targets, title) {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】打开二次确认弹窗（纯前端）
- * ============================================================================
+ *
+ * 🔵 说明：
+ *   cleanItem（行内「彻底清空」按钮）与 previewItem（行内「预览」按钮）
+ *   都先经过预览拿 token（真实模式下必须），只是预览标题语义不同。
+ * ==
  */
-async function cleanItem(key) { await openPreview([key], '清理预览'); }
+async function cleanItem(key) { await openPreview([key], '彻底清空预览'); }
 async function cleanSelected() {
   if (state.selectedOther.length === 0) { showToast('请先选择要清理的资源', 'err'); return; }
-  await openPreview(state.selectedOther, '清理预览');
+  await openPreview(state.selectedOther, '彻底清空预览');
 }
 
 let confirmTargets = [];
@@ -1761,7 +1802,7 @@ function onConsentChange(cb) {
 }
 
 
-/* ============================================================================
+/* ==
  * 🔴【实接】提交清理任务
  *
  * 接口：
@@ -1769,24 +1810,14 @@ function onConsentChange(cb) {
  *
  * 请求体：
  *   {
- *     "targets": ["container.all", ...],       // 要清理的项
- *     "previewToken": "xxx",                    // 🔴 必须回传，后端校验
- *     "consent": true                           // 🔴 用户已勾选知情同意
+ *     "targets": ["container.all", ...],
+ *     "previewToken": "xxx",
+ *     "consent": true
  *   }
  *
  * 期望返回：
- *   {
- *     "taskId": "task-20260101-abc123"          // 🔴 任务 ID，前端用于轮询
- *   }
- *
- * 说明：
- *   这是生产环境必须真实调用的接口。
- *   后端要求：
- *     1. 必须校验 previewToken（一次性、5 分钟过期）
- *     2. 必须校验 consent = true
- *     3. 必须真实调 Docker API 做清理
- *     4. 必须写审计日志
- * ============================================================================
+ *   { "taskId": "task-20260101-abc123" }
+ * ==
  */
 document.getElementById('confirmExecuteBtn').addEventListener('click', async () => {
   const consent = document.getElementById('consentCheckbox');
@@ -1829,7 +1860,7 @@ document.getElementById('confirmExecuteBtn').addEventListener('click', async () 
 });
 
 
-/* ============================================================================
+/* ==
  * 🔵【实时】轮询清理任务进度
  *
  * 接口：
@@ -1842,126 +1873,62 @@ document.getElementById('confirmExecuteBtn').addEventListener('click', async () 
  *     "message": "正在删除卷..."
  *   }
  *
- * 说明：
- *   - 每 5 秒轮询一次
- *   - 最多轮询 120 次（约 10 分钟）
- *   - 完成后会自动刷新资源清单
- * ============================================================================
+ * 🔵 修复：
+ *   - 改为递归 setTimeout，避免 setInterval 累计漂移
+ *   - 网络抖动容忍 3 次连续错误，超过才放弃
+ *   - done / failed / 超时后都自动刷新资源清单，避免停留在旧数据
+ * ==
  */
 async function pollTask(taskId) {
-  const maxAttempts = 120;
+  const maxAttempts = 120;         // 最多 120 次（约 10 分钟）
+  const intervalMs = 5000;         // 每 5 秒一次
+  const maxConsecutiveErrors = 3;  // 连续错误上限
   let attempts = 0;
-  const timer = setInterval(async () => {
+  let consecutiveErrors = 0;
+
+  async function tick() {
     attempts++;
+
     try {
       const res = await api(`/api/docker/other/tasks/${taskId}`);
+      consecutiveErrors = 0;
+
       if (res.status === 'done') {
-        clearInterval(timer);
         showToast(`清理任务完成：${taskId}`, 'ok');
         reloadAll();
-      } else if (res.status === 'failed') {
-        clearInterval(timer);
+        return;
+      }
+      if (res.status === 'failed') {
         showToast(`清理任务失败：${res.message || taskId}`, 'err');
+        reloadAll();
+        return;
       }
     } catch (e) {
-      clearInterval(timer);
-      showToast('查询任务失败：' + e.message, 'err');
+      consecutiveErrors++;
+      if (consecutiveErrors >= maxConsecutiveErrors) {
+        showToast(`查询任务失败（连续 ${maxConsecutiveErrors} 次）：${e.message}`, 'err');
+        reloadAll();
+        return;
+      }
     }
+
     if (attempts >= maxAttempts) {
-      clearInterval(timer);
       showToast('任务轮询超时，请到审计日志查看', 'err');
+      reloadAll();
+      return;
     }
-  }, 5000);
+
+    setTimeout(tick, intervalMs);
+  }
+
+  setTimeout(tick, intervalMs);
 }
 
 
-/* ============================================================================
- * 🔴【实接】打开终端
- *
- * 接口：
- *   POST /api/docker/other/terminal
- *
- * 请求体：
- *   { "targets": ["container.all", ...] }
- *
- * 期望返回：
- *   {
- *     "wsUrl": "wss://your-server.com/terminal/abc123",   // 🔴 真实 WebSocket 地址
- *     "sessionId": "abc123"
- *   }
- *
- * 说明：
- *   这是生产环境必须真实调用的接口。
- *   后端要真实起一个终端会话，返回可连接的 WebSocket 地址。
- * ============================================================================
- */
-async function openTerminalItem(key) { await openTerminal([key]); }
-async function openTerminal(targets) {
-  if (state.usingSampleData) {
-    showToast('⚠️ 当前为示例数据，未连接后端终端', 'err');
-    return;
-  }
-  try {
-    const res = await api('/api/docker/other/terminal', {
-      method: 'POST', body: JSON.stringify({ targets })
-    });
-    if (!res.wsUrl) throw new Error('后端未返回 wsUrl');
-    window.open(res.wsUrl, '_blank');
-    showToast('终端已打开', 'ok');
-  } catch (e) {
-    showToast('打开终端失败：' + e.message, 'err');
-  }
-}
-
-
-/* ============================================================================
- * 🔴【实接】导出
- *
- * 接口：
- *   POST /api/docker/other/export
- *
- * 请求体：
- *   { "targets": ["container.all", ...], "format": "json" }
- *
- * 期望返回：
- *   {
- *     "downloadUrl": "/api/docker/other/export/abc123.json",
- *     "filename": "docker-export-2026.json"
- *   }
- *
- * 说明：
- *   这是生产环境必须真实调用的接口。
- *   后端要真实生成导出文件，返回可下载的 URL。
- * ============================================================================
- */
-async function exportItem(key) { await exportTargets([key]); }
-async function exportTargets(targets) {
-  if (state.usingSampleData) {
-    showToast('⚠️ 当前为示例数据，未连接后端导出', 'err');
-    return;
-  }
-  try {
-    const res = await api('/api/docker/other/export', {
-      method: 'POST', body: JSON.stringify({ targets, format: 'json' })
-    });
-    if (!res.downloadUrl) throw new Error('后端未返回 downloadUrl');
-    const a = document.createElement('a');
-    a.href = res.downloadUrl;
-    a.download = res.filename || '';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    showToast('导出已开始', 'ok');
-  } catch (e) {
-    showToast('导出失败：' + e.message, 'err');
-  }
-}
-
-
-/* ============================================================================
+/* ==
  * 🟢【真实】弹窗里显示当前范围（纯前端）
  *   数据来自 state.phpoResources（可能仿真也可能真实）
- * ============================================================================
+ * ==
  */
 function buildScopeBlockHtml() {
   const isKeep = state.scopeMode === 'keep';
@@ -1992,9 +1959,9 @@ function buildScopeBlockHtml() {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】小工具 / Toast / 关闭弹窗（纯前端）
- * ============================================================================
+ * ==
  */
 function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
@@ -2008,7 +1975,7 @@ function showToast(msg, type = '') {
 }
 
 
-/* ============================================================================
+/* ==
  * 🟢【真实】初始化
  *
  * 流程：
@@ -2016,7 +1983,7 @@ function showToast(msg, type = '') {
  *   2. 面板默认折叠
  *   3. 🟡 先用仿真数据渲染 → 页面立刻有东西看
  *   4. 🟢 尝试拉真实数据 → 成功则覆盖仿真；失败则保留仿真 + 显示提示
- * ============================================================================
+ * ==
  */
 async function init() {
   setScopeMode('keep');
@@ -2036,9 +2003,9 @@ init();
 </script>
 
 <!--
-============================================================================
+==
   【后端 API 契约】—— 给后端工程师看的对接说明
-============================================================================
+==
 
   ▍接口 1：GET /api/docker/other/summary
   ▍用途：🟢 获取 Docker 资源清单（分组 + 每项数量/占用/状态/isPhpo）
@@ -2064,6 +2031,10 @@ init();
           }
         ]
       }
+  ▍注意：
+      - 后端返回空数组 { "groups": [] } 表示「已连上但无资源」，
+        前端会清空表格 + 隐藏示例徽章，不会再 fallback 到仿真数据。
+      - 只有请求失败（网络错误 / 非 2xx）才会 fallback。
 
   ▍接口 2：GET /api/docker/phpo-resources
   ▍用途：🔵 实时检索 phpo 相关资源
@@ -2078,12 +2049,14 @@ init();
       }
 
   ▍接口 3：POST /api/docker/other/preview
-  ▍用途：🔴 预览要执行的命令（dry-run）
+  ▍用途：🔴 预览要删除的对象（dry-run）
   ▍请求：{ "targets": ["container.all", ...], "dryRun": true }
   ▍响应：
       {
         "previewToken": "一次性token（提交清理时回传）",
-        "commands": ["docker rm -f xxx", ...],
+        // ⚠️ 以下字段名可根据后端实际结构调整，前端已做容错：
+        //   willDelete → 也支持 items / deleteList
+        //   warnings   → 也支持 messages / alerts / notices
         "willDelete": [
           { "type": "container", "name": "phpo-php-8.4", "size": "120 MB" }
         ],
@@ -2114,19 +2087,9 @@ init();
         "message": "正在删除卷..."
       }
 
-  ▍接口 6：POST /api/docker/other/terminal
-  ▍用途：🔴 打开终端
-  ▍请求：{ "targets": ["container.all", ...] }
-  ▍响应：{ "wsUrl": "wss://...", "sessionId": "abc123" }
-
-  ▍接口 7：POST /api/docker/other/export
-  ▍用途：🔴 导出
-  ▍请求：{ "targets": ["container.all", ...], "format": "json" }
-  ▍响应：{ "downloadUrl": "/api/.../abc.json", "filename": "docker-export.json" }
-
-============================================================================
+==
   【接后端时前端需要改的地方】
-============================================================================
+==
 
   1. 🔴 API_BASE
      改成后端地址。同域可留 ''。
@@ -2149,7 +2112,10 @@ init();
   7. 🟡 删除 usingSampleData 字段和「示例数据」徽章
      或者改成「数据已连接」的绿色标识。
 
-============================================================================
+  8. 🟢 调整预览字段名（如后端不用 willDelete / warnings）
+     修改 openPreview() 中的 willDeleteList / warnList 取值行。
+
+==
 -->
 </body>
 </html>

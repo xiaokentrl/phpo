@@ -25,6 +25,8 @@
 > **扩展开关的语义**（v2.9.14 追加，见 §5.16.2）：`EXT_CATALOG` 每一行那颗开关**只表达「这个扩展在本 PHP 版本上启用了没有」**——启用即 on、未启用即 off。**停用 = 不再加载**（删 `conf.d` ini），**不是卸载**：`.so` 留在镜像里，开关照样回 off，不得因为「文件还在」就显示 on。基座自带的扩展（`curl`／`mbstring`／`openssl`／`dom`／`xml`／`opcache`／`sodium`…实测 **21** 项）因此**必须**显示为 on，不得因为 phpo 没装过它们就显示 off；其中 **19** 项是**静态内建**（无 `.so`、无 ini，删无可删），故开关**三档**：`on · 可停用` ／ `on · 内建不可停用` ／ `off`——不得给内建项一颗假的取消开关
 > **扩展编译失败要说清缺哪个系统包**（v2.9.14 追加，见 §5.16.6）：扩展装不上多半**不是扩展本身缺失**，而是它编译时要用的那个**系统开发包**没在基座里——`configure` 用 `pkg-config` 找不到它就中止。界面上不得只留一句「扩展 gd 安装失败」：同一批日志要多落一行 `err` 点名缺的包并给出两种基座的安装名（**28** 个 `pkg-config` 名 → **17** 对包名，两侧包名逐个现取命令验证过；表里没有的名字**原样报出、不编造**）与一行 `dim` 说清怎么回来（在跑的这个容器里装上 → 再点「应用并重建」→ 随 `docker commit` 固化），toast 也带上包名（`扩展 gd 安装失败（缺系统开发包 zlib），本次扩展集未应用`）。三条不得：**① phpo 不代装系统包**——不 `apt-get install` / 不 `apk add`、不改用户基座的包状态（§0.2 规则 36 同口径：只离线扩展包本体，不为基座系统包造缓存槽位）；**② 版本太旧那一族写法刻意不认**（`Requested 'x >= 1.0' but version of X is …` 是「装了但旧」，报成「缺包」就是假话）；**③ 停用失败不甩锅系统开发包**（停用只是 `rm -f` 一份 ini，§5.16.4）。识别用的就是已逐行进日志的那份编译输出，**不新增探针、不新增事件名／任务状态／快照字段／文案键**
 > **Docker 镜像源**（v2.9.14 追加，见 §5.21）：设置页可填**多个**镜像源地址（一行一个 `主机[:端口]`），点「检测」并发问一次 registry 握手（`GET /v2/`，单源 **5s** 超时）看每一行的**延迟 ms** 与不通原因，装服务时**先试延迟最小的那个**、它拉不动就按序换下一个，全部失败才直连官方。三条不得：**① 不写宿主 Docker 的配置**（绝不改 `daemon.json`、不配 `registry-mirrors`、不重启用户的 Docker Desktop / Docker Engine——那会重启正在跑的容器，且 macOS/Windows 上会被 Docker Desktop 下次启动覆盖回去），改写只发生在 phpo 自己那一次拉取的镜像名前缀上；**② 「检测」的结论不落库、不进快照、不新增事件名**（17 事件名冻结），它是请求/响应回来的即时数字，真正拉取时还会**现测一次**再排序（检测过了几分钟就过期，持久化等于把过期结论当成事实）；**③ 唯一校验是地址合形**（主机[:端口]，禁路径分隔符与 `..`），**可达性不拦**——填了暂时连不上的源照常收下，保存时的警告 + 拉取时逐源点名 + 自动回落直连官方（§0.2 规则 15/16）。空清单合法，语义即「不改写镜像名、直连官方」
+> **Docker 全量资源清理面板**（v2.9.14 追加，见 §5.22）：总览页底部把「这台机器上 Docker 还占着什么」摊成 **60 行 / 11 组**（容器 / 镜像 / 卷 / 网络 / 构建缓存 / 日志 / 插件 / Swarm / Compose / 系统运行时 / 其他），每行的数量与占用都是当场数出来的；**数不出来的一律显示「—」并附一句原因，绝不给 0**。三档口径：Docker 自己能删的（**25** 行）给按钮；要管理员授权才动得了宿主文件的（**19** 行）也给按钮、删之前先授权；phpo 没有安全删法的（**16** 行，如防火墙规则、docker0 网桥、Docker 自己的配置文件）**只说清去哪儿清、不给按钮**。危险名单**恰好 4 行**（`network.veth` / `network.netns` / `network.cni` / `system.group`）——「全选」永不带走它们，每次单独勾都要先看后果并点「确定要选上」，行上的 risk 徽标**只上色、不参与任何判定**。「彻底清空」前必须先「预览」：把每一行摊成一项一项的具体对象让用户逐个取消勾选，凭据**一次性、10 分钟过期**；一次清空 = **一个任务**、逐项一行、单颗失败不中断其余；有数据的先挪进回收站留 7 天（**5** 行），phpo 自己的卷挪不动就**不删**。扫描与预览是纯读、**不入任务队列**（扫描期间照常建站、启停），进度复用既有 `docker:cleanup` 的可选 `step`/`total`，**17 事件名一个不增**。面板外观按应用自身主题重做（见 §5.22 的生产偏离登记）；原型正本 `Docker 全量资源清理_原型模板.html` 仍是唯一界面来源，不改。
+
 > **文档必须说人话**（v2.9.14 追加，见 §0.2 规则 38 / §12.11）：本文件、`docs/` 全部文档、代码注释、以及**界面文案**（前端 `locales/`、向导提示、错误信息）**一律用大白话写**。写法固定为三步：① 先用一句话说明**这是干什么的**（不说术语）；② 再说**什么情况下会错**、错的时候用户看得见什么；③ 最后说**怎么回来**（恢复路径、点哪里）。字段名、函数名、条款编号只在句尾作**索引**用，不得充当解释——内部词（「权威集」「派生态」「落地链」「归一」「幂等」）首次出现时必须顺带说清它指什么，否则等于让读者去查词典。判据：把这一段拿给**没参与过当轮讨论的同事**读，他能复述出「改了什么、为什么、怎么验证」才算合格；需要反问才能读懂的即重写
 > **路径记法**：本文件的 **`./` 一律指 PHPO_HOME 根**（即 `config.yaml` 的 `phpo_home`，由装机向导指向任意目录；`~/phpo` 只是默认值，**打包安装后不得假定工作目录在用户主目录**）。`<用户数据目录>` 仍是各平台 XDG 的 `os.UserConfigDir()/phpo`（`config.yaml` / `phpo.db` / `logs` / `trash` / `updates`），与 PHPO_HOME **不同源**；`~/www/` 是 WWW_ROOT 的默认值（同样可改）。同一记法**同等约束 `docs/` 全部文档、任务工单、代码注释与面向用户的文案（前端 locales）**——只有带「默认」字样的默认值/预填值可写字面量。详见 §0.1.1
 > **状态同步**：后端唯一权威；前端只订阅事件、不做乐观更新；**一切操作/日志/队列/请求/响应必须实时同步界面 UI 与抽屉日志**——§5.6 的 17 个事件名逐一有前端落地处（见 §5.6.2，无任务归属的事件走抽屉左栏的「系统日志通道」）
@@ -131,7 +133,7 @@
 30. **禁止「操作跑了但界面说不出在跑什么、按钮还亮着」**（v2.9.13 新增，见 §5.6.4）：任何需要等待的写操作，① 该操作的**直观名字**必须在**用户点开抽屉的第一眼**出现在左栏日志之上（`.drawer-task-title` 标题条，文本唯一来源仍是快照 `TaskBrief.Label`）；② 等待期间**被点的那一颗按钮保持禁用**，直到本次操作收口**且权威快照回流之后**才复能。禁用**只限那一颗**——同卡片/同页面的其他按钮照常可点（FIFO 排队是合法路径，见 §5.6），不得做成全局串行、不得拦整个视图、不得禁掉与本次操作无关的控件。
 31. **禁止「Docker 被第三方工具改过，界面却只说已安装」**（v2.9.14 新增，见 §5.19）：手动「同步状态」是**全量口径**——逐个已安装版本核容器 / 基座镜像 / 扩展固化镜像三样，缺席项以快照 `gaps`（`ServiceGap{kind,version,reason,ref}`）点名并随 `docker:state-drift` 广播（**不新增事件名**）；服务卡片显示缺失态、抽屉逐行说明缺的是哪一样、怎么回来。但**不得自动改写 `installed`**、不得自动删资源——外部删除是**派生态**而非卸载指令，恢复由用户点「启用」走幂等重建。
 32. **禁止 phpo 自己的产出物留非 0777 权限**（v2.9.14 新增，见 §5.20）：目录与文件一律 `0777`，且**必须显式 `chmod` 归一**——只把 `0o777` 写进 `os.MkdirAll`/`os.WriteFile` 入参不算合规（进程 umask 会削位，`022` 下实际得到 `0755`/`0644`）；旧装机留下的 `0755`/`0644` 要在下一次写入时修好。**容器内进程写的文件不适用本条**，不得为此去 `chown`/`chmod` 用户环境里的他人文件。
-33. **禁止「至少保留一个」这类保留门禁**（v2.9.14 新增，见 §1.11）：卸载时「存在依赖该版本的站点」「这是最后一个 PHP 版本」一律**降级为警告并照常卸载**（PHP 与 Nginx 同口径）；`pkg/errs` 已删除 `LastPhp` 码（28 → **27**），卸载分支只保留 `SvcMissing` 与 `NotInstalled` 两条 `errf`。把可警告的事做成阻止，等于替程序员做决定（§0.2 规则 15/16）。
+33. **禁止「至少保留一个」这类保留门禁**（v2.9.14 新增，见 §1.11）：卸载时「存在依赖该版本的站点」「这是最后一个 PHP 版本」一律**降级为警告并照常卸载**（PHP 与 Nginx 同口径）；`pkg/errs` 已删除 `LastPhp` 码（表内现为 **28** 条 = 原型 28 条删该码得 27，再加生产新增的 `FileMissing`；口径见 §0.3），卸载分支只保留 `SvcMissing` 与 `NotInstalled` 两条 `errf`。把可警告的事做成阻止，等于替程序员做决定（§0.2 规则 15/16）。
 34. **禁止让瞬时弹窗替后台任务守门**（v2.9.14 新增，见 §5.16.2 / §5.16.3）：扩展管理弹窗的 `apply()` **不得 `await`** 数十秒的编译链路——**提交即 `emit('close')`**，进度与失败由抽屉日志 / 右栏队列承载（§5.6.4 同一路子）。同理，任务里**已经做对的那部分**不得被后置环节的失败判死：nginx 缺席/未运行给 `dim` 跳过行、重载失败给一行 `err` 后 `return nil`，**不撤回已编译生效的扩展**。
 35. **禁止把扩展固化镜像与基座镜像写进同一个缓存槽位**（v2.9.14 新增，见 §5.14.2 / §5.16.3）：每个 php 版本**两份** image 缓存（`image.tar` 与 `image-extensions.tar`，清单 `image` / `extensions_image` 各一条）；提升固化镜像后必须**一行 `ok` 点名落点全路径**（`{committedRef} → {extTar}`），只说「已提升」等于没回答需求 ③ 的「有没有提升到 offline 对应的扩展目录内」。
 36. **禁止只缓存扩展的「结果」而不缓存扩展的「包」**（v2.9.14 追加，见 §5.14.3 / §5.16.3）：扩展的**包文件本体**必须在**安装**与**重新编译**两条路径上都落到缓存根（pecl → `{pecl}/{name}-{版本}.tgz`，Alpine 构建依赖 → `{apk}/*.apk`，各带 `manifest.json` 的 SHA256 条目），命中时**零网络回填容器暂存目录** `/tmp/phpo-ext/{apk|pecl}` 并从该文件编译。为此：查找扩展包必须按**扩展名前缀**匹配（`pecl install redis` 的产物永远叫 `redis-6.0.2.tgz`，按精确名查等于永不命中）；Alpine 构建依赖必须用 `apk add --cache-dir <暂存目录>`（官方脚本的 `--no-cache` 用完即弃，永远拿不到 `.apk`）；容器暂存目录必须在 `docker commit` **之前**清空，否则包文件被固化进 `phpo/php:{version}` 镜像层。基座不是 Alpine 时（Debian / 认不出）**不产生可离线的系统包**，给一行 `dim` 说明后跳过——**不得**为此造 deb 槽位。缓存链上任一环节（查询/回填/下载/取回/提升）失败**只 `dim` 并退回在线编译，绝不判死整单**（§0.2 规则 16）。
@@ -140,13 +142,15 @@
 39. **禁止把镜像源做成宿主 Docker 的全局设置、或把测速结论当事实存下来**（v2.9.14 追加，见 §5.21）：设置页那几行「Docker 镜像源」只影响 **phpo 自己发起的那一次 `docker pull`**（换镜像名前缀 → 拉回来归一回原始引用 → 删掉带前缀的别名）。**绝不**写宿主 Docker daemon 的 `daemon.json`、**绝不**改 `registry-mirrors`、**绝不**重启用户的 Docker——那等于替用户改他机器上所有容器的行为。「检测」给出的握手延迟**只在当下有效**：不落库、不进快照、不缓存排名，真正要拉取前必须现问一次再排序，否则几小时后源已不通还优先用它。镜像源是**加速手段**：可达的源按延迟逐个试、失败就换下一个，全都不行才直连官方，直连也失败才报错并在消息里逐源点名；**不得**因为某个源不通就把这次安装判死（§0.2 规则 16），也**不得**因为配了源就跳过离线缓存与本机镜像库那两级（决策 22 的优先级一字不动）。承载上只给 `cache:miss` 补一个 `source` 字段，**17 事件名一个不增**。
 40. **禁止扩展编译失败时只说「失败了」而不说缺哪个系统包**（v2.9.14 追加，见 §5.16.6）：真机上多数扩展装不上，原因不是 pecl 包本身，而是基座镜像里没有编译要用的**系统开发包**（`configure` 会点名，如 `Package 'zlib', required by 'virtual:world', not found`）。因此识别出缺失包时，同一批日志要在点名扩展之外**再多落一行 `err`**（缺的包名 + Debian／Alpine 两种安装名）**和一行 `dim`**（怎么回来：先进**正在运行的这个 php 容器**装上它，再点「应用并重建」——装进容器的那一份会随扩展镜像一起固化），toast 也带包名。三条不得：**① phpo 不代装系统包**（不在容器里跑 `apt`/`apk`，那是 §0.2 规则 36 已经排除过的事——不为基座系统包造缓存槽位，也不越界改用户环境）；**② 版本太旧那一族刻意不认**（`Requested 'libsodium >= 1.0.8' but version of Sodium is 1.0.16` 说的是包**在**、版本不合，报成「缺包」等于界面撒谎，§3.4.1 第 4 条）；**③ 停用失败不甩锅**（停用只是删 ini，与开发包无关，不得套用「缺系统开发包」的措辞）。识别只读**已经流过的**编译输出，**不新增探针、不新增事件名、不新增任务状态、不新增快照字段、不新增文案键**。
 
+41. **禁止把「不知道」画成「没有」，也禁止替用户决定要不要留底**（v2.9.14 追加，见 §5.22）：总览页那 60 行里，任何一行没读到真数字就显示「—」+ 一句原因 + 该行「重试」，**不得**报 0 项 0 B（需求 ㉘）；macOS / Windows 上 Docker 跑在虚拟机里，Linux 专属那几行照样列出来、给「够不着」的原因、不给删除按钮（需求 ⑮）。「详细扫描」= 每次点击**一次**授权、只弹一扇（需求 ⑰）；授权被拒仍要保住已扫到的那一半。「彻底清空」必须先看预览（一项一项的对象、一次性凭据、危险项要知情同意），**不得**跳过预览直接删；有数据的那 5 行先挪进回收站留 7 天，**挪不动就不删**——「删了但一份底都没留」是这条需求不接受的结果（需求 ④/⑳）。删除一律复用 engine 的既有实现（§5.13），**不得**另起第二套删除、第二个回收站（需求 ⑨）；旧三模式清理 / 孤儿 / 回收站 / 审计全部保留。
+
 ### 0.3 数字权威表（Agent 引用禁止出错）
 
 | 项 | 权威值 | 来源 |
 |----|-------|------|
 | preflight action 数 | **20**（原型 17 + 生产新增 `root-set` / `cache-import` / `docker-source-set`） | `internal/preflight/preflight.go` 的 `Run` switch-case 与 `AllActions`（`ActionCount`） |
 | NEEDS_HOME 动作数 | **18**（`docker-source-set` 与 `root-set` 同口径：它写的就是 `config.yaml`，两根未就绪即拒绝） | 同文件 `needsHome` map（`NeedsHomeCount`）；对账测试 `TestActionAndNeedsHomeCounts` |
-| PF 校验错误码数 | **27**（原型 26 + 生产新增 `FileMissing`；原 `LastPhp`「至少保留一个 PHP 版本」已按 §0.2 规则 33 删除） | `pkg/errs/codes.go`（`CodeCount`） |
+| PF 校验错误码数 | **28**（原型 `PF` 表本身 **28** 条 → 按 §0.2 规则 33 删掉 `lastPhp`「至少保留一个 PHP 版本」得 **27** → 生产新增 `FileMissing` 一条 = **28**） | `pkg/errs/codes.go`（`CodeCount`）；对账测试 `pkg/errs/codes_test.go` 锁死「声明数 ≡ 表内实际条数」，漏改数字即用例变红 |
 | §5.6 事件名数 | **17** | 事件协议表（冻结，不新增） |
 | 事件前端落地覆盖率 | **17/17**（`update:progress` 由升级弹窗进度条承载，不进日志） | `frontend/src/composables/useStateSync.ts` 的 `landEvent` + `eventNote`（§5.6.2） |
 | 可自定义根面数 | **3**（缓存根 · 备份根 · 每服务版本数据目录） | `config.yaml` 的 `offline_root` / `backup_root` / `services.{kind}.{ver}.data_dir`（§5.15） |
@@ -198,6 +202,16 @@
 | 密码长度限制 | **无** | 用户可任意长度（含空） |
 | 版本号格式限制 | **仅路径安全** | 不限制字符集 |
 | 可用端口范围 | **1–65535** | 用户可指定任意端口 |
+| 清理面板行数 / 分组数 | **60 / 11**（容器 9 · 镜像 7 · 卷 5 · 网络 7 · 构建 4 · 日志 5 · 插件 3 · Swarm 6 · Compose 2 · 系统 8 · 其他 4） | `internal/model/docker_clean.go` 的 `AllCleanRows` / `AllCleanGroups`；对账用例 `internal/model/docker_clean_test.go` |
+| 清理面板三档行数 | **3 档**：点就删 **25** ／ 要管理员授权 **19** ／ 只说明不给按钮 **16** | 同文件 `Tier`；按钮还给不给另看这一行数到没数到（`internal/service/docker_clean_scan.go` 的 `cleanDecide`） |
+| 清理面板危险项行数 | **恰好 4**（`network.veth` / `network.netns` / `network.cni` / `system.group`） | `model.DangerousCleanRowKeys`；行上的 risk 徽标只上色，不参与任何判定 |
+| 宿主侧统计段数 | **18** 段（外加一段「正在读取需要管理员授权的目录」= 进度分母 **19**） | `internal/engine/clean_hostfs.go` 的 `hostSources` / `hostStagesTotal` |
+| 必须由宿主深扫才有数的行数 | **28**（走磁盘的 24 行 + 只给人话原因的 4 行） | `engine.HostRowKeys()` ≡ `service.cleanHostRowKeys`，由 `internal/service/docker_clean_test.go#TestCleanHostRowKeysMatchEngine` 锁死 |
+| 彻底清空的预览凭据有效期 | **10 分钟**，且**一次性**（用过即废；危险项未确认时的拒绝**不**作废） | `internal/service/docker_clean_preview.go` 的 `cleanPreviewTTL` + `takeClean` |
+| 删之前先留 7 天的行数 | **5**（`volume.data` / `volume.driver` / `plugin.config` / `plugin.data` / `container.checkpoint`） | `service.cleanTrashedRows`；落点登记走 `store.AddTrashItem`（§5.13.7） |
+| 清理面板新增事件名 | **0**（进度复用 `docker:cleanup`，只给载荷补可选 `step` / `total`） | `service.emitStage`；先例是 `cache:miss` 补 `source`、`docker:state-drift` 补 `gaps` |
+| 清理面板的门面方法数 | **5**（`DockerCleanScan` / `Supported` / `RefreshRow` / `Preview` / `Execute`）；`app.go` 现 **78** 个导出方法 = **76** 个生成绑定 + `ServiceStartup`/`ServiceShutdown` 两颗钩子 | `app.go` 与 `frontend/bindings/phpo/app.ts` 实测（`grep -c`） |
+| 清理面板的文案键数 | 行名 **60×2** + 分组 **11** + 面板与确认框 **57** = 本轮新增；两侧各 **830** 键、集合相等 | `frontend/src/locales/{zh-CN,en-US}.ts`；以第 1 项门禁输出为准 |
 | 硬红线数量 | **8** | 见 §3.3 |
 | PHP 切换上游格式 | **`php-{version}-fpm:9000`** | 保留版本号原样 |
 | 默认站点端口 | **80** | 本项目策略 |
@@ -304,7 +318,7 @@
 | 同步状态（手动） | **全量口径**：逐个已安装版本核**容器 / 基座镜像 / 扩展固化镜像**三样，缺失逐项点名；每任务后与启动只跑轻量档（仅容器存在性），不放大成每次操作都拨多次 Docker（见 §5.19） |
 | 外部删除的处置 | 第三方工具（Docker Desktop / `docker rm` / `docker rmi`）删掉的东西 → **派生缺失态**（服务卡片「容器缺失／基座镜像缺失／扩展固化镜像缺失」+ 抽屉逐行点名 + `gaps` 随快照广播），**不自动改 `installed`、不自动删资源**；用户点「启用」按当前配置幂等重建（缓存优先、零网络可恢复）回来（见 §5.19） |
 | 文件权限 | **phpo 自己的产出物（目录与文件）一律 0777**，显式 `chmod` 归一（不靠 `MkdirAll`/`WriteFile` 入参——会被 umask 削）；含 `config.yaml`，不提供开关；容器内进程写的文件不适用（见 §5.20） |
-| 卸载限制 | **无「至少保留一个 PHP 版本」门禁**（`errs` 已删该码，28 → 27）；站点依赖、最后一个版本一律**警告后照常卸载**（见 §1.11） |
+| 卸载限制 | **无「至少保留一个 PHP 版本」门禁**（`errs` 已删该码；表内现 **28** 条，口径见 §0.3）；站点依赖、最后一个版本一律**警告后照常卸载**（见 §1.11） |
 | 端口策略 | 站点端口默认 80、用户可指定任意端口；新建站点占用只告警 + 降级（不改用户所填端口、不阻断建站）；改站点端口占用才顺延；服务端口占用报错 |
 | 限制策略 | 最小限制；仅 8 条硬红线；警告代替阻止 |
 | Docker 清洁策略 | 所有操作幂等、原子、可回滚、可清理 |
@@ -403,7 +417,7 @@
 | 情形 | 旧口径 | 现口径 |
 |------|--------|--------|
 | 站点仍在使用该 PHP 版本 | `errf` 阻止 | **`warnf` 照常卸载**——「卸载后这些站点的 vhost 上游失效」 |
-| 这是最后一个 PHP 版本 | `errs.LastPhp` 阻止 | **不设该门禁**：`pkg/errs` 已删除此码（28 → **27**） |
+| 这是最后一个 PHP 版本 | `errs.LastPhp` 阻止 | **不设该门禁**：`pkg/errs` 已删除此码（删掉后表内 **27** 条，加上生产新增的 `FileMissing` 即现 **28** 条，口径见 §0.3） |
 | 站点仍依赖 Nginx | `errs.HasDependents` 阻止 | **`warnf` 照常卸载**——vhost 仍在盘上，重装 nginx 即恢复，不是不可逆后果 |
 
 **卸载分支只保留两条 `errf`**：`SvcMissing`（未指定 kind）与 `NotInstalled`（该版本本就没装）。理由：**「卸空了怎么建站」由 `site-add` 的 `PhpNeeded` 把住**，那是另一条规则的岗位，不是卸载的下限；把可警告的事做成阻止，等于替程序员做决定（§0.2 规则 15/16）。用例 `TestUninstallDependentSitesWarnNotBlocks`、`TestUninstallLastPhpAllowed`、`TestUninstallNginxDependentSitesWarnNotBlocks` 锁死。
@@ -755,7 +769,7 @@
 ```
 phpo/
 ├── main.go                          # GUI 入口（embed all:frontend/dist + 注册根 Service）
-├── app.go                           # 根 Service：唯一对前端暴露的门面（71 个绑定方法 = 73 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子）
+├── app.go                           # 根 Service：唯一对前端暴露的门面（76 个绑定方法 = 78 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子）
 ├── app_test.go
 ├── go.mod  go.sum                   # module phpo；go 1.27
 ├── wails.json                       # Wails 配置
@@ -791,10 +805,10 @@ phpo/
 │   │   ├── extdeps.go               # 「缺哪个系统开发包 → 该装什么包」表 + configure 输出的识别（§5.16.6）
 │   │   └── offline.go               # 离线缓存 / 临时目录路径常量（§5.14.2）
 │   │
-│   ├── model/                       # 领域模型（13 文件）
+│   ├── model/                       # 领域模型（14 文件）
 │   │   ├── service.go  site.go  task.go  backup.go  offline.go  snapshot.go
 │   │   ├── update.go  operation.go  resource.go  cache_entry.go  dto.go
-│   │   └── cleanup.go  doctor.go
+│   │   └── cleanup.go  doctor.go  docker_clean.go   # 60 行静态表 · 三档 · 危险名单 4 行 · 前后端载荷（§5.22）
 │   │
 │   ├── store/                       # 存储层（仅运行态；延迟建库）
 │   │   ├── store.go  sqlite.go  migrate.go  snapshot.go  sync.go
@@ -811,12 +825,16 @@ phpo/
 │   │       ├── 0007_drop_dir_ready.sql    # dirReady 改快照派生，表下线
 │   │       └── 0008_add_task_ledger.sql   # 任务账本：给 operations 加 task_id / label / logs 三列（不另立表）
 │   │
-│   ├── engine/                      # Docker 引擎层（19 文件）
+│   ├── engine/                      # Docker 引擎层（23 文件）
 │   │   ├── client.go  container.go  image.go  registry.go   # registry.go 含 MirrorRef：把原始镜像名换成「走某个源」的名字（§5.21.3）
 │   │   ├── network.go  volume.go  mount.go  inspect.go  exec.go
 │   │   ├── copy.go                  # 宿主 ⇄ 容器唯一字节通道（CopyTo/CopyFrom，Docker archive API）：扩展包回填与取回
 │   │   ├── mirror.go                # 镜像源「检测」：并发握手问延迟（ProbeSources，单源 5s 超时），不落库不进快照（§5.21.2）
 │   │   ├── calibrate.go  health.go
+│   │   ├── clean_inventory.go         # 全量清点：Docker 侧十类资源逐类记失败台账，读不到不当成 0（§5.22）
+│   │   ├── clean_hostfs.go            # 宿主侧 18 段统计 + 「详细扫描」那一次只读提权（elevateFind / PlanHostScan / HostRowKeys）
+│   │   ├── clean_delete.go            # Docker 侧九类删除 + runDeletes 循环（单项失败不停整单 · 取消优先 · 每项回调一次 · 幂等）
+│   │   ├── clean_hostdel.go           # 宿主侧五种删法与五道门（分类现算 Kind · 五道路径判定 · argv 不经 shell · 回收站优先）
 │   │   └── cleaner.go  orphan.go  idempotent.go  verify.go  trash.go  audit.go
 │   │
 │   ├── cache/                       # 离线缓存核心（10 文件）
@@ -864,7 +882,7 @@ phpo/
 │   │       └── steps_update.go      # 下载/校验/安装/回滚
 │   │           # 扩展、备份、清理、向导的编排在 service 层内联，不另立 steps_*.go
 │   │
-│   ├── service/                     # 服务层（18 文件）
+│   ├── service/                     # 服务层（22 文件）
 │   │   ├── registry.go              # SVC_META 五服务元数据
 │   │   ├── app_service.go           # GetState（权威快照出口，含 TaskBoard）
 │   │   ├── env_service.go           # 密码 / 端口 / 偏好读写（config.yaml）
@@ -873,6 +891,10 @@ phpo/
 │   │   ├── extension_service.go  config_service.go
 │   │   ├── backup_service.go  offline_service.go  doctor_service.go
 │   │   ├── wizard_service.go  workdir.go  cleanup_service.go
+│   │   ├── docker_clean_service.go    # 全量清理门面：依赖接口 + 结构体 + 审计/快照/进度三个出口（§5.22）
+│   │   ├── docker_clean_scan.go       # 60 行数数：浅扫问 Docker、深扫再读宿主；数不到给「—」+ 原因 + 逐行重试
+│   │   ├── docker_clean_preview.go    # 预览：把行摊成具体对象 + 一次性凭据（10 分钟）+ 危险闸门
+│   │   ├── docker_clean_exec.go       # 彻底清空：一个任务四步（核对现场→留底→删→收口），卸载另起一单
 │   │   └── updater_service.go
 │   │
 │   ├── updater/
@@ -908,9 +930,10 @@ phpo/
 │   └── src/
 │       ├── main.ts  App.vue  env.d.ts
 │       ├── router/index.ts          # 10 命名路由（CleanupView 由 CleanupModal 承载，非独立路由）
-│       ├── api/                     # 18 文件
+│       ├── api/                     # 19 文件
 │       │   ├── env.ts  lifecycle.ts  site.ts  extension.ts  config.ts
 │       │   ├── backup.ts  offline.ts  cache.ts  doctor.ts  task.ts
+│       │   ├── dockerClean.ts             # 面板五个出口：扫描 / 能不能深扫 / 逐行重数 / 预览 / 彻底清空（§5.22）
 │       │   ├── state.ts  updater.ts  cleanup.ts  wizard.ts  docker.ts  dockerSource.ts
 │       │   └── events.ts  mockEvents.ts
 │       ├── stores/                  # Pinia 8
@@ -925,11 +948,12 @@ phpo/
 │       │   ├── common/              # 9：ModalShell / ModalRoot / ToastHost / PasswordField
 │       │   │                        #   MountList / PathInfoBar / CacheHitBadge / EditablePathBar
 │       │   │                        #   ExtPicker
-│       │   └── business/            # 20：SiteAddModal / SiteConfigModal / RewriteModal / InstallModal
+│       │   └── business/            # 22：SiteAddModal / SiteConfigModal / RewriteModal / InstallModal
 │       │                            #   ConfigModal / PhpExtensionsModal / TaskDrawer / CmdPalette
 │       │                            #   DangerConfirm / HomeSetupWizard / DockerGate / AppTrayMenu
 │       │                            #   ThemePickerModal / UpdateModal / CleanupModal / TrashViewer
 │       │                            #   CacheDetailModal / CacheCleanupModal / CacheImportModal / UpdateBadge
+│       │                            #   DockerCleanPanel / DockerCleanPreviewModal（§5.22 总览页底部 60 行面板）
 │       │                            #   （备份与改端口无独立模态）
 │       ├── composables/             # 15：usePreflight / useTask / useStateSync / usePhpSwitch
 │       │                            #   usePortSuggest / useCache / useCleanup / useUpdater / useI18n
@@ -969,7 +993,7 @@ phpo/
 │   └── M6-集成验收记录.md  T705-Linux真机冒烟记录.md   # 里程碑验收留痕
 │
 ├── test/
-│   └── integration/                 # 真环境 live 用例（PHPO_LIVE=1 + Docker 可用双重 skip 守护）
+│   └── integration/                 # 真环境 live 用例（**13** 个文件；PHPO_LIVE=1 + Docker 可用双重 skip 守护）
 │       ├── m3_live_test.go  m4_live_test.go
 │       ├── m5_mysql_live_test.go  m5_pgsql_live_test.go
 │       ├── m5_redis_live_test.go  m5_wordpress_live_test.go
@@ -978,7 +1002,7 @@ phpo/
 │       ├── g5_v2914_live_test.go             # 真机取证 v2.9.14：两缓存槽位互不覆盖 · 产出物 0777 · 外部删除的缺失态点名 · 零网络恢复固化镜像
 │       ├── g6_extstatus_live_test.go         # 真机取证 §5.16.2 三档显示：跑应用自己的 Status 链路，复现 21/19/2 三档计数 + 名字归一 + 幂等静默 + 容器停用退回「非实时」
 │       └── d1_dockersource_live_test.go      # 真机取证 §5.21：走生产装配拉一次真镜像，取证「带源前缀拉回来仍归一成原始引用」+「cache:miss 真带着源名」；本机已有镜像时另取证零网络重建完全不碰源
-│       # 单元测试与包同目录（89 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
+│       # 单元测试与包同目录（96 个 *_test.go），fake/mock 内联，无 test/{unit,mocks,fixtures,e2e}
 │
 ├── third_party/licenses/THIRD_PARTY_LICENSES.md
 │
@@ -1095,7 +1119,7 @@ phpo/
 | `update:available` | `{ version, changelog, size }` | 发现新版本 |
 | `update:progress` | `{ stage, percent, speed }` | 升级进度 |
 | `update:done` | `{ status, version }`；启动期回滚探测失败时为 `{ status:"failed", error }` | 升级完成 |
-| `docker:cleanup` | `{ stage, resource, action }` | 清理进度 |
+| `docker:cleanup` | `{ stage, resource, action, step?, total? }`（**载荷补两个可选字段，事件名仍为 17 个**：`stage` 是人话「正在统计：…」，`step`/`total` **只在总览页那 60 行清单扫描时给**——界面进度条 = 已报到段数 / 总段数；逐颗删除那一路仍只给 `stage=removed · resource · action`，不带 step） | 清理进度（§5.22） |
 | `docker:orphan-found` | `{ resources: []Resource }` | 发现孤儿资源 |
 | `docker:state-drift` | `{ expected, actual, gaps }`（`gaps` 为 `[]ServiceGap`，v2.9.14 补入；启动校准取不到比对值时退化为 `{ error }`） | 状态漂移 |
 | `cache:hit` | `{ kind, version, source, size }` | 命中缓存 |
@@ -1173,7 +1197,7 @@ phpo/
 | `update:available` | `updaterStore` | ✅ `meta` 行 | 版本 + 体积（`humanSize` 换算） |
 | `update:progress` | `updaterStore` 进度 | ❌ **不进日志** | 连续量会淹没流水；由升级弹窗进度条承载 |
 | `update:done` | `updaterStore` | ✅ `ok`／`err`／`dim` 行 | 按 `status` 选 level；`error` 或缺席的 `version` 作为 detail 兜底 |
-| `docker:cleanup` | — | ✅ `dim` 行 | `stage · resource · action` |
+| `docker:cleanup` | 面板进度条消费 `step`/`total`（§5.22） | ✅ `dim` 行 | `stage · resource · action`；带 `step` 的那一路同时喂进度条 |
 | `docker:orphan-found` | — | ✅ `meta` 行 | 只落**计数**；不触发 rescan、不回填 `cleanupStore`（载荷是 `unknown[]`，无法无损映射成 `OrphanReport`） |
 | `docker:state-drift` | ✅ **额外 `syncState()`** | ✅ `meta` 行 | **有 `gaps` 时逐条点名铺开、不再补汇总行**（一次漂移说两遍等于把抽屉当日志复读机，§5.19.5）；`gaps` 为空时落 `expected → actual` 一行，比对值缺席则退化为 `error` 文本 |
 | `cache:hit` | `cacheStore`（经 `useCache` 重拉） | ✅ | 命中零网络的证据 |
@@ -2281,6 +2305,89 @@ const (
 
 ---
 
+### 5.22 Docker 全量资源清理面板（总览页底部 60 行）（v2.9.14 追加，需求 ①–㉚）
+
+**这是干什么的**：把「这台机器上 Docker 还占着什么」摊成 60 行、分 11 组，每行的数量和占用都是当场从 Docker 或宿主文件读出来的；用户勾几行，界面前先把这几行摊成一项一项的具体对象给他看清，他点「彻底清空」才动手。入口在总览页服务表**下方**，标题「Docker 全量资源清理」。
+
+**为什么要有这一节**：此前 phpo 只会清自己那一份命名空间（孤儿扫描按 §5.13.3 只认 `phpo-` 前缀，清理三模式也只看 phpo 的资源）。用户要的是**全量**——包括他自己用 `docker` CLI、Docker Desktop、compose 建的东西。两类对象集不同，合并进孤儿扫描等于把隔离性放开，所以另立这一个采集器与这一张表，但**删除复用同一批底层实现**（需求 ⑨）。
+
+#### 5.22.1 三档口径（决定界面上有没有那颗按钮）
+
+| 档 | 行数 | 含义 | 界面上 |
+|----|------|------|--------|
+| `TierSDK` | **25** | Docker 自己能删 | 给勾选框，点了就执行 |
+| `TierElev` | **19** | 东西在宿主磁盘上，要管理员授权才动得了 | 给勾选框，删之前先弹授权 |
+| `TierInfo` | **16** | phpo 没有一条安全的删法（防火墙规则、docker0 网桥、`/etc/docker` 配置、Docker Desktop 的虚拟机磁盘…） | **只给一句「想彻底清该动哪里」，不给按钮** |
+
+`cleanDecide` 再收一道：**这一行没数到数（`Status != ok`）也不给按钮**——点了没东西可删，比不给按钮更扰人。所以「能给按钮的行」= 44 行，实际给不给还看这次读到没读到。
+
+#### 5.22.2 数不到就说数不到（需求 ㉘ / ⑮）
+
+| 情形 | 数字 | 界面那一句 | 怎么回来 |
+|------|------|-----------|---------|
+| 读到真数字 | 数量 + 占用（占用数不出来的只给数量） | 状态「已数到」 | — |
+| 目录读不动（要授权） | 「—」 | 「无权读取（需要管理员授权）」+ 该行「重试」 | 点该行重试，或点「详细扫描」重新给一次授权 |
+| 浅扫时宿主那 28 行 | 「—」 | 「还没读过宿主上的文件——点『详细扫描』再数一次」 | 点「详细扫描」 |
+| Docker 这次没答上来 | 「—」 | 「Docker 这次没答上来（容器／镜像／…）：{原始原因}」 | 起好 Docker 再点「刷新」 |
+| macOS / Windows 上 Linux 专属行 | 「—」 | 「Docker 的数据目录不在这台机器上（跑在虚拟机里），够不着」 | 无解，这是事实；**照样列出这一行**，不给按钮 |
+
+三条不得：**不得**把「没读到」报成 0 项 0 B（那是把「不知道」说成「没有」）；**不得**因为平台够不着就把整行删掉不显示；**不得**在浅扫结果里冒充「这是完整清单」（`DeepScanned` 如实带着）。
+
+#### 5.22.3 「详细扫描」= 每次点击一次授权，只弹一扇（需求 ⑰）
+
+点一次「详细扫描」= 一次 `pkexec`。只把**因权限读不动的那几片**合并成一次只读回收（`elevateFind`），不是每个目录弹一扇。这一颗按钮每次点都问一次——预览缓存里的旧结果不能替用户决定「上次给过了这次就不用给」。授权被拒**不判死整次扫描**：已经读到的那一半照常铺回 60 行，缺的行标「需要授权」并给逐行重试（`MsgNoPerm`）。macOS / Windows 上这颗按钮不可点（`PlanHostScan.Supported=false`），点了也只说「够不着」，不弹一个必然失败的框。
+
+**进度不新增事件名**：每数一段发一次既有 `docker:cleanup`，载荷 `{stage, step, total}`（`step/total` 是本轮补的**可选**字段，先例是 `cache:miss` 的 `source`、`docker:state-drift` 的 `gaps`）。分母 = Docker 侧 **10** 段 + 宿主侧 **19** 段，浅扫不含后者。扫描**不入任务队列**——扫描期间照常建站、启停服务，抽屉右栏不出现「清理」这一单。
+
+#### 5.22.4 预览：一次性凭据 + 危险闸门（需求 ⑥/⑦/⑧/⑭/㉖/㉙/㉚）
+
+`Preview(rows)` 把每一行摊成具体对象（`CleanTarget`），并登记一张一次性凭据：
+
+| 口径 | 值 | 为什么 |
+|------|----|--------|
+| 界面 ID | `类型 + "\|" + 真正要删的那个引用` | 一个叫 `foo` 的卷和一个叫 `foo` 的网络可以同时存在；只用名字会让用户勾中一个、界面把另一个也带走 |
+| 有效期 | **10 分钟**，用过即废 | 同一张单子点两次，第二次拿的是几分钟前的清单——那批东西可能已经被删过或被用户自己动过 |
+| 危险项 | 名单**恰好 4 行**（`network.veth` / `network.netns` / `network.cni` / `system.group`） | 「全选」永不带走；每次单独勾要先弹后果、点「我知道后果，确定要选上」；`ConsentRequired` 由后端算，前端那颗「我确认」没点即**后端再拦一次**（拒绝时**不作废**凭据，用户看完后果回来接着清空） |
+| 数不到对象的行 | 交不出清单就给一句原因 | 容器可写层跟着容器走、镜像共用层没有单独文件、构建上下文只能整份清；凑一份假清单等于让用户去点不存在的东西 |
+| 已经不在了的对象 | 计入 `Skipped` + 逐行一行 `dim` | 用户要的结果（「现在没有了」）已经成立，不该换回一条看不懂的失败 |
+| 只读不落库 | 预览不建任务、不发事件、不进快照 | 它是确认框的数据源，不是一份需要持久化的状态 |
+
+#### 5.22.5 彻底清空：一个任务、四步、逐项一行（需求 ④/⑧/⑲/⑳/㉙）
+
+任务标签 `清理 Docker 全量资源（N 项）`，四步固定顺序：
+
+1. **核对现场**——重新问一次 Docker、重新 `Lstat` 一次宿主路径，已经不在了的那批不进删除指令（计入 `Skipped`）。「这一类这次没读到」**不算**「已经不在了」。
+2. **留底**——`cleanTrashedRows` 那 5 行（卷数据、卷驱动目录、插件配置与数据、容器检查点）先挪进回收站；**phpo 自己的卷挪不动就不删这个卷**，并在抽屉落一行 err 说清为什么没删。别人建的卷不代管（替用户把他选中的卷搬进 phpo 的回收站，等于动他的东西）。
+3. **删**——Docker 侧与宿主侧各一批，都走 engine 既有循环：单项失败不停整单、每项完成回调一次、取消优先返回、目标已不在即幂等成功。被取消的那几条**既不算 `Removed` 也不算 `Skipped`**（它们根本没被动过，报成前两者都是假账）。
+4. **收口**——每个回收站落点登记 7 天（登记前先看落点在不在，源本来就不在时不记一条假的「可恢复」）、审计一行、权威快照回流（服务卡片随即按 §5.19 显示缺失态）。
+
+**卸载另起一单**（需求 ㉙）：默认**只标缺失态**，「已安装」这本账不动；确认框里那颗「同时卸载这些版本」默认不勾，勾了也要等删除任务返回后才提交——任务里嵌套提交一单会被 `ErrBusy` 拒掉（§0.2 规则 11）。
+
+#### 5.22.6 宿主删除的门（唯一一处真改这台机器的地方）
+
+五种删法各有失败原因，界面必须分开说：删文件（`rm -rf`／`RemoveAll`）、拆网卡（`ip link delete`）、删网络命名空间（`ip netns delete`）、删 cgroup 目录（**不递归**——`rmdir` 在有进程占用时必然失败，那是「还在用，别删」的正确回答，不是 bug）、把用户移出 docker 组（`gpasswd -d`，先读 `/etc/group` 确认在不在，不在就不敲命令、不白弹授权框）。
+
+五道判定，一条指令都逃不掉：`classifyHostOp` **现算**类型（服务层传来的 `Kind` 不作数，免得一句 `host_path` 把网卡当目录删）→ 落得出唯一绝对路径（裸名字只在该行**恰好一个**候选目录时才落）→ 过 `checkHostPath`（非空 / 无空字节 / 绝对 / 已归一 / 不等于 **22** 圈系统关键目录 / 必须真的在这一行扫过的目录**之下**且不等于那个根本身）→ 名字过 `nameSafe`（`ip` 与 `gpasswd` 没有 `--`，以 `-` 开头的名字会被当成选项）→ **argv 直接传、不经 shell**。分类**先全部做完再动手删**：一条不合法的指令应该在第一个字节被动之前就被拒掉，而不是删到一半才发现后面那颗不该删。
+
+**全部失败都只落在自己那一行**：`DeleteHostObjects` 的回执与指令等长同序，失败项带自己的原因与原来那个名字，界面逐行点名——整单不落空，也不静默少报。
+
+#### 5.22.7 与既有清理能力的关系（需求 ⑨）
+
+| 既有能力 | 状态 |
+|---------|------|
+| 三模式清理（保守／标准／激进，§5.14.6） | **保留**，入口仍在「环境清理」弹框 |
+| 孤儿扫描（§5.13.5） | **保留**，与面板各自独立：孤儿只看 phpo 命名空间，面板是全量 |
+| 回收站（§5.13.7，7 天） | **共用同一套**：面板挪进去的东西同样登记、同样在「回收站」里恢复 |
+| 操作审计（§5.13.10） | **共用**：`clean-preview` 与 `docker-clean` 各落一行，收尾按 `partial`／`ok` 记 |
+| 删除实现 | **唯一一处**在 `internal/engine`（Docker 侧 `clean_delete.go` + 宿主侧 `clean_hostdel.go`），面板只是调用方 |
+
+#### 5.22.8 两处需要如实登记的偏离
+
+1. **外观是对原型的一处生产偏离**：面板的 60 行照 §12.11/§0.1.2 的口径按应用自身主题重做（`--surface`／`--border`／`chip`／`status-pill`／`badge`），不逐字照抄原型 HTML 的表格样式与配色；原型正本 `Docker 全量资源清理_原型模板.html`（仓库根，提交 `683910`）**不改**，仍作为唯一界面来源与需求 ㉑（永远默认折叠、不记上次状态）的出处。
+2. **写链路没有新增 preflight action（待裁决）**：本面板的「彻底清空」经 `task.Manager` 三段式的后两段（建任务 → 执行 → `Apply` 审计 + `state:changed`），**没有**新增第 **21** 个 preflight action——与既有 `CleanupService.Clean` / `CleanCache` 同一条路子（那两个也没有）。裁决依据是本功能 30 项封口里没有「新增 preflight action」这一条，且面板的确认信息全部由预览凭据 + 危险闸门 + 后果确认弹框承载，preflight 拿不到比这更多的判断。**这与 §0.2 规则 11「所有写操作走 preflight → task → applyStateChange」的原文存在张力**，因此在此显式登记，不改规则原文、也不悄悄把它当已裁决；需要用户裁决后再收口。
+
+---
+
 ## 6. 原型 → 生产映射表
 
 | 原型元素 | Go 侧落点 | 前端落点 |
@@ -2344,6 +2451,10 @@ const (
 | 状态校准 | `internal/engine/calibrate.go` | doctor 入口 |
 | 清理任务 | `internal/service/cleanup_service.go + internal/engine/{cleaner,trash}.go`（无独立 steps_cleanup.go） | `CleanupModal.vue`（承载 `CleanupView.vue`） |
 | 端口占用三档 | `pkg/port`（`Options.KeepOnConflict` / `Result.Occupied`）+ `internal/preflight`（`conflictKeepWarn` / `conflictAdvance`）+ `store/port.go` | `SiteAddModal.vue`（告警降级）· `usePortSuggest.ts`（改端口顺延） |
+| 60 行全量清点（三档 · 数不到不报 0） | `internal/engine/clean_inventory.go` + `clean_hostfs.go`（18 段宿主统计 + `elevateFind` 一次授权）· `internal/service/docker_clean_scan.go` | `components/business/DockerCleanPanel.vue`（默认折叠 · 逐行重试）· `api/dockerClean.ts` |
+| 逐行删除（Docker 侧 + 宿主侧，共用一套实现） | `internal/engine/clean_delete.go#DeleteDockerObjects` + `clean_hostdel.go#DeleteHostObjects`（分类门 + 五道路径判定 + argv 不经 shell） | 抽屉左栏逐行 `ok`/`err`/`dim` + `docker:cleanup` 的 `removed` 载荷 |
+| 预览（一次性凭据 · 危险闸门 · 同时卸载那颗） | `internal/service/docker_clean_preview.go`（`Preview`/`takeClean`/`cleanTargetID`） | `components/business/DockerCleanPreviewModal.vue` + `DangerConfirm.vue`（危险项后果确认） |
+| 彻底清空（一个任务 · 四步 · 逐项一行） | `internal/service/docker_clean_exec.go`（核对现场 → 留底 → 删 → 收口）+ `task.Manager.Run` | `taskStore` 队列一行「清理 Docker 全量资源（N 项）」+ 抽屉逐项日志 + 进度条（`docker:cleanup` 的 `step/total`） |
 | 镜像缓存命中 | `internal/cache/image_cache.go#LookupImage` | `CacheHitBadge.vue` |
 | 扩展缓存命中 | `internal/cache/extension_cache.go#LookupExtension` | `CacheHitBadge.vue` |
 | 临时目录 | `internal/cache/tempdir.go` | — |
@@ -2366,7 +2477,7 @@ const (
 | 同步状态全量口径 + 缺失态（v2.9.14，需求 ①/④） | `lifecycle_service.go`（`calibrate(ctx, auditImages)` 两档 / `SyncAll` / `detectGaps` / `sameGaps` / `sortedKinds`）+ `model.ServiceGap`（`GapContainer`/`GapImage`/`GapExtImage`）+ `model.Snapshot.Gaps` + `store.SetGaps` + `snapshot.go#normalizeCollections` 兜 `[]` | `api/state.ts#syncAll` + `useStateSync.ts#runSync`（侧栏「同步状态」与 ⌘R 唯一入口）+ `appState.gapOf` + `ServiceView.vue` 缺失态 pill + `constants/service.ts#GAP_REASON_KEYS` |
 | 扩展固化镜像的第二缓存槽位（v2.9.14，需求 ③） | `config/offline.go#OfflineExtImageTar` + `cache/{lookup,image_cache,promote}.go`（`LookupExtImage` / `LoadExtImage` / `PromoteExtImage`，在 `cache.Manager` 不经门面）+ `cache/manifest.go` 的 `extensions_image` 字段 | `CacheDetailModal.vue` 按 `CacheEntry.HasExtImage` 单独一栏显示两槽位（`offline.detail.extImage`）；`scripts/check-cache-manifest.go`（第 4 项门禁）锁死字段名 |
 | phpo 产出物一律 0777（v2.9.14，需求 ②） | `internal/util/fs.go`（`DirPerm`/`FilePerm` + `MkdirAll`/`WriteFile`/`Create`/`AtomicWrite` 显式 chmod 归一，失败 best-effort）——全仓 23 个落点统一走它 | —（权限是落盘事实，不进快照） |
-| 卸载不设「至少保留一个 PHP」门禁（v2.9.14，需求 ⑤） | `preflight/rules_service.go#uninstall`（php / nginx 依赖均 `warnf`；`pkg/errs` 删 `LastPhp` → **27** 码） | 各服务卡片「卸载」照常可点至最后一个版本；warnings 进确认弹框 |
+| 卸载不设「至少保留一个 PHP」门禁（v2.9.14，需求 ⑤） | `preflight/rules_service.go#uninstall`（php / nginx 依赖均 `warnf`；`pkg/errs` 删 `LastPhp`，含生产新增 `FileMissing` 共 **28** 码，口径见 §0.3） | 各服务卡片「卸载」照常可点至最后一个版本；warnings 进确认弹框 |
 | Docker 镜像源 · 逐个测速 · 拉取按最快优先（v2.9.14 追加，§5.21） | `config/{configstore,validate}.go`（`docker_sources` + `ValidateRegistryHosts` 归一去重）+ `preflight/rules_docker.go`（第 20 个 action `docker-source-set`，空清单 `warnf`）+ `engine/mirror.go`（`ProbeSources` 并发保序 + `MirrorProbeTimeout` + 明文 HTTP 回退）+ `engine/registry.go#MirrorRef`（单段名补 `library/`）+ `task/steps/steps_service.go#PullFromSource`（pull → `ImageTag` 归一 → 删别名）+ `cache/image_cache.go`（`fetchImage` 延迟升序逐源 → 直连官方 → 逐源点名）+ `app.go`（`DockerSourcesGet`/`Set`/`Probe`） | `api/dockerSource.ts` + `SettingsView.vue`（多行地址 + 「检测」三列表 + 「最快」标记 + 未接入后端占位）+ `useStateSync.ts`（`cache:miss` 的 `source` 有则点名）+ `CacheHitBadge.vue` |
 
 ---
@@ -2627,6 +2738,7 @@ const (
 | **R106** | **镜像源被当成「改一次就好、之后一直用」的全局设置，于是去改用户 Docker 的 `daemon.json`；或把测速结果存下来当判据，几分钟后源已不通却仍优先用；或源不通即判死这次安装；或带源前缀的名字被 `docker save` 进离线缓存，换机即失效** | **能力只落在 phpo 自己发起的那一次 `docker pull`（`MirrorRef` 换镜像名前缀 → `ImageTag` 归一 → 删别名），绝不写 `daemon.json`／不重启 Docker；测速不落库不进快照（`cache:miss` 只补 `source` 载荷字段，17 事件名未增），真正拉取前**现测现排序**；可达源按延迟升序逐个试 → 全失败直连官方 → 直连也失败才报错并逐源点名，取消优先返回；§0.2 规则 39 + §5.21**（v2.9.14 追加；**已落地**；**已真机取证**——`test/integration/d1_dockersource_live_test.go` 走生产装配真拉一次镜像，锁死「归一回原始引用」与「`cache:miss` 真带着源名」，本机已有镜像时另取证零网络重建完全不碰源。**仍欠原生窗口里的点击级验收**：「检测」结果表与「最快」标记是要用户眼睛判断的） |
 | **R107** | **扩展反复编译失败，界面只说「扩展 gd 安装失败，本次扩展集未应用」——真因是基座缺 `configure` 要用的系统开发包（真机四条失败全停在 `Package requirements (zlib …) were not met`），用户不知道该装什么，只能反复重点重试，甚至误以为「换 Alpine 基座能修好」（修不好，两种基座只是包名不同）** | **`internal/config/extdeps.go` 一张「pkg-config 名 → Debian／Alpine 包名」表（**28** 键 / **17** 对，两侧逐个现取命令验证：`apt-cache policy` + `apk info -a` + 装齐后的 `pkg-config --list-all`；装齐后 `docker-php-ext-install gd` 真机由失败变退出码 0）；`ExtMissingDepNames` 从已逐行进日志的那份编译输出认两种写法并去重，`Requested '…' but version of …` 一族**刻意不认**（版本太旧报成缺包就是假话，有负向用例锁死）；`extFailed` 多落一行 `err`（点名包 + 两种安装名）与一行 `dim`（怎么回来），toast 带包名；表外名字**原样报出不编造**；**phpo 不代装系统包**（不 `apt`/`apk`，§0.2 规则 36 同口径），停用路径显式传空缺失集不甩锅；§5.16.6 + 用例 `internal/config/extdeps_test.go`、`extension_service_test.go` 两条 |
 
+| **R108** | **60 行面板把「读不到」报成 0（用户以为这里没东西），或跳过预览直接删（用户不知道删的是哪几项），或危险项被「全选」一起带走，或有数据的卷没留底就被删** | **数字口径：四态各给「—」+ 原因 + 逐行重试（`cleanDecide`/`MsgNoPerm`），`DeepScanned` 如实带着；预览先行且凭据一次性（10 分钟、用过即废、清单外 ID 拒、危险项未确认即拒且不作废）；危险名单恰好 4 行、`ConsentRequired` 后端再拦一次、risk 徽标不参与判定；留底优先（`cleanTrashedRows` 5 行，phpo 自己的卷挪不动就不删，`Skipped` 与取消回执分开记）；删除只复用 engine 一处实现（不另起第二套）；用例 `internal/engine/clean_hostdel_test.go`（16 条：五道门 / 22 圈灾难根逐项 / 分类覆盖服务层 Kind / 五种删法 argv / 幂等 / 回收站三条规则 / 提权闸门）+ `internal/service/docker_clean_test.go`（10 条：逐项摊开 / 浅扫不冒充 / 危险闸门 / 一次性凭据 / 现场漂移 / 留底失败即不删 / 宿主指令契约 / 卸载另起一单 / 单项失败不停整单 / 28 行两侧对账）；§0.2 规则 41 + §5.22**（v2.9.14 追加）
 ---
 
 ## 10. 里程碑
@@ -2686,7 +2798,7 @@ const (
 - i18n 键对齐 / 模板一致性 / 资源命名 / 缓存 manifest / 扩展目录分类**五项**门禁（`scripts/check-*.go`，`task check` 与 ci.yml 共用）
 - 签名与发布辅助：`scripts/sign-release.sh`、`gen-checksums.sh`、`verify-signing-guard.sh`（公钥一致性反推）、`bump-version.sh`、`version.sh`
 - 构建编排：`Taskfile.yml`（dev / bindings / build / test / vet / check / package / release:local）
-- 测试：与包同目录的 Go 单测（89 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **13** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
+- 测试：与包同目录的 Go 单测（**96** 个 `*_test.go`，fake/mock 内联）+ `test/integration/*_live_test.go` **13** 个真环境用例（`PHPO_LIVE=1` + Docker 可用双重 skip 守护）
 
 > **不包含**：CLI、cobra、keyring、密码加密、密码长度校验、版本号白名单、端口范围限制、域名格式限制、WWW_ROOT 内强制、WebSocket / HTTP 轮询、插件系统、跳过离线缓存的安装实现、临时目录跨任务持久化。
 
@@ -2846,7 +2958,7 @@ const (
 **卸载无保留门禁（§1.11，需求 ⑤）**：
 
 - [ ] 卸载最后一个 PHP / 被站点依赖的 PHP / 被站点依赖的 Nginx 是否一律**警告后照常卸载**？
-- [ ] `uninstall` 分支是否只剩 `SvcMissing` 与 `NotInstalled` 两条 `errf`？`pkg/errs` 是否已无 `LastPhp`（**27** 码）？
+- [ ] `uninstall` 分支是否只剩 `SvcMissing` 与 `NotInstalled` 两条 `errf`？`pkg/errs` 是否已无 `LastPhp`（现 **28** 条，`CodeCount` 与 `AllCodes()` 长度须相等，见 §0.3）？
 - [ ] 三条用例是否都在（`TestUninstallLastPhpAllowed` / nginx 依赖告警放行 / 依赖站点 `warnf`）？
 
 ### 12.11 文档说人话检查（v2.9.14 追加，§0.2 规则 38）
@@ -2875,6 +2987,44 @@ const (
 - [ ] 界面是否只说结果与下一步（握手延迟显示成「多少毫秒 · 最快」），没有把 `MirrorRef`、HTTP 状态码这类实现细节贴给用户？
 
 ---
+
+### 12.13 Docker 全量资源清理面板检查（v2.9.14 追加，§5.22 · §0.2 规则 41）
+
+**数字与档位**：
+
+- [ ] 60 行 / 11 组的顺序是否就是 `model.AllCleanRows`（界面不自己排序）？行数是否仍是 **60**（改表必须同时改对账用例）？
+- [ ] 三档是否 **25 / 19 / 16**？`TierInfo` 那 16 行是否**没有任何一处**渲染出删除按钮或勾选框？
+- [ ] 数不到的四种情形（要授权 / 还没深扫 / Docker 没答上来 / 平台够不着）是否都显示「—」+ 一句原因，而**不是** 0 项 0 B？
+- [ ] macOS / Windows 上 Linux 专属行是否**照样列出**（需求 ⑮），只是不给按钮、且「详细扫描」不可点？
+- [ ] 浅扫结果有没有冒充「完整清单」（`DeepScanned` 是否为 `true` 才这么说）？总计有没有把 `system.root` 这份加总行排除（否则双倍）？
+
+**扫描与进度**：
+
+- [ ] 「详细扫描」是否**每次点击一次**授权、且一次授权只弹一扇（合并的只是读不动那几片）？授权被拒是否保住已扫到的那一半并给逐行重试？
+- [ ] 进度是否仍走 `docker:cleanup`（**17 事件名一个未增**），`step`/`total` 为可选载荷？分母是否 10（浅扫）/ 10+19（深扫且宿主支持）？
+- [ ] 扫描是否**没有**进任务队列（不建任务记录、不占 FIFO），扫描期间建站/启停是否照常可点？
+
+**预览与闸门**：
+
+- [ ] 「彻底清空」是否**必须**先看预览？凭据是否一次性（用过即废、超 **10 分钟**拒绝、清单外 ID 拒绝）？危险项未确认时的拒绝是否**没有**作废凭据？
+- [ ] 危险名单是否**恰好 4 行**？「全选」是否带不走它们？每次单独勾是否都要先弹后果？risk 徽标是否**只**用于上色？
+- [ ] 界面 ID 是否带类型前缀（同名不同类的对象不能互相顶替）？删的时候是否剥回原文（`cleanTargetRef`）？
+- [ ] 「这一行的占用来自别处」的三行（容器可写层 / 镜像共用层 / 构建上下文）是否只说清原因、不凑假清单？同一对象属于好几行时是否只列一次、只删一遍？
+
+**执行**：
+
+- [ ] 一次彻底清空是否 = **一个任务**（标签 `清理 Docker 全量资源（N 项）`），逐项一行、单颗失败不中断其余？
+- [ ] 是否**先核对现场**再动手？`Skipped` 与「取消那几条」是否分开计（取消的既不算 `Removed` 也不算 `Skipped`）？
+- [ ] `cleanTrashedRows` 那 **5** 行是否先进回收站、`Freed` 记 **0**、每个落点是否登记 7 天（且落点不在就不登记）？phpo 自己的卷挪不动是否**真的没删**并逐行说清？
+- [ ] 卸载（㉙）是否**默认不勾**、且必须在删除任务返回之后**另起一单**？默认路径是否只让服务卡片显示缺失态而不动 `installed`（§5.19）？
+- [ ] 宿主删除是否只走 `classifyHostOp` + `checkHostPath` 那几道门，命令是否**只以 argv 传入、不经 shell**？`Kind` 是否由引擎现算（服务层传的不作数）？
+- [ ] 是否**没有**另起第二套删除实现 / 第二个回收站（需求 ⑨）？旧三模式清理、孤儿扫描、回收站、审计是否都还在？
+
+**文案与偏离**：
+
+- [ ] 60 行的 label / desc 是否中英**两侧都有**并过第 1 项门禁（两侧各 **830** 键）？界面是否只说结果与下一步，不带 `argv`、事件名、行名这类内部词？
+- [ ] 面板是否**永远默认折叠**、且不记上次状态？是否**没有**把 `open` 写进 `localStorage`（那是 UI 偏好里的例外，需求 ㉑ 明确不记）？
+- [ ] 两处偏离是否都按 §5.22.8 记载：外观按应用自身主题重做（原型 SSOT 未改）、写链路未新增 preflight action（与既有清理门面同路子，**待裁决**，不得当作已裁决）？
 
 ## 13. 总纲变更流程
 
@@ -3262,6 +3412,10 @@ const (
 > 代答不了）；UI 侧目前只有产物级 `grep -a` 与 demo 通道浏览器走查作证据。
 > **一处既有文档漂移如实登记、本轮未改**：`pkg/errs` 的 `CodeCount` 声明 **27**，而 `codes.go` 实有 **28** 条常量
 > （v2.9.14 删 `LastPhp` 时未同步常量），§0.3 仍按冻结口径写 27；这是代码侧的账，需要单独一轮裁决。
+> ⚠️ 本段的待裁**已被后续一轮消掉**（2026-09-28，用户裁决按 **28** 条对齐）：现 `CodeCount` = **28** = 表内实际条数，
+> §0.3 与各处派生文档同口径，并新增同包对账用例 `pkg/errs/codes_test.go` 锁死「声明数 ≡ 表里实际条数」。
+> 该轮还查明「28 → 27」这句过渡描述本身是错的：删 `LastPhp` 时常量从 **29** 条变 **28** 条，而声明数一直少一条。
+> 正确推导：原型 `PF` 表本身 **28** 条 → 删 `lastPhp` 得 **27** → 生产新增 `FileMissing` 一条 = **28**。见下文更正条。
 > **明确未改**：8 条硬红线原文、三段式写操作、**17 事件名**（只补 `cache:miss` 载荷字段）／**4 任务状态**、
 > `pkg/errs` 码数、门禁 **5** 项、扩展目录 **73**·**8** 组·常用 **11** 项、每版本两镜像槽位、§5.15 三根互斥唯一、
 > §5.16 三档显示与「停用 = 删 ini」、§5.17 备份容错、§5.18 数据服务运行态、§5.19 全量口径、§5.20 权限 0777、
@@ -3316,6 +3470,62 @@ const (
 > 本轮**没有**为系统开发包造缓存槽位）、§5.15 三根互斥唯一、§5.21 镜像源、i18n 键集、密码／版本／域名／端口策略、
 > 冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`、前端全部代码。
 >
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· Docker 全量资源清理面板（总览页底部 60 行 / 11 组）**：
+> 用户原始需求一句话：**「在总览-服务的底部将这个原型追加上去。说人话。」**（原型正本 `Docker 全量资源清理_原型模板.html`，
+> 已按需求 ㉒ 提交为仓库根唯一真实来源）。需求轮已以 **30 项裁决（①–㉚）封口**，本条只做「把封口后的口径落进总纲 + 落代码」，
+> **不再重开任何一条裁决**，也不引用被折叠的工单号当事实来源。
+>
+> **落条款**：① 头部新增一条「**Docker 全量资源清理面板**」；② §0.2 新增规则 **41**（故意续在 40 之后不重编号：禁止把「不知道」画成「没有」、
+> 禁止跳过预览直接删、禁止危险项被全选带走、禁止没留底就删有数据的东⻄、禁止另起第二套删除与第二个回收站）；③ §0.3 新增 **10** 行
+> （60/11 · 三档 25·19·16 · 危险项恰好 4 · 宿主统计段 18(+1) · 必须深扫的行 28 · 凭据 10 分钟 · 留底 5 行 · 新增事件名 **0** ·
+> 门面方法 5 与 `78 = 76 + 两颗钩子` · 文案键 60×2+11+57、两侧各 **830**）；④ §5.6 把 `docker:cleanup` 的载荷补成
+> `{ stage, resource, action, step?, total? }` 并同步 §5.6.2 落地表（**17 事件名一个未增**，先例是 `cache:miss` 补 `source`、
+> `docker:state-drift` 补 `gaps`）；⑤ **§5.22 新节**（三档表 · 数不到的四种情形各显示什么 · 「详细扫描」一次授权只弹一扇 ·
+> 预览的一次性凭据与危险闸门 · 彻底清空四步与 `Skipped`/取消分开记 · 宿主删除的五种删法与五道门 · 与既有清理能力的关系 ·
+> **两处偏离如实登记**）；⑥ §6 映射表 **4** 行；⑦ §9 **R108**；⑧ §12.13 新自查（五组 **23** 项）；⑨ 底部摘要一条。
+>
+> **随本轮一并校正的冻结计数**（命令现取）：与包同目录的 `*_test.go` **89 → 96**（本轮 +`internal/engine/clean_delete_test.go`、
+> `clean_hostfs_test.go`、`internal/model/docker_clean_test.go`、`internal/service/docker_clean_test.go`、
+> `internal/engine/clean_hostdel_test.go` 五文件及既有增量，`find . -name '*_test.go' -not -path './test/*' | wc -l` 现取）、
+> `test/integration/` live 用例仍 **13**、`docs/` 仍 **32** 篇、门禁仍 **5** 项、i18n 两侧各 **830** 键、
+> `app.go` 导出方法 **78** 与生成绑定 **76**（差额仍恰为 `ServiceStartup`/`ServiceShutdown` 两颗钩子）、
+> preflight 仍 **20** action 与 NEEDS_HOME 仍 **18**（见下「一处需裁决的口径张力」）、`pkg/errs` 仍 **28** 码。
+>
+> **代码落点**（全部新增，未改既有行为）：`internal/model/docker_clean.go`（60 行静态表 · 三档 · 危险名单 · 前后端载荷）、
+> `internal/engine/clean_inventory.go`（全量清点，按类别逐笔记失败台账，不当成 0）、`clean_hostfs.go`（18 段宿主统计 +
+> `elevateFind`/`PlanHostScan` + 新增 `HostRowKeys()` 供服务层对账）、`clean_delete.go`（Docker 侧九类删除 + `runDeletes` 循环语义）、
+> `clean_hostdel.go`（宿主侧五种删法与五道门）、`internal/service/docker_clean_{service,scan,preview,exec}.go`（依赖接口 / 扫描 /
+> 预览与闸门 / 一次清空四步）、`app.go` 五个门面方法 + `internal/app/di.go` 接线、`frontend/src/api/dockerClean.ts`、
+> `components/business/DockerCleanPanel.vue`（默认折叠 · 逐行重试 · 全选不带走危险项）与 `DockerCleanPreviewModal.vue`
+> （逐项开关 · 知情同意 · 默认不勾的「同时卸载」）挂在 `views/OverviewView.vue` 服务表下方。
+> **`internal/service/cleanup_service.go` 一字未改**（需求 ⑨「只模仿，不要改它」）。
+>
+> **一处需裁决的口径张力（不当已裁决处理）**：本面板的写链路走「预览凭据 + 危险闸门 + 后果确认 → task → applyStateChange」，
+> **没有**新增第 **21** 个 preflight action——与既有 `CleanupService.Clean` / `CleanCache` 同一条路子（那两个也没有）。
+> §0.2 规则 11 的原文是「所有写操作走 preflight → task → applyStateChange 三段式」，两者存在张力。本轮按「30 项裁决封口、
+> 未授权新增 action」实现并**如实登记在 §5.22.8**，不改规则原文、不擅自把 action 数改成 21。需要用户裁决后再收口。
+>
+> **验真**：`gofmt -l .` 无输出 · `go vet ./...` · `go test ./... -count=1` 全绿 · 五项门禁全过（i18n 两侧各 **830** 键且集合相等、
+> 模板 golden 空 diff、Docker 命名——`rowIsPhpo` 与「同时卸载」前缀已改走 `dockerutil.IsPhpoResource`/`NamespacePrefix`，
+> 不再裸写 `"phpo-"`、缓存清单字段、扩展 **73** 项分类对账）· `golangci-lint run ./...` **0 issues**（本机 2.13.2，
+> 与 CI 同版本）· `vue-tsc --noEmit` EXIT=0 · `pnpm build` 绿，`frontend/dist/index.html` 占位产物已按规约还原。
+> 新增用例：**16** 条 `internal/engine/clean_hostdel_test.go`（`nameSafe` 四种坏名字 / `checkHostPath` 五道门与 **22** 圈灾难根逐项 /
+> 允许根目录之下而拒绝根本身（`/etc/cni/net.d/*.conflist` 必须放行）/ `resolveHostPath` 候选目录数 / `hostRowRoots` 每行落点表
+> 1·2·0 三档 / `classifyHostOp` 覆盖服务层 Kind / `DeleteHostObjects` 单项失败只挡自己且保留原 Ref / 五种删法的 argv /
+> 「已经不在了」幂等且不敲命令 / 三种失败措辞各指对原因 / 回收站三条规则（不是文件不进、没准备好不删、进栈 `Freed=0` 且内容还在）/
+> 提权闸门（缺 pkexec · 缺命令 · 成功时 `[pkexec, 绝对路径, 参数…]`））+ **10** 条 `internal/service/docker_clean_test.go`
+> （逐项摊开且构建缓存只一颗 / 浅扫不冒充 / 三类不该预览的行 / 危险项要确认且拒绝时不作废 / 一次性凭据与清单外 ID 与过期 /
+> 现场漂移 Skipped / 留底优先且挪不动即不删（两半）/ 宿主指令契约（Kind 占位 · Ref 原文 · NeedsRoot 随 rootless）/
+> 卸载默认不调且勾了才另起一单 / 单项失败不停整单且审计写 `partial` / **28 行两侧对账**）。
+> **仍欠的那两件**：**真宿主 GUI 只走查到 demo 通道**（面板能展开、六颗按钮齐全、无后端时给「当前未连接后端」而不是编一行数字、
+> 「彻底清空选中」在无勾选时禁用；危险项弹框、预览逐项开关与像素级观感仍待在装有 Docker 的机器上实机点击验收）；
+> **live 端到端未跑**（`ScanHost` 真提权、真删卷数据进回收站都要 root 与真 Docker，本机不便对用户的机器动手）。
+> **明确未改**：8 条硬红线原文、三段式写操作、**17 事件名一个未增**／**4 任务状态**、preflight **20** action 与 NEEDS_HOME **18**、
+> `pkg/errs` **28** 码、门禁 **5** 项、扩展目录 **73**·**8**·**11**、§5.15 三根互斥唯一、§5.16 三档显示与「停用 = 删 ini」、
+> §5.17 备份容错、§5.18 数据服务运行态、§5.19 全量口径与 `Gaps` 派生态、§5.20 权限 0777、§5.21 镜像源、
+> 密码／版本／域名／端口策略、冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`。
+> **未 commit**（等指令）。
+
 > **v2.9.13 变更（新增 §5.6.4「等待期反馈：操作名进抽屉标题条 + 被点按钮禁用」，把「一切耗时操作实时说出在做什么」写成冻结条款）**：
 > 用户提出的最高优先级需求：**「所有的一切全部（操作/点击/变化/请求/反馈/响应/日志/消息…）优先把直观名字放进日志抽屉，
 > 以便用户第一时间知晓；其他功能同理；点击立即备份时等待期间按钮应禁用，结束再恢复可用」**。此前 §5.6.1 只管住右栏队列行的
@@ -3587,7 +3797,7 @@ const (
 - 等待期反馈（v2.9.13）：**当前操作的直观名字显示在抽屉左栏日志之上（`.drawer-task-title`，文本只取快照 `TaskBrief.Label`；头部三区不动，无选中任务时不渲染）· 耗时写操作等待期被点的那一颗按钮 `:disabled`，在 `await syncState()` 之后才复能 · 禁用只限那一颗（key=`type:kind:version:domain:file`），其他按钮照常可点、FIFO 排队能力不变（见 §5.6.4）**
 - 同步状态（v2.9.14）：**手动「同步状态」是全量口径——逐个已安装版本核容器／基座镜像／php 扩展固化镜像，缺席项以派生 `Snapshot.Gaps`（三 Reason）逐条点名到服务卡片与抽屉日志；绝不自动改写 `installed`、不自动删建资源，恢复由用户点「启用」幂等重建；轻量档（启动／每任务后／每 24h）只判容器并复用已取到的实际态（见 §5.19）**
 - 文件权限（v2.9.14）：**phpo 自己的产出物目录与文件一律 `0777`，且必须写后显式 `chmod` 归一（`internal/util/fs.go` 一处收口；写进 `MkdirAll`/`WriteFile` 入参会被 umask 削掉）· 旧装机在下次写入时自愈 · `config.yaml` 不豁免，明文密码因此世界可读 · 容器内进程所写文件不在本条范围（见 §5.20）**
-- 卸载无保留门禁（v2.9.14）：**禁止「至少保留一个 PHP 版本」这类门禁（`pkg/errs` 已删该码，28 → 27）· 站点依赖与最后一个版本一律降级为警告并照常卸载（PHP 与 Nginx 同口径，见 §1.11）**
+- 卸载无保留门禁（v2.9.14）：**禁止「至少保留一个 PHP 版本」这类门禁（`pkg/errs` 已删该码；删后 27 条，加生产新增 `FileMissing` 即现 **28** 条）· 站点依赖与最后一个版本一律降级为警告并照常卸载（PHP 与 Nginx 同口径，见 §1.11）**
 - 扩展缓存槽位与弹窗（v2.9.14）：**每个 php 版本两份镜像缓存各占槽位（`image.tar` / `image-extensions.tar`，清单 `image` / `extensions_image`）· 提升日志一行 `ok` 点名落点全路径 · 固化镜像缺席由 `LoadExtImage` 零网络 `docker load` 恢复并发 `cache:hit`/`cache:corrupted` · 管理扩展弹窗提交即关闭、默认勾选取「实测启用态回写后」的权威快照 · nginx 缺席/未运行 `dim` 跳过、重载失败 `err` 后继续，不判死已生效的扩展（见 §5.14.2 / §5.16.2 / §5.16.3）**
 - 扩展开关的语义（v2.9.14 追加）：**那颗开关只说一件事——「这个扩展在本 PHP 版本上此刻启用了没有」，已启用 on、未启用 off；唯一真值是容器内实测 `php -m`（后端归一显示名 → 回写 `php_extensions` → 随权威快照回流，前端不消费文本、不新增事件名）· 每次打开弹窗由后端现取一次，「安装成功后同步」是它的自然特例 · 停用 = 不再加载（删 `conf.d` ini）≠ 卸载，`.so` 留在镜像里而开关照样回 off · 静态内建的 19 项显示 `on · 内建不可停用`（三档显示不得退化为两档）· 拿不到实测时退回库里集并明示非实时、绝不铺成整片 off（见 §0.2 规则 37 / §5.16.2）**
 - 扩展包本体离线化（v2.9.14 追加）：**缓存对象是包文件本体（pecl 的 `.tgz` ／ Alpine 构建依赖的 `.apk`）而不是编译结果——安装与重新编译两条路径都必须落进缓存根并登记 SHA256 · 按 `{name}-` 前缀查（精确名等于永不命中）、命中即 `engine.CopyTo` 零网络回填容器 `/tmp/phpo-ext/{apk,pecl}` 并 `pecl install <该文件>` · 未命中先 `pecl download` / `apk add --cache-dir --virtual`（**不是** `--no-cache`）取包 → `CopyFrom` 取回宿主 → `PromoteExtension` 提升 → 再从文件编译 · 基座非 Alpine（`deb`/`none`）一行 `dim` 跳过、不造 deb 槽位 · 容器暂存目录在 `docker commit` **之前** `rm -rf` · 缓存任一环节失败只 `dim` 退回在线编译、绝不判死整单（见 §0.2 规则 36 / §5.14.3 / §5.16.3）**
@@ -3596,6 +3806,7 @@ const (
 - 等效命令：**全界面不展示 `phpo …` 伪命令行（抽屉头部、三处模态的「将执行」预览、向导与 demo 日志首行；仅保留 `taskStore` 的参数登记，见 §1.4）**
 - 升级：**支持版本检查和自动升级（SHA256 + Ed25519 双校验）**
 - Docker 清洁：**所有操作幂等、原子、隔离、一致、可清理、可恢复**
+- **Docker 全量资源清理面板（v2.9.14 追加）：总览页底部 60 行 / 11 组，三档 25·19·16（点就删 / 要授权 / 只说明不给按钮）· 数不到一律「—」+ 原因 + 逐行重试，绝不给 0 · macOS/Windows 上 Linux 行照样显示不给按钮（⑮）· 「详细扫描」每次点击一次授权只弹一扇、被拒不吞已扫到的那一半（⑰/㉘）· 进度复用 `docker:cleanup` 补可选 `step`/`total`，17 事件名一个未增、扫描不入任务队列（㉔）· 危险名单恰好 4 行，全选带不走、每次勾都要后果确认、后端 consent 再拦一次（⑭/㉖/㉚）· 预览先行：一次性凭据 10 分钟、清单外 ID 拒、同名不同类的对象用「类型+引用」区分（⑥/⑦/⑧）· 一次彻底清空 = 一个任务、四步（核对现场 → 留底 → 删 → 收口）、逐项一行、单颗失败不中断其余、取消的那几条既不算删掉也不算跳过（⑲）· 有数据的 5 行先挪回收站留 7 天且 `Freed` 记 0，phpo 自己的卷挪不动就不删（④/⑳）· 删 phpo 自己的容器默认只标缺失态，「同时卸载」默认不勾且另起一单（㉙）· 删除复用 engine 唯一一处实现，旧三模式 / 孤儿 / 回收站 / 审计全部保留（⑨）（见 §5.22）**
 - 离线缓存：**装任何镜像/扩展必先查缓存（在用户选定的缓存根下，默认 `./offline/`）· 命中零网络 · 镜像未命中先探本机镜像库（已有即零网络重建缓存）· 否则下载编译 · 成功后提升到缓存 · 无论成败均清空临时目录 · 支持手工导入任意包文件为缓存条目 · 断网重装靠缓存 · 内网开发靠缓存**
 - **编码准则：编码前思考 · 简洁优先 · 精准修改 · 目标驱动执行**
 - **文档说人话（v2.9.14 追加）：任何文档、注释、界面文案一律大白话——先说「这是干什么的」，再说「什么情况下会错、错了看得见什么」，最后说「怎么回来」；术语和条款编号只作索引，不得拿「权威集/派生态/落地链」这类内部词充当解释，不得让读者去查词典才能读懂一段话（判据：没参与过当轮讨论的同事能复述「改了什么/为什么/怎么验证」；见 §0.2 规则 38 / §12.11）**
