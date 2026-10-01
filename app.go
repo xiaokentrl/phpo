@@ -302,6 +302,20 @@ func (a *App) Calibrate(ctx context.Context) error {
 	return a.container.AppService.Calibrate(ctx)
 }
 
+// RefreshServices 轻量刷新服务清单（视图激活 / 窗口聚焦时调）：现数一遍 Docker 上此刻有哪些服务容器，
+// 数出来的与界面已有那份一致时后端不发事件。逐版本核镜像在不在本机不在这里做，那是手动「同步状态」的事。
+func (a *App) RefreshServices(ctx context.Context) error {
+	if a.container.AppService == nil {
+		return errNotReady
+	}
+	// 有任务在跑就不插一脚：安装/卸载中途 Pre-Clean 已删旧容器、新容器还没建，
+	// 此刻数一遍只会把这一瞬说成「容器缺失」，闪一下没意义的缺失态。任务收口时后端自己校准。
+	if a.container.AppService.Running() {
+		return nil
+	}
+	return a.container.AppService.RefreshServices(ctx)
+}
+
 // DockerStatus 只读探测 Docker 可用性（首启/轮询门禁用；硬红线 7 判定源；不改快照不发事件）
 func (a *App) DockerStatus(ctx context.Context) (model.DockerStatus, error) {
 	if a.container.AppService == nil {

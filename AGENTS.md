@@ -17,7 +17,7 @@
 > **备份归档**（v2.9.9 新增，见 §5.17）：打包时读不动的条目**跳过并逐目录聚合告警**，不判死整包；mysql / pgsql / redis 在暂停服务**之前**先做**逻辑导出**（`mysqldump` / `pg_dumpall` / `redis-cli --rdb`），产物入归档 `dump/` 前缀——冷拷贝缺的那部分由 dump 补回
 > **容器日志出口**（v2.9.9 新增，见 §5.18）：服务容器内进程**不得往宿主 bind 挂载目录写日志文件**（容器 uid 对该目录无写权限即 FATAL 崩溃循环，服务永远启不来）；日志一律走 stderr → 由 Docker 收集；启停必须等**稳定 running**，失败报错带容器日志尾部
 > **同步状态全量口径**（v2.9.14 新增，见 §5.19）：用户用 Docker Desktop / `docker rm` / `docker rmi` 等第三方工具把容器或镜像停掉、删掉之后，**手动「同步状态」必须把每一项都对上**——逐个已安装版本核**容器、基座镜像、php 扩展固化镜像**三样，缺席的逐项**点名**（服务卡片缺失态 + 抽屉逐行日志）；但**绝不自动改写 `installed`**（外部删容器不等于用户要卸载），也不自动删任何资源，恢复入口留给用户点「启用」（幂等重建）
-> **服务页以 Docker 为事实源**（v2.9.14 追加，见 §5.19.3a）：服务卡片那一份列表画的是**「Docker 上此刻实际有什么」∪「库里记着配置的那一份」**，不再只翻 phpo 自己的安装记录。因此有两件事必须同时成立：**① 停着的容器照样出现在对应那一页**（显示为已停止，**不得**因为没在跑就不显示——「不知道」不能画成「没有」，§0.2 规则 41 同口径）；**② 不是 phpo 装的容器（用户自己 `docker run` / Docker Desktop / compose 起的）也要被发现并归到对应服务页**，但它是**只读显示**——没有启用／停用／卸载／重建那四颗按钮，也没有端口、密码、数据目录、扩展那几行（那些是 phpo 自己配置的派生物，它没有），只给出处与「到 Docker 里操作」那一句。这份清单（`Snapshot.Discovered`）同样是**派生态、不落库**，只在手动「同步状态」时现问一次 Docker
+> **服务页以 Docker 为事实源**（v2.9.14 追加，见 §5.19.3a）：服务卡片那一份列表画的是**「Docker 上此刻实际有什么」∪「库里记着配置的那一份」**，不再只翻 phpo 自己的安装记录。因此有两件事必须同时成立：**① 停着的容器照样出现在对应那一页**（显示为已停止，**不得**因为没在跑就不显示——「不知道」不能画成「没有」，§0.2 规则 41 同口径）；**② 不是 phpo 装的容器（用户自己 `docker run` / Docker Desktop / compose 起的）也要被发现并归到对应服务页**，但它是**只读显示**——没有启用／停用／卸载／重建那四颗按钮，也没有端口、密码、数据目录、扩展那几行（那些是 phpo 自己配置的派生物，它没有），只给出处与「到 Docker 里操作」那一句。这份清单（`Snapshot.Discovered`）同样是**派生态、不落库**，但它**每一档校准都现问一遍 Docker**（一次 `ContainerList{All:true}`，含已停止的）——启动、每个任务之后、切菜单、窗口重新拿到焦点都算，**不得**让它停在「上次手点同步状态时数到的那一份」
 > **文件权限**（v2.9.14 新增，见 §5.20）：**phpo 自己的产出物**（目录与文件——`config.yaml`、`phpo.db`、审计日志、缓存 tar、渲染出的配置、回收站、备份归档、升级工作区…）**权限一律 0777**，本产品面向程序员，不替用户限制访问；权限位**不得只写在 `MkdirAll`/`WriteFile` 的入参上**（会被进程 umask 削成 0755/0644），必须走 `internal/util` 的 `MkdirAll`/`WriteFile`/`Create`/`AtomicWrite` 显式 `chmod` 归一，旧装机留下的坏权限在下次写入时自愈。**容器内进程写出来的文件不在本条范围**（那是另一个 uid，改它等于越界改用户环境）
 > **卸载不设保留门禁**（v2.9.14 新增，见 §1.11）：**禁止**「至少保留一个 PHP 版本」这类门禁（`errs` 表已删除该码）；卸载有站点依赖的 PHP、卸载最后一个版本，一律**警告说清后果后照常卸载**
 > **扩展固化镜像独立缓存槽位**（v2.9.14 新增，见 §5.14.2/§5.16.3）：`phpo/php:{version}` 提升到缓存根的 **`image-extensions.tar`**（清单记 `manifest.extensions_image`），**与基座的 `image.tar` / `manifest.image` 各占一份**——共用槽位等于每次「应用扩展」把基座缓存整份覆盖掉，下次装基座即 load 到扩展镜像；固化镜像不在本机时由 `LoadExtImage` 从该槽位**零网络 `docker load` 恢复**
@@ -132,7 +132,7 @@
 28. **禁止服务容器往宿主 bind 挂载目录写日志文件**（v2.9.9 新增，见 §5.18）：该目录由宿主用户创建（0755），容器内进程是另一个 uid，建文件即 `Permission denied` → 进程 FATAL → `unless-stopped` 无限重启，服务永远启不来。日志一律走 stderr 由 Docker 收集；启动必须等**稳定 running**，失败报错必须带容器日志尾部。
 29. **禁止「事件到了界面却因单个字段缺席而不动」**（v2.9.12 新增，见 §5.6.3）：`state:changed` 的落地是一条链（`applySnapshot` → `applyTaskBoard` → `taskStore.syncBoard`），链上任一处抛错即**整链中断**——事件收到了、界面却一动不动，用户只能靠刷新页面才看到正确状态。为此：后端快照出口的**可空集合必须序列化为 `[]` / `{}`**（零站点、无排队项即为 `null`，落点是 `internal/store/snapshot.go` 的 `normalizeCollections`），前端**逐字段兜空**（`?? []` / `?? {}`，仍只认快照值，不是乐观更新）。抽屉右栏每一行的标签必须是快照 `TaskBrief.Label` 的人话文本（如「启动 phpo-php-8.0」），**不得**以任务 ID（`start-2` / `stop-1`）示人、**不得**要求用户刷新。
 30. **禁止「操作跑了但界面说不出在跑什么、按钮还亮着」**（v2.9.13 新增，见 §5.6.4）：任何需要等待的写操作，① 该操作的**直观名字**必须在**用户点开抽屉的第一眼**出现在左栏日志之上（`.drawer-task-title` 标题条，文本唯一来源仍是快照 `TaskBrief.Label`）；② 等待期间**被点的那一颗按钮保持禁用**，直到本次操作收口**且权威快照回流之后**才复能。禁用**只限那一颗**——同卡片/同页面的其他按钮照常可点（FIFO 排队是合法路径，见 §5.6），不得做成全局串行、不得拦整个视图、不得禁掉与本次操作无关的控件。
-31. **禁止「Docker 被第三方工具改过，界面却只说已安装」**（v2.9.14 新增，见 §5.19）：手动「同步状态」是**全量口径**——逐个已安装版本核容器 / 基座镜像 / 扩展固化镜像三样，缺席项以快照 `gaps`（`ServiceGap{kind,version,reason,ref}`）点名并随 `docker:state-drift` 广播（**不新增事件名**）；服务卡片显示缺失态、抽屉逐行说明缺的是哪一样、怎么回来。但**不得自动改写 `installed`**、不得自动删资源——外部删除是**派生态**而非卸载指令，恢复由用户点「启用」走幂等重建。**同一档还要反过来补一遍**（v2.9.14 追加，见 §5.19.3a）：全量口径同时**现问一次这台机器上 Docker 里此刻的服务容器清单**（`Snapshot.Discovered`，含已停止的、含不是 phpo 装的），服务页画的是「Docker 事实 ∪ 库里配置」——**不得**因为库里没记过就不显示那颗停着的或外部起的容器（「不知道」不能画成「没有」，§0.2 规则 41 同口径）；也**不得**给它 phpo 的资源按钮与配置行（外部容器只读显示：无启用／停用／卸载／重建四颗按钮，无端口、密码、数据目录、扩展那几行）。`Discovered` 与 `Gaps` 同为派生态、不落库，**不改写 `installed`/`running` 任何一行**。
+31. **禁止「Docker 被第三方工具改过，界面却只说已安装」**（v2.9.14 新增，见 §5.19）：手动「同步状态」是**全量口径**——逐个已安装版本核容器 / 基座镜像 / 扩展固化镜像三样，缺席项以快照 `gaps`（`ServiceGap{kind,version,reason,ref}`）点名并随 `docker:state-drift` 广播（**不新增事件名**）；服务卡片显示缺失态、抽屉逐行说明缺的是哪一样、怎么回来。但**不得自动改写 `installed`**、不得自动删资源——外部删除是**派生态**而非卸载指令，恢复由用户点「启用」走幂等重建。**同一份清单还要反过来补一遍**（v2.9.14 追加，见 §5.19.3a）：**每一次校准**（含启动与每个任务之后的轻量档，不只手点「同步状态」）都**现问一次这台机器上 Docker 里此刻的服务容器清单**（`Snapshot.Discovered`，含已停止的、含不是 phpo 装的），服务页画的是「Docker 事实 ∪ 库里配置」——**不得**因为库里没记过就不显示那颗停着的或外部起的容器（「不知道」不能画成「没有」，§0.2 规则 41 同口径）；也**不得**给它 phpo 的资源按钮与配置行（外部容器只读显示：无启用／停用／卸载／重建四颗按钮，无端口、密码、数据目录、扩展那几行）。`Discovered` 与 `Gaps` 同为派生态、不落库，**不改写 `installed`/`running` 任何一行**。
 32. **禁止 phpo 自己的产出物留非 0777 权限**（v2.9.14 新增，见 §5.20）：目录与文件一律 `0777`，且**必须显式 `chmod` 归一**——只把 `0o777` 写进 `os.MkdirAll`/`os.WriteFile` 入参不算合规（进程 umask 会削位，`022` 下实际得到 `0755`/`0644`）；旧装机留下的 `0755`/`0644` 要在下一次写入时修好。**容器内进程写的文件不适用本条**，不得为此去 `chown`/`chmod` 用户环境里的他人文件。
 33. **禁止「至少保留一个」这类保留门禁**（v2.9.14 新增，见 §1.11）：卸载时「存在依赖该版本的站点」「这是最后一个 PHP 版本」一律**降级为警告并照常卸载**（PHP 与 Nginx 同口径）；`pkg/errs` 已删除 `LastPhp` 码（表内现为 **28** 条 = 原型 28 条删该码得 27，再加生产新增的 `FileMissing`；口径见 §0.3），卸载分支只保留 `SvcMissing` 与 `NotInstalled` 两条 `errf`。把可警告的事做成阻止，等于替程序员做决定（§0.2 规则 15/16）。
 34. **禁止让瞬时弹窗替后台任务守门**（v2.9.14 新增，见 §5.16.2 / §5.16.3）：扩展管理弹窗的 `apply()` **不得 `await`** 数十秒的编译链路——**提交即 `emit('close')`**，进度与失败由抽屉日志 / 右栏队列承载（§5.6.4 同一路子）。同理，任务里**已经做对的那部分**不得被后置环节的失败判死：nginx 缺席/未运行给 `dim` 跳过行、重载失败给一行 `err` 后 `return nil`，**不撤回已编译生效的扩展**。
@@ -182,7 +182,7 @@
 | 缺失态类别数 | **3**（`container` ／ `image` ／ `extensions_image`） | `internal/model/resource.go` 的 `GapContainer` / `GapImage` / `GapExtImage`（§5.19）；不落库，随快照 `Gaps` 派生广播 |
 | 发现态的判定层数 | **3**（容器名 `phpo-{kind}-{version}` ／ 镜像 + tag 反查（拿 `ImageTagFor` 正算一次才对得上）／ 宿主端口**只作佐证**——**php 故意不在端口表里**） | `internal/engine/discover.go` 的 `DiscoverServices`（**一次** `ContainerList{All:true}`，含已停止；错误上抛，绝不当成「这台机器上没有服务」）+ `classifyContainer` / `MatchedName` / `MatchedImage`；载体 `model.DiscoveredService`（§5.19.3a）随快照 `discovered` 派生广播，**不落库、不改写 `installed`/`running`**；认不出的进 `Unrecognized`（目前只到 engine 层，界面与抽屉还没消费它） |
 | 扩展缺失包的表规模 | **28** 个 `pkg-config` 名 → **17** 对包名（Debian ／ Alpine 各一列，**逐个现取命令验证**；表外名字原样报出不编造） | `internal/config/extdeps.go` 的 `extSysPkgs` / `ExtSysPkgHint` / `ExtMissingDepNames`（§5.16.6）；识别 **2** 种 configure 写法，`Requested '…' but version of …` 一族**刻意不认** |
-| 「同步状态」口径分档 | **2**（每任务后与启动＝轻量，只判容器存在性，发现态沿用快照里那一份、不再问一次 Docker；手动「同步状态」＝全量，再核基座镜像与扩展固化镜像，并现查一次这台机器上 Docker 里此刻的服务容器清单） | `internal/service/lifecycle_service.go` 的 `Calibrate` / `SyncAll` → `calibrate(ctx, auditImages)`（§5.19 / §5.19.3a） |
+| 「同步状态」口径分档 | **2**（两档都现数「这台机器的 Docker 此刻有哪些服务容器」——一次 `ContainerList{All:true}`；差别在镜像：**每任务后与启动＝轻量**只判容器存在性，**手动「同步状态」＝全量**再逐个已安装版本核基座镜像与扩展固化镜像） | `internal/service/lifecycle_service.go` 的 `Calibrate` / `SyncAll` → `calibrate(ctx, auditImages)`（§5.19 / §5.19.3a） |
 | phpo 产出物权限 | **0777**（目录与文件一律；显式 `chmod` 归一，不靠 `MkdirAll`/`WriteFile` 入参） | `internal/util/fs.go` 的 `DirPerm` / `FilePerm`（§5.20）；`internal/config/password_test.go` 锁死 `config.yaml` 为 0777、`internal/store/store_test.go#TestDBFilePermNormalized` 锁死 `phpo.db` |
 | 任务账本日志保留 | **尾部 500 行** | `internal/task/ledger.go`（`maxLedgerLines`）；写回 `operations` 表（迁移 0008 加 `task_id/label/logs`） |
 | SQLite 迁移数 | **8** | `internal/store/migrate/0001–0008.sql` |
@@ -212,7 +212,7 @@
 | 彻底清空的预览凭据有效期 | **10 分钟**，且**一次性**（用过即废；危险项未确认时的拒绝**不**作废） | `internal/service/docker_clean_preview.go` 的 `cleanPreviewTTL` + `takeClean` |
 | 删之前先留 7 天的行数 | **5**（`volume.data` / `volume.driver` / `plugin.config` / `plugin.data` / `container.checkpoint`） | `service.cleanTrashedRows`；落点登记走 `store.AddTrashItem`（§5.13.7） |
 | 清理面板新增事件名 | **0**（进度复用 `docker:cleanup`，只给载荷补可选 `step` / `total`） | `service.emitStage`；先例是 `cache:miss` 补 `source`、`docker:state-drift` 补 `gaps` |
-| 清理面板的门面方法数 | **5**（`DockerCleanScan` / `Supported` / `RefreshRow` / `Preview` / `Execute`）；`app.go` 现 **78** 个导出方法 = **76** 个生成绑定 + `ServiceStartup`/`ServiceShutdown` 两颗钩子 | `app.go` 与 `frontend/bindings/phpo/app.ts` 实测（`grep -c`） |
+| 清理面板的门面方法数 | **5**（`DockerCleanScan` / `Supported` / `RefreshRow` / `Preview` / `Execute`）；`app.go` 现 **79** 个导出方法 = **77** 个生成绑定 + `ServiceStartup`/`ServiceShutdown` 两颗钩子 | `app.go` 与 `frontend/bindings/phpo/app.ts` 实测（`grep -c`） |
 | 清理面板的文案键数 | 行名 **60×2** + 分组 **11** + 面板与确认框 **57** = 本轮新增；两侧各 **830** 键、集合相等 | `frontend/src/locales/{zh-CN,en-US}.ts`；以第 1 项门禁输出为准 |
 | 硬红线数量 | **8** | 见 §3.3 |
 | PHP 切换上游格式 | **`php-{version}-fpm:9000`** | 保留版本号原样 |
@@ -317,8 +317,8 @@
 | PHP 扩展目录 | **每版本一份全量目录（73 项 · 8 分组）**，安装弹窗与「管理扩展」弹窗共用；常用 **11** 项默认勾选，勾选/取消即本次的**目标扩展集**；**每一行开关只表达「此刻启用了没有」——已启用即 on，判据是容器内实测 `php -m`（不是上次请求的目标集）；停用 = 不再加载（删 ini）≠ 卸载，`.so` 留在镜像里；静态内建的 19 项恒 on 且标「内建不可停用」**（见 §0.2 规则 37 · §5.16.2）；编译输出逐行进抽屉日志，失败点名扩展并中止（见 §5.16） |
 | 备份归档 | 读不动的条目**跳过 + 逐目录聚合告警**，不判死整包；mysql／pgsql／redis 暂停**之前**先**逻辑导出**入归档 `dump/`；恢复侧明示「dump 不自动重放」（见 §5.17） |
 | 数据服务运行态 | 容器内进程**不往宿主 bind 目录写日志**（pgsql 走 stderr → Docker 收集）；旧装机的坏配置就地自愈；启停等稳定 running，失败带容器日志尾部（见 §5.18） |
-| 同步状态（手动） | **全量口径**：逐个已安装版本核**容器 / 基座镜像 / 扩展固化镜像**三样，缺失逐项点名；**同时现查一次这台机器上 Docker 里此刻的服务容器清单**（含已停止、含非 phpo 装的，见 §5.19.3a）。每任务后与启动只跑轻量档（仅容器存在性，发现态沿用快照里那一份），不放大成每次操作都拨多次 Docker（见 §5.19） |
-| 服务列表的数据来源 | **服务页画的是「Docker 事实 ∪ 库里配置」**（v2.9.14 追加，见 §5.19.3a）：**停着的容器照样出现在对应那一页**（显示为已停止，不因为没在跑就不显示）；**不是 phpo 装的容器也要被发现并归到那一页**，但是**只读显示**——没有启用／停用／卸载／重建那四颗按钮，也没有端口、密码、数据目录、扩展那几行（那些是 phpo 自己配置的派生物，它没有），只给出处与「到 Docker 里操作」那一句。载体 `Snapshot.Discovered` 是**派生态、不落库**，只在手动「同步状态」时现问一次 Docker |
+| 同步状态（手动） | **全量口径**：逐个已安装版本核**容器 / 基座镜像 / 扩展固化镜像**三样，缺失逐项点名；**同时现查一次这台机器上 Docker 里此刻的服务容器清单**（含已停止、含非 phpo 装的，见 §5.19.3a）。每任务后与启动只跑轻量档（**容器存在性 + 那份服务容器清单**，后者一次 `ContainerList{All:true}` 问全），**不**逐个版本拨镜像探针（见 §5.19） |
+| 服务列表的数据来源 | **服务页画的是「Docker 事实 ∪ 库里配置」**（v2.9.14 追加，见 §5.19.3a）：**停着的容器照样出现在对应那一页**（显示为已停止，不因为没在跑就不显示）；**不是 phpo 装的容器也要被发现并归到那一页**，但是**只读显示**——没有启用／停用／卸载／重建那四颗按钮，也没有端口、密码、数据目录、扩展那几行（那些是 phpo 自己配置的派生物，它没有），只给出处与「到 Docker 里操作」那一句。载体 `Snapshot.Discovered` 是**派生态、不落库**，每一档校准（启动 / 每任务后 / 切菜单 / 窗口重新拿到焦点 / 12 秒轮询）都现问一次 Docker |
 | 外部删除的处置 | 第三方工具（Docker Desktop / `docker rm` / `docker rmi`）删掉的东西 → **派生缺失态**（服务卡片「容器缺失／基座镜像缺失／扩展固化镜像缺失」+ 抽屉逐行点名 + `gaps` 随快照广播），**不自动改 `installed`、不自动删资源**；用户点「启用」按当前配置幂等重建（缓存优先、零网络可恢复）回来（见 §5.19） |
 | 文件权限 | **phpo 自己的产出物（目录与文件）一律 0777**，显式 `chmod` 归一（不靠 `MkdirAll`/`WriteFile` 入参——会被 umask 削）；含 `config.yaml`，不提供开关；容器内进程写的文件不适用（见 §5.20） |
 | 卸载限制 | **无「至少保留一个 PHP 版本」门禁**（`errs` 已删该码；表内现 **28** 条，口径见 §0.3）；站点依赖、最后一个版本一律**警告后照常卸载**（见 §1.11） |
@@ -772,7 +772,7 @@
 ```
 phpo/
 ├── main.go                          # GUI 入口（embed all:frontend/dist + 注册根 Service）
-├── app.go                           # 根 Service：唯一对前端暴露的门面（76 个绑定方法 = 78 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子）
+├── app.go                           # 根 Service：唯一对前端暴露的门面（77 个绑定方法 = 79 个导出方法 − ServiceStartup/ServiceShutdown 两颗生命周期钩子）
 ├── app_test.go
 ├── go.mod  go.sum                   # module phpo；go 1.27
 ├── wails.json                       # Wails 配置
@@ -2128,8 +2128,10 @@ logging_collector = off
 
 | 档位 | 入口 | 核查范围 | 落点 |
 |------|------|---------|------|
-| **轻量**（每任务后 / 启动 / 每 24h 校准） | `LifecycleService.Calibrate` → `calibrate(ctx, false)` | **只判容器存在性**，且复用本次已取到的 `ManagedContainers` 实际态——零额外 Docker 调用；**发现态沿用快照里那一份，不再问一次 Docker** | `internal/service/lifecycle_service.go` |
-| **全量**（手动点「同步状态」） | `App.Calibrate`（门面名沿用已生成的 bindings）→ `AppService.Calibrate` → `LifecycleService.SyncAll` → `calibrate(ctx, true)` | 容器 + **该版本应运行的镜像** + **php 的扩展固化镜像** `phpo/php:{ver}` + **这台机器上 Docker 里此刻实际存在的服务容器清单**（含已停止的、含不是 phpo 装的，见 §5.19.3a） | 同上 |
+| **轻量**（启动 / 每任务后 / 切菜单 / 窗口重新拿到焦点 / 12 秒轮询） | `App.RefreshServices` → `AppService.RefreshServices` → `LifecycleService.Calibrate` → `calibrate(ctx, false)` | **容器存在性**（复用本次已取到的 `ManagedContainers`，零额外调用）**+ 发现态**（`DiscoverServices` 一次 `ContainerList{All:true}` 问全，含已停止、含非 phpo 装的）。**不**逐个版本核镜像在不在本机 | `internal/service/lifecycle_service.go` |
+| **全量**（手动点「同步状态」／⌘R） | `App.Calibrate`（门面名沿用已生成的 bindings）→ `AppService.Calibrate` → `LifecycleService.SyncAll` → `calibrate(ctx, true)` | 轻量那一套 **+ 该版本应运行的镜像 + php 的扩展固化镜像** `phpo/php:{ver}`（逐版本 `ImageExists`）。发现态仍是同一趟里的那一次 `ContainerList`，不重复问 | 同上 |
+
+**为什么切在这里**（v2.9.14 追加）：贵的是**逐个版本**核镜像——它是 O(已安装版本数) 次 Docker 调用，挂在「每任务后」这种高频点上会把启停拖慢，所以仍只在手动「同步状态」做（决策 28 的成本判断不变，只是它管的东西收窄到镜像核查）。而「这台机器的 Docker 此刻有哪些服务容器」是**一次** `ContainerList`，和每次校准本来就要拨的那几次调用同量级，没有理由不现数：把它留给手点，等于用户在 Docker 里停掉一颗服务后，界面要一直挂着旧的那一份，直到他自己想到去点同步。
 
 **全量口径的镜像判定用「该版本实际会跑的那一份」**：php 有固化镜像即以 `phpo/php:{ver}` 为准，没有才回官方基座 `php:{ver}-fpm`——否则会把「装了扩展的版本」说成基座镜像缺失。
 
@@ -2160,7 +2162,7 @@ logging_collector = off
 |----|---------|------|
 | 载体 | 快照字段 `Snapshot.Discovered`（`[]DiscoveredService{Kind,Version,Name,Image,Running,MatchedBy,PhpoNamed}`）；**派生态、不落 SQLite**，与 `Gaps` 同一条规矩 | `internal/model/resource.go` 的 `DiscoveredService` + `internal/model/snapshot.go`；`store.SetDiscovered` 挂载；`normalizeCollections` 兜 `[]`（§5.6.3） |
 | 谁去数 | `engine.DiscoverServices(ctx)` 一次 `ContainerList{All:true}`（**All=true 是这条需求的全部**——不这么传就只能看到在跑的） | `internal/engine/discover.go` |
-| 什么时候数 | **只有全量档**（用户点「同步状态」）才现问一次 Docker；轻量档（启动／每任务后／每 24h）**沿用快照里那一份、不再问**——每次校准都多拨一次 Docker 调用不值（决策 28 的成本口径同一条） | `internal/service/lifecycle_service.go` 的 `calibrate`：`if auditImages { … }` |
+| 什么时候数 | **每一档校准都现问一次**（启动、每个任务之后、切换菜单、窗口重新拿到焦点、12 秒轮询那一拍）——它就一次 `ContainerList{All:true}`，与本次已要拨的 Docker 调用同量级；**不得**把这份清单留在「上次手点同步状态时数到的那一份」上（v2.9.14 追加） | `internal/service/lifecycle_service.go` 的 `calibrate`：`DiscoverServices` 在 `auditImages` 判断**之外** |
 | 认服务名的三层判据 | **① 容器名**是 `phpo-{kind}-{version}` 即直接认（版本可带连字符，逐 kind 比前缀）；**② 认不出再看镜像**：仓库名反查 kind（由安装用的镜像表**反向生成**，不另写一份正向表——两处各写一份迟早漂移）、tag 提版本，php 还必须是 `-fpm` 且**正算一次** `ImageTagFor(kind, 版本)` 能得回同一个 tag 才认；**③ 都没有时端口只作佐证**，在「认不出」的那一条里补一句「发布了 3306 的端口」 | `discover.go` 的 `classifyContainer` / `kindVersionFromName` / `kindVersionFromImage` / `versionFromTag` / `kindHintFromPorts`；`MatchedBy` 记的是 `name` 还是 `image` |
 | 端口的地位 | **绝不凭端口猜版本、也不凭端口定 kind 归到服务卡片上**（php-fpm 的 9000 从不发布到宿主，因此 php 故意不在端口表里）——凭端口猜等于编数字 | 同上 `portKinds` 的注释 |
 | 没有 tag 的镜像 | **不回落 `latest`**：镜像没写 tag 就当作认不出版本。凭空补 `latest` 会在界面上多出一个谁都没装过的版本 | `kindVersionFromImage`（无 tag 即 `ok=false`）；这也是这里不用 `dockerutil.TagOrDefault` / `String` / `FormatRef` 那几个函数的原因 |
@@ -2188,7 +2190,7 @@ logging_collector = off
 if len(res.Corrections) == 0 && sameGaps(snap.Gaps, gaps) && sameDiscovered(snap.Discovered, discovered) { return &res, nil }
 ```
 
-三个条件对应三件事：库里该修的运行态没变、缺失项和上次一样、Docker 上此刻的容器清单也和上次一样——三者同时成立才什么都不发。少了第三个条件，用户在 Docker 里停掉一个容器（这既不改 `installed`、也不新增缺失项，因为**停着的容器照样在发现清单里**，只是 `running=false`），点「同步状态」界面却收不到任何回流。
+三个条件对应三件事：库里该修的运行态没变、缺失项和上次一样、Docker 上此刻的容器清单也和上次一样——三者同时成立才什么都不发。少了第三个条件，用户在 Docker 里停掉一个容器（这既不改 `installed`、也不新增缺失项，因为**停着的容器照样在发现清单里**，只是 `running=false`），界面却收不到任何回流。**这条静默正是发现态能被每一档校准现数一遍的前提**：数得勤，但只有真变了才说。
 
 **不得**用 `res.Changed()` 作闸门——它把「存在性漂移」也算进变更，而容器缺席是**常态化**的（停了就是缺席），于是每次校准、每次点同步都会重发同样的 drift + 快照，抽屉被同一行刷屏（§0.2 规则 25 的反面：落地要实时，但重复事实不得重复铺）。
 
@@ -2200,6 +2202,7 @@ if len(res.Corrections) == 0 && sameGaps(snap.Gaps, gaps) && sameDiscovered(snap
 |------|------|
 | `composables/useStateSync.ts` 的 `runSync()` | 手动「同步状态」的**唯一入口**：先 `syncAll()`（后端全量校准）再 `syncState()` 拉权威快照——校准无变化时不发事件，故点了同步就一定看到一次落地。**侧栏按钮与命令面板 ⌘R 都走这一个函数**，不得各写一份 |
 | `api/state.ts` 的 `syncAll()` | 调生成的门面 `app.Calibrate()`；demo 通道返回 `false`，调用方只拉本地占位快照 |
+| `api/state.ts` 的 `refreshServices()` + `useStateSync.ts` 的同名出口 | **轻量刷新的唯一入口**（v2.9.14 追加）：调 `app.RefreshServices()` 让后端现数一遍发现态，值仍只经 `state:changed` 回流——这里**不拉快照、不改 store**，因为「没变化」的正确反馈是界面不动。三个触发处共用这一个函数：**12 秒轮询那一拍**（`useDockerPreflight.ts` 的 `poll()`，**不另起第二个定时器**）、**切菜单**（`App.vue` 的 `router.afterEach`）、**窗口重新拿到焦点**（`window` 的 `focus`）。有任务在跑时后端直接返回、不去数（`app.go` 用 `AppService.Running()` 挡）——装/卸中途 Pre-Clean 已删旧容器、新容器还没建，那一刻数出来的会把一瞬说成「容器缺失」，闪一颗没意义的缺失 pill |
 | 抽屉左栏 | `useStateSync` 的 `EVENT.DockerStateDrift` 分支：`e.gaps` **逐条**一行 `meta`（`task.dockerGap`，含 kind/version/人话原因/`ref`）；**有缺失项时不再补那条 `expected → actual` 汇总**——同一次漂移说两遍等于把日志当重复输出通道；无缺失才退回汇总行（比对值缺席时退化为 `error` 文本） |
 | 服务卡片 | `appState.gapOf(kind, version)` → `.status-pill.pill-warn`（`data-gap`）显示「{原因}缺失」，`title` 给 `svc.gapTip`（哪一样不在了 + `ref` + 「点启用会按当前配置重建」）。**同版本至多一条**，取最先命中的 `reason` |
 | 服务列表（发现态） | `views/ServiceView.vue` 的 `rows()` 把两份名单并成一张表：**库里装过的版本** ∪ **Docker 上此刻实际有的容器**（`appState.discoveredOf(kind, version)`），按 version 去重。所以「停了的服务」照常在这一页出现——`runningOf(version)` **先问 Docker 事实**（`discovered.running`），问不到才回落库里的 `running`（demo 通道查不到容器，因此行为与改动前一致）。落地顺序有硬要求：`applySnapshot` 里 `discovered` 的 `splice` 必须排在 `applyTaskBoard` **之前**（§5.6.3——这条落地链上任一处抛错即整链中断，队列详情会跟着一起丢） |
@@ -2225,7 +2228,7 @@ if len(res.Corrections) == 0 && sameGaps(snap.Gaps, gaps) && sameDiscovered(snap
 - ❌ 这一次 `ContainerList` 问失败了，却把清单铺成空——等于告诉用户「这台机器上一个服务都没有」；`DiscoverServices` 的错误必须上抛（与 §5.19.3 第 3 条 `ImageExists` 同一口径）。
 - ❌ 凭宿主端口定服务种类、或凭端口猜版本号——端口只在容器名与镜像都对不上时用来给一句建议；php **故意不在**那张端口表里（多个 PHP 版本同挂 80/9000，按端口判必然判错）。
 - ❌ 镜像引用没有 tag 就当作 `latest`（无 tag 即认不出来、进 `Unrecognized`；把「没写 tag」翻成「就是 latest」等于编版本）。
-- ❌ 轻量档（每任务后／启动／每 24h）为拿发现态再问一次 Docker——发现态沿用快照里那一份，只有手动「同步状态」才现查。
+- ❌ 为了少问一次 Docker，把发现态留在「上次手点同步状态时数到的那一份」上——每一档校准都现数一遍（一次 `ContainerList{All:true}`）；**仍只在手动「同步状态」做的**是逐个版本核基座镜像与扩展固化镜像，那是 O(已安装版本数) 次调用（§5.19.2 的成本切法）。
 
 ---
 
@@ -2521,7 +2524,7 @@ const (
 | 扩展执行期实时日志 + 失败点名（v2.9.9，需求 ③） | `engine/exec.go#ExecStream`（`stdcopy` 去帧双 writer）+ `extension_service.go`（`extLogWriter` / `extFailed` / `extDisableArgs`） | 抽屉左栏 `task:log` 逐行 + `submitWrite` toast 原样显示后端短消息 |
 | 备份跳过告警 + 逻辑导出（v2.9.9，需求 ④） | `pkg/archive/targz.go`（`Skip`，`Create` 返回 `([]string, []Skip, error)`）+ `backup_service.go`（`dumpKinds` / `dumpStep` / `dumpOne` / `dumpCmd` / `logSkips`） | `BackupView.vue` 无独立模态；结果与缺项进抽屉日志 |
 | 数据服务运行态（v2.9.9，需求 ③） | `template/templates/pgsql/postgresql.conf.tmpl`（stderr）+ `workdir.go#healPgLogging` + `engine/container.go`（`waitRunning` / `startFailureMsg` / `needsStop`）+ `engine/inspect.go`（`ContainerStatus` / `LogTail`） | —（报错文本经服务卡片状态点与 toast 回流） |
-| 同步状态全量口径 + 缺失态 + 发现态（v2.9.14，需求 ①/④） | `lifecycle_service.go`（`calibrate(ctx, auditImages)` 两档 / `SyncAll` / `detectGaps` / `sameGaps` / `sortedKinds`；全量档另现查一次发现态：`discoveredOf(found)` / `sameDiscovered`）+ `model.ServiceGap`（`GapContainer`/`GapImage`/`GapExtImage`）+ `model.Snapshot.Gaps` + `store.SetGaps` + `snapshot.go#normalizeCollections` 兜 `[]`；**发现态**：`internal/engine/discover.go`（`DiscoverServices` 一次 `ContainerList{All:true}`，含已停止、含非 phpo 装的；三层判据、错误上抛）+ `model.DiscoveredService` + `model.Snapshot.Discovered` + `store.SetDiscovered` | `api/state.ts#syncAll` + `useStateSync.ts#runSync`（侧栏「同步状态」与 ⌘R 唯一入口）+ `appState.gapOf` + `ServiceView.vue` 缺失态 pill + `constants/service.ts#GAP_REASON_KEYS`；发现态：`appState.discoveredOf`（`applySnapshot` 的 `splice` 排在 `applyTaskBoard` **之前**）+ `ServiceView.vue` 的 `rows()`（库里 ∪ Docker 上此刻）/ `runningOf`（先问 Docker）/ `externalOnly` + 四条 `svc.discovered*` 文案 |
+| 同步状态全量口径 + 缺失态 + 发现态（v2.9.14，需求 ①/④） | `lifecycle_service.go`（`calibrate(ctx, auditImages)` 两档 / `SyncAll` / `detectGaps` / `sameGaps` / `sortedKinds`；**发现态两档都现数**：`DiscoverServices` 在 `auditImages` 之外，`discoveredOf(found)` / `sameDiscovered`）+ `model.ServiceGap`（`GapContainer`/`GapImage`/`GapExtImage`）+ `model.Snapshot.Gaps` + `store.SetGaps` + `snapshot.go#normalizeCollections` 兜 `[]`；**发现态**：`internal/engine/discover.go`（`DiscoverServices` 一次 `ContainerList{All:true}`，含已停止、含非 phpo 装的；三层判据、错误上抛）+ `model.DiscoveredService` + `model.Snapshot.Discovered` + `store.SetDiscovered`；轻量档门面 `app.go#RefreshServices`（任务在跑即返回不数）→ `app_service.go#RefreshServices` | `api/state.ts#syncAll` + `useStateSync.ts#runSync`（侧栏「同步状态」与 ⌘R 唯一入口）+ `appState.gapOf` + `ServiceView.vue` 缺失态 pill + `constants/service.ts#GAP_REASON_KEYS`；发现态：`appState.discoveredOf`（`applySnapshot` 的 `splice` 排在 `applyTaskBoard` **之前**）+ `ServiceView.vue` 的 `rows()`（库里 ∪ Docker 上此刻）/ `runningOf`（先问 Docker）/ `externalOnly` + 四条 `svc.discovered*` 文案；**轻量刷新**：`api/state.ts#refreshServices` + `useStateSync.ts#refreshServices`（唯一出口）← `useDockerPreflight.ts#poll`（12 秒那一拍，不另起定时器）· `App.vue` 的 `router.afterEach`（切菜单）· `window` 的 `focus`（窗口重新拿到焦点） |
 | 扩展固化镜像的第二缓存槽位（v2.9.14，需求 ③） | `config/offline.go#OfflineExtImageTar` + `cache/{lookup,image_cache,promote}.go`（`LookupExtImage` / `LoadExtImage` / `PromoteExtImage`，在 `cache.Manager` 不经门面）+ `cache/manifest.go` 的 `extensions_image` 字段 | `CacheDetailModal.vue` 按 `CacheEntry.HasExtImage` 单独一栏显示两槽位（`offline.detail.extImage`）；`scripts/check-cache-manifest.go`（第 4 项门禁）锁死字段名 |
 | phpo 产出物一律 0777（v2.9.14，需求 ②） | `internal/util/fs.go`（`DirPerm`/`FilePerm` + `MkdirAll`/`WriteFile`/`Create`/`AtomicWrite` 显式 chmod 归一，失败 best-effort）——全仓 23 个落点统一走它 | —（权限是落盘事实，不进快照） |
 | 卸载不设「至少保留一个 PHP」门禁（v2.9.14，需求 ⑤） | `preflight/rules_service.go#uninstall`（php / nginx 依赖均 `warnf`；`pkg/errs` 删 `LastPhp`，含生产新增 `FileMissing` 共 **28** 码，口径见 §0.3） | 各服务卡片「卸载」照常可点至最后一个版本；warnings 进确认弹框 |
@@ -2674,7 +2677,7 @@ const (
 #### 理由
 
 1. **需求 ① 的现象**：用户用 Docker Desktop / `docker rm` / `docker rmi` 把容器和镜像全清了，服务列表照旧显示「已安装」——旧口径只比 `running`，存在性缺席既不上报也不显示。
-2. **不能把每次校准都做成全量**：全量要逐版本 `ImageExists`，是 O(已安装版本数) 次 Docker 调用；它挂在「每任务后」这一高频点上会把启停操作拖慢。手动同步是唯一能承受这个代价的入口，故 `auditImages` 只在 `SyncAll` 为真。
+2. **不能把每次校准都做成全量**：全量要**逐版本** `ImageExists`，是 O(已安装版本数) 次 Docker 调用；它挂在「每任务后」这一高频点上会把启停操作拖慢。手动同步是唯一能承受这个代价的入口，故 `auditImages` 只在 `SyncAll` 为真。**这条判断只管镜像核查**——「这台机器的 Docker 此刻有哪些服务容器」是一次 `ContainerList{All:true}`，与每次校准本来就要拨的调用同量级，v2.9.14 起每一档都现数它（§5.19.2）。
 3. **`installed` 不等于「宿主上有东西」**：容器被外部删掉时配置、卷、离线缓存全在，点「启用」即按当前配置幂等重建（§5.13.4）。自动降级 `installed` 是把一个**可恢复**状态改成**不可逆**的记账错误，且让用户丢失配置回显。
 4. **派生态不能伪装成第二份权威**：`Gaps` 落库即出现「库里两份说法」——本项目的硬红线 4 要求后端唯一权威，故 `Gaps` 只在快照里活一次。
 
@@ -2776,7 +2779,7 @@ const (
 | **R97** | **容器内往宿主 bind 挂载目录写日志 → FATAL 崩溃循环，且旧装机的坏配置永不更新** | **pgsql 日志改走 stderr（模板 + `check-templates.go` golden 注明唯一生产偏离）；「启用」路径 `healPgLogging` 原地截断修复；`waitRunning` 复验 + 失败消息带退出码与容器日志尾部；`test/integration/g4_pgsql_heal_live_test.go` 真机两头取证（旧配置裸启动必失败 → 经 `Start` 自愈后就绪）（§5.18）**（v2.9.9） |
 | **R98** | **`state:changed` 落地链被单个缺席字段打断：事件到了、界面却不动，只能靠刷新页面回正** | **快照出口 `normalizeCollections` 把可空集合发成 `[]`/`{}`（`TestBuildSnapshot_NoNullCollections` 反射遍历锁死）；前端 `applySnapshot`/`applyTaskBoard`/`syncBoard` 逐字段兜空；`internal/app/queue_events_test.go` 锁死「任务开始那一帧就带人话标签」；§0.2 规则 29 + §5.6.3**（v2.9.12） |
 | **R99** | **耗时操作等待期界面「说不出在跑什么、按钮还亮着」：左栏日志只有步骤行、被点按钮可重复点击塞出同样任务** | **抽屉左栏 `.drawer-task-title` 标题条（文本只取快照 `TaskBrief.Label`）；`taskStore.isBusy` + `submitWrite` 的 `beginSubmit → await syncState() → endSubmit` 只禁被点那一颗（key=`type:kind:version:domain:file`）；§0.2 规则 30 + §5.6.4**（v2.9.13） |
-| **R100** | **容器/镜像被第三方工具删掉后界面仍说「已安装」，或反过来自动把 `installed` 改写成不可恢复的记账错误；同一枚硬币的反面是——服务页只按库里的 `installed` 画，Docker 里明明停着一颗 `phpo-mysql-8.0`、或用户自己 `docker run` 起过一颗 MySQL，列表却什么都不显示（真实现象：「我本来 docker 都是有容器的，虽然已经停止，但你却没有在对应的列表出现」）** | **两档校准（轻量只判容器 / 手动同步全量）+ `Snapshot.Gaps` 三 Reason 点名；只标记不自动改库、探针错误上抛、三条件幂等静默（`len(Corrections)==0 && sameGaps && sameDiscovered`，不用 `res.Changed()` 当闸门）；发现态 `Snapshot.Discovered`（`engine/discover.go` 一次问全、含已停止）并进服务列表（库里 ∪ Docker 上此刻，运行态先问 Docker），非 phpo 命名的容器只读显示、不给四颗按钮也不给 phpo 派生那几行；两者都不落库、都不改写 `installed`；§0.2 规则 31 + §5.19 / §5.19.3a**（v2.9.14） |
+| **R100** | **容器/镜像被第三方工具删掉后界面仍说「已安装」，或反过来自动把 `installed` 改写成不可恢复的记账错误；同一枚硬币的反面是——服务页只按库里的 `installed` 画，Docker 里明明停着一颗 `phpo-mysql-8.0`、或用户自己 `docker run` 起过一颗 MySQL，列表却什么都不显示（真实现象：「我本来 docker 都是有容器的，虽然已经停止，但你却没有在对应的列表出现」）** | **两档校准（轻量只判容器 / 手动同步全量）+ `Snapshot.Gaps` 三 Reason 点名；只标记不自动改库、探针错误上抛、三条件幂等静默（`len(Corrections)==0 && sameGaps && sameDiscovered`，不用 `res.Changed()` 当闸门）；发现态 `Snapshot.Discovered`（`engine/discover.go` 一次问全、含已停止）**每一档校准都现数**（启动 / 每任务后 / 切菜单 / 窗口聚焦 / 12 秒轮询，都是一次 `ContainerList{All:true}`；任务在跑时门面挡住不数）并进服务列表（库里 ∪ Docker 上此刻，运行态先问 Docker），非 phpo 命名的容器只读显示、不给四颗按钮也不给 phpo 派生那几行；两者都不落库、都不改写 `installed`；§0.2 规则 31 + §5.19 / §5.19.3a**（v2.9.14，发现态刷新频率由 v2.9.14 追加条提高） |
 | **R101** | **扩展固化镜像与基座镜像争用同一个缓存槽位（后写覆盖先写），或提升后用户无法核对到底进了哪个文件** | **每版本两槽位：`image.tar` / `image-extensions.tar` + 清单 `image` / `extensions_image` 各一条（`config/offline.go#OfflineExtImageTar`）；提升日志一行 `ok` 点名 ` committedRef → extTar` 全路径；`check-cache-manifest.go` 锁死字段名；§0.2 规则 35 + §5.14.2 + §5.16.3**（v2.9.14） |
 | **R102** | **phpo 产出物权限被 umask 削成 0755/0644，用户删不掉自己的文件；或反向把容器内进程产物也 chmod 成 777** | **`internal/util/fs.go` 一处收口（`DirPerm`/`FilePerm = 0o777` + 写后显式 `chmod`、`AtomicWrite` 先 Chmod 再 rename、叶子目录总归一以自愈旧装机）；范围**只含 phpo 自己的产出物**，容器内所写文件走 §5.17.1 跳过+告警；§0.2 规则 32 + §5.20**（v2.9.14） |
 | **R103** | **扩展弹窗 `await` 数十秒的后台任务才关闭；或 nginx 重载失败把已编译生效的扩展整单回滚** | **管理扩展弹窗提交即 `emit('close')`，进度/失败由抽屉日志与队列承载、`.then` 里 `await syncState()` 后 toast（§5.16.2）；nginx 缺席/未运行 → `dim` 跳过行、重载失败 → `err` 行 + `return nil` 不判死整单（§5.16.3）；§0.2 规则 34 + §5.16.2 / §5.16.3 / §5.16.5**（v2.9.14） |
@@ -2982,7 +2985,8 @@ const (
 - [ ] 不是 `phpo-{kind}-{version}` 命名的那些是否**只读显示**：不给启用／停用／卸载／重建四颗按钮，也不给 phpo 派生的端口／密码／数据目录／扩展那几行（`rowsWithDirs()` 回 `[]`），并给一句「请到 Docker 里操作」的说明（`svc.discoveredExternalNote`）——**不得**把「phpo 管不着」画成「没有」。
 - [ ] `DiscoverServices` 是否**一次** `ContainerList{All:true}` 问到全部（含已停止、含不是 phpo 装的）？Docker 没答上来时错误是否**上抛**，而不是当成「这台机器上没有服务」？
 - [ ] 是否**只认不删、也只认不建**（发现态不参与任何删除，也不改写 `installed`）？Swarm 任务容器（带 `com.docker.swarm.service.name`）是否一律**不纳管**？
-- [ ] 轻量档（启动 / 每任务后 / 每 24h）是否**没有**为拿发现态再问一次 Docker——发现态沿用快照里那一份？
+- [ ] 每一档校准（启动 / 每任务后 / 切菜单 / 窗口聚焦 / 12 秒轮询）是否都**现数一遍**发现态（一次 `ContainerList{All:true}`）？是否**没有**把它退回「只有手点同步状态才数」？逐个版本核镜像仍只在手点那一次（没有把 `auditImages` 扩大到轻量档）？
+- [ ] 轻量刷新有没有在任务在跑时插一脚（`app.go` 的 `AppService.Running()` 闸门还在挡）？三个触发处是否**共用** `useStateSync.ts` 的 `refreshServices()` 一处，且**没有**新增第二个 `setInterval`？
 - [ ] `Discovered` 是否只活一次（不落 SQLite）？零发现时是否序列化为 `[]`（§5.6.3 契约）？
 - [ ] 发现态是否**不在** `docker:state-drift` 载荷里，只随其后重建的 `state:changed` 快照回流（§5.19.4）——所以抽屉日志那一行说不出「多了一颗 Docker 自己的容器」，那句话只在服务页卡片上讲。
 - [ ] 前端 `applySnapshot` 里写 `discovered` 那一句是否排在 `applyTaskBoard` **之前**（§5.6.3：落地链上任一处抛错即整链中断）？`enterRealHost` 是否把 `gaps` 与 `discovered` 一起清空？
@@ -3669,6 +3673,53 @@ const (
 > §5.18 数据服务运行态、§5.19 全量口径与 `Gaps` 派生态（本轮**只加**发现态，未改 `Gaps` 判定）、
 > §5.20 权限 0777、§5.21 镜像源、§5.22 清理面板与其 30 项封口、§5.6.4 等待期反馈、§1.4「全界面不展示伪命令行」、
 > 密码／版本／域名／端口策略、冻结原型 SSOT（`前端唯一界面来源.txt` 与 `index.html`）与 `base.css`、demo 通道占位值。
+>
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 发现态每一档校准都现数一遍 + 切菜单/窗口聚焦即刷新（§5.19.2 成本切法收窄到「逐版本核镜像」）**：
+> 用户报的现象：**「如果不点击同步状态按钮就没有主动刷新主界面上的每一个主菜单项列表（列表数据没有和真实 docker 数据同步）」**，
+> 并给出技术前提「是否应该在每个菜单项加载前调用同步刷新+同步界面」，要求「确保界面永远始终同步 Docker 实际已安装/已存在的服务为事实源」。
+> 追问后批准 **B+C** 两路一起做（B 后端把发现态从全量档里摘出来、C 前端给一个廉价的刷新触发面）。
+>
+> **根因不是「没刷新按钮」，是这一份清单被绑错了档位**：`calibrate(ctx, auditImages)` 里 `DiscoverServices` 原先写在 `if auditImages { … }`
+> 之内，于是「Docker 上此刻有哪些服务容器」只有手点「同步状态」才会重数一次；启动、每个任务之后、切换菜单、窗口重新拿到焦点
+> 拿到的都是**上一次手点时数到的那一份**。用户在 Docker 里停掉一颗容器，服务页要一直挂着旧状态，直到他自己想起来去点那颗按钮。
+> 而把它绑在全量档的理由（决策 28）说的是**贵的那一件事**——逐个已安装版本 `ImageExists` 是 O(已安装版本数) 次调用；
+> 发现态是一次 `ContainerList{All:true}`，和每次校准本来就要拨的 `ManagedContainers` 同量级。**成本切法因此挪了一刀**：
+> `auditImages` 现在只管「要不要逐版本核镜像」，不再管「要不要数服务容器」。
+>
+> **B（后端）**：`internal/service/lifecycle_service.go` 的 `calibrate` 把 `DiscoverServices(ctx)` 移出 `auditImages` 分支，
+> 两档都现数；错误照旧上抛（问不通不等于这台机器上没有服务，§5.19.3a）。`detectGaps` 的 `if !auditImages { continue }` **一字未动**——
+> 基座镜像与 `phpo/php:{ver}` 仍只在 `SyncAll` 核。发事件闸门（`len(Corrections)==0 && sameGaps && sameDiscovered`）也一字未动，
+> 它是这一刀能切的前提：数得勤，但只有真变了才说，抽屉不会被同一份清单刷屏。
+> **如实登记一处副作用**：轻量档现在也可能因 `DiscoverServices` 报错而整体失败（原先不会）。
+> 那个调用点是 `internal/app/di.go` 的 `tm.SetDoneWatcher(func(){ _, _ = lc.Calibrate(...) })`——返回值本就被丢弃、
+> 校准失败不算任务失败（§5.13.9），所以用户侧没有新故障面；Docker 通不通仍由那条横幅说。
+>
+> **C（前端 + 一个新门面方法）**：`App.RefreshServices` → `AppService.RefreshServices` → `LifecycleService.Calibrate`（轻量档），
+> 门面里先用 `AppService.Running()` 挡一道——**有任务在跑就不数**，因为装/卸中途 Pre-Clean 已删掉旧容器、新容器还没建，
+> 那一刻数出来的会把一瞬说成「容器缺失」，闪一颗没意义的缺失 pill；任务收口时后端自己会校准一次，不需要插一脚。
+> 前端唯一出口是 `useStateSync.ts` 的 `refreshServices()`（它**不**再拉快照：没变化时后端一个字都不发，界面不动就是正确答案，
+> 硬红线 4——不做乐观更新，值只经 `state:changed` 回流）。三个触发处共用它：**12 秒轮询那一拍**
+> （`useDockerPreflight.ts` 的 `poll()`，**没有新增第二个定时器**）、**切菜单**（`App.vue` 的 `router.afterEach`）、
+> **窗口重新拿到焦点**（`window` 的 `focus`）。**刻意没有**走 `runSync()`：那会逐版本核镜像，把一次菜单切换变成 O(版本数) 次调用。
+> **不新增事件名（仍 17 个）、不新增任务状态（仍 4 个）、不新增快照字段、不新增文案键**（i18n 两侧各 **868** 键一字未动）。
+>
+> **落条款**：头部「服务页以 Docker 为事实源」那句改为「每一档校准都现问一遍 Docker」；§0.2 规则 31 的「同一档还要反过来补一遍」
+> 改为「**每一次校准**都现问一次服务容器清单」；§0.3「同步状态口径分档」那一行重写（差别只在镜像）、门面计数 **78/76 → 79/77**；
+> §1.1 结论表两行；**§5.19.2 两档表重写 + 新增「为什么切在这里」一段**；§5.19.3a「什么时候数」那一格；§5.19.4 那句「点同步状态才收不到回流」
+> 改写为「这条静默正是数得勤的前提」；§5.19.5 新增一行（轻量刷新的唯一入口 + 三个触发处 + 任务在跑即不数）；
+> §5.19.6 把「轻量档不得为拿发现态再问一次 Docker」**删除并反向**为「不得把发现态留在上次手点那一份上，逐版本核镜像仍只在手点那一次」；
+> §6 映射表那一行补 `app.go#RefreshServices` 与三个触发处；§9 **R100** 缓解列补刷新频率；§12.10 那条自查**反向**并新增两条（是否共用一处出口、有没有插进任务）；
+> 底部摘要「服务列表的数据来源」一条补一句。**上一轮那条 v2.9.14 变更段里「轻量档不为拿发现态再问一次 Docker」的表述就此作废，以本段为准**（历史段落原文保留不改，同 `0008bea`→`cea3697` 那轮的先例）。
+>
+> **同源同步**（§13 第 4 步）：`docs/状态同步.md`、`docs/接口契约.md`、`docs/界面规格.md`、`docs/目录规范.md`（`app.go` 门面计数）、`docs/CHANGELOG.md` 未发布段。
+> **验真**：`gofmt -l .` 无输出 · `go vet ./...` · `go build ./...` · `go test ./... -count=1` 全绿 ·
+> 五项门禁全过 · `vue-tsc --noEmit` EXIT=0 · `wails3 task bindings` 复测 **77** 个绑定方法（`grep -c '^export function' frontend/bindings/phpo/app.ts`）
+> 与 **79** 个导出方法（`grep -c '^func (a \*App) [A-Z]' app.go`），差额仍恰为 `ServiceStartup`/`ServiceShutdown` 两颗钩子。
+> 用例新增 **4** 条（`internal/service/lifecycle_service_test.go`）：`TestCalibrate_LightweightRefreshesDiscovered`（轻量档也换成这次数出来的那份，
+> 外部起的那颗容器消失要看得见）· `TestCalibrate_DiscoveryErrorPropagates`（问不通即上抛，不回写、不发事件）·
+> `TestSyncAll_CountsDiscoveryOnce`（一次问全，不被逐版本循环放大）· 原有 `TestCalibrate_LightweightSkipsImageAudit` 保留并改注为新切法的判据；
+> 假件补 `discoverCalls` 计数与 `discoverErr` 注入。**仍欠的那一件**：真宿主 GUI 未走查——「切一次菜单就看到那颗停着的容器／外部容器」
+> 是要用户在装有 Docker 的机器上点一次才算；本轮只有单测与产物级证据。**未 commit、未 push**（等指令）。
 
 > **v2.9.13 变更（新增 §5.6.4「等待期反馈：操作名进抽屉标题条 + 被点按钮禁用」，把「一切耗时操作实时说出在做什么」写成冻结条款）**：
 > 用户提出的最高优先级需求：**「所有的一切全部（操作/点击/变化/请求/反馈/响应/日志/消息…）优先把直观名字放进日志抽屉，
@@ -3940,7 +3991,7 @@ const (
 - 任务抽屉：**日志左默认 70% ／ 队列右默认 30%（中缝可左右拖拽 40–80%、双击复位；头部三区只有左区固定为「服务」二字（状态点保留），中／右区照旧） · 新任务永远在最上面（提交时间倒序） · 每行显式显示态（等待中／执行中／已完成，另留 unknown 兜底位；系派生，后端任务状态仍为 4 个）**
 - 等待期反馈（v2.9.13）：**当前操作的直观名字显示在抽屉左栏日志之上（`.drawer-task-title`，文本只取快照 `TaskBrief.Label`；头部三区不动，无选中任务时不渲染）· 耗时写操作等待期被点的那一颗按钮 `:disabled`，在 `await syncState()` 之后才复能 · 禁用只限那一颗（key=`type:kind:version:domain:file`），其他按钮照常可点、FIFO 排队能力不变（见 §5.6.4）**
 - 同步状态（v2.9.14）：**手动「同步状态」是全量口径——逐个已安装版本核容器／基座镜像／php 扩展固化镜像，缺席项以派生 `Snapshot.Gaps`（三 Reason）逐条点名到服务卡片与抽屉日志；绝不自动改写 `installed`、不自动删建资源，恢复由用户点「启用」幂等重建；轻量档（启动／每任务后／每 24h）只判容器并复用已取到的实际态（见 §5.19）**
-- 服务列表的数据来源（v2.9.14 追加）：**服务页画的是「库里配置的 ∪ 这台机器上 Docker 此刻实际有的」——停着的容器照样出现并显示「已停止」（不是只有跑着的才列）；不是 phpo 装的容器（`docker run`／Docker Desktop／compose 建的）也会出现，判据分三层：容器名 `phpo-{kind}-{version}` → 镜像 + tag 反查（拿 `ImageTagFor` 正算一次才对得上）→ 宿主端口只作佐证（php 故意不在端口表里，凭端口猜版本等于编数字），认不出的同样留着报名字；这类外部卡片只读显示（四颗按钮不给、端口／密码／数据目录／扩展那几行不给），因为 phpo 没配过它、那些值一个都不知道；发现态与 `Gaps` 同为派生态，绝不落库、不进 `docker:state-drift` 载荷（17 事件名一个未增），只随 `state:changed` 快照回流；幂等静默闸门是**三条件**（运行态无纠正 ∧ `Gaps` 未变 ∧ 发现态未变），任一变了才发事件——所以发现态没变时连点两次「同步状态」不刷屏；Docker 没答上来时错误上抛，绝不当成「这台机器上没有服务」而把列表清空（见 §5.19.3a）**
+- 服务列表的数据来源（v2.9.14 追加）：**服务页画的是「库里配置的 ∪ 这台机器上 Docker 此刻实际有的」——停着的容器照样出现并显示「已停止」（不是只有跑着的才列）；不是 phpo 装的容器（`docker run`／Docker Desktop／compose 建的）也会出现，判据分三层：容器名 `phpo-{kind}-{version}` → 镜像 + tag 反查（拿 `ImageTagFor` 正算一次才对得上）→ 宿主端口只作佐证（php 故意不在端口表里，凭端口猜版本等于编数字），认不出的同样留着报名字；这类外部卡片只读显示（四颗按钮不给、端口／密码／数据目录／扩展那几行不给），因为 phpo 没配过它、那些值一个都不知道；发现态与 `Gaps` 同为派生态，绝不落库、不进 `docker:state-drift` 载荷（17 事件名一个未增），只随 `state:changed` 快照回流；幂等静默闸门是**三条件**（运行态无纠正 ∧ `Gaps` 未变 ∧ 发现态未变），任一变了才发事件——所以发现态没变时连点两次「同步状态」不刷屏；Docker 没答上来时错误上抛，绝不当成「这台机器上没有服务」而把列表清空；这份清单**每一档校准都现数一遍**（启动／每任务后／切菜单／窗口聚焦／12 秒轮询，都是一次 `ContainerList{All:true}`；任务在跑时不插一脚），**不得**让它停在「上次手点同步状态时数到的那一份」（见 §5.19.2 / §5.19.3a）**
 - 文件权限（v2.9.14）：**phpo 自己的产出物目录与文件一律 `0777`，且必须写后显式 `chmod` 归一（`internal/util/fs.go` 一处收口；写进 `MkdirAll`/`WriteFile` 入参会被 umask 削掉）· 旧装机在下次写入时自愈 · `config.yaml` 不豁免，明文密码因此世界可读 · 容器内进程所写文件不在本条范围（见 §5.20）**
 - 卸载无保留门禁（v2.9.14）：**禁止「至少保留一个 PHP 版本」这类门禁（`pkg/errs` 已删该码；删后 27 条，加生产新增 `FileMissing` 即现 **28** 条）· 站点依赖与最后一个版本一律降级为警告并照常卸载（PHP 与 Nginx 同口径，见 §1.11）**
 - 扩展缓存槽位与弹窗（v2.9.14）：**每个 php 版本两份镜像缓存各占槽位（`image.tar` / `image-extensions.tar`，清单 `image` / `extensions_image`）· 提升日志一行 `ok` 点名落点全路径 · 固化镜像缺席由 `LoadExtImage` 零网络 `docker load` 恢复并发 `cache:hit`/`cache:corrupted` · 管理扩展弹窗提交即关闭、默认勾选取「实测启用态回写后」的权威快照 · nginx 缺席/未运行 `dim` 跳过、重载失败 `err` 后继续，不判死已生效的扩展（见 §5.14.2 / §5.16.2 / §5.16.3）**

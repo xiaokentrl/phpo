@@ -2,8 +2,9 @@
 // 根布局壳：侧栏导航（对齐原型 NAV 三段分组）+ 视图出口
 // T102 10 路由；T103 i18n；T104 主题应用+持久化；T110 事件订阅启动
 import { onBeforeUnmount, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
-import { runSync, startStateSync, stopStateSync, syncState } from '@/composables/useStateSync'
+import { refreshServices, runSync, startStateSync, stopStateSync, syncState } from '@/composables/useStateSync'
 import { subscribeUpdater, unsubscribeUpdater } from '@/composables/useUpdater'
 import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
 import { startDockerPreflight, stopDockerPreflight } from '@/composables/useDockerPreflight'
@@ -26,6 +27,8 @@ const app = useAppState()
 const { openThemePicker, openHomeSetupWizard } = useModals()
 useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
 const prefs = usePrefsStore()
+const router = useRouter()
+let stopRouteWatch: (() => void) | null = null
 
 onMounted(async () => {
   // 先等宿主 Core 就绪（有界超时）：window._wails 的宿主字段在 WindowLoadFinished 才注入，
@@ -41,7 +44,11 @@ onMounted(async () => {
   // 首启引导：真实宿主下主目录/网站目录未初始化 → 弹出装机向导。可关闭（右上 X），
   // 关闭后任何写操作仍由后端 preflight 权威拦截（目录未就绪报错），不放水；再次触发安装/建站会重新弹出。
   if (hasBackend() && !app.homeReady) openHomeSetupWizard()
-  startDockerPreflight() // 首启探测 + 定时轮询 Docker 可用性（硬红线 7 门禁，两段式引导）
+  startDockerPreflight() // 首启探测 + 定时轮询 Docker 可用性（硬红线 7 门禁，两段式引导）；同一拍顺带轻量刷新服务清单
+  // 切菜单、窗口重新拿到焦点：各做一次轻量刷新，让服务页对着「Docker 上此刻实际有什么」，
+  // 而不是等用户去点「同步状态」。没变化时后端不发事件，界面不会动。
+  window.addEventListener('focus', refreshServices)
+  stopRouteWatch = router.afterEach(() => void refreshServices())
   if (import.meta.env.DEV) await import('@/api/mockEvents') // 开发期 mock 发射驱动（构建产物不含）
 })
 onBeforeUnmount(() => {
@@ -49,6 +56,9 @@ onBeforeUnmount(() => {
   unsubscribeUpdater()
   unsubscribeCache()
   stopDockerPreflight()
+  window.removeEventListener('focus', refreshServices)
+  stopRouteWatch?.()
+  stopRouteWatch = null
 })
 
 const sections: { titleKey: string; items: { id: string; labelKey: string; icon: string }[] }[] = [

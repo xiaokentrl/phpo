@@ -9,7 +9,7 @@
 import { reactive, readonly, type DeepReadonly } from 'vue'
 import { useAppState } from '@/stores/appState'
 import { useTaskStore, type LineType, type TaskStatus } from '@/stores/taskStore'
-import { getState, syncAll } from '@/api/state'
+import { getState, syncAll, refreshServices as refreshServicesApi } from '@/api/state'
 import {
   ALL_EVENTS, EVENT, onEvent, type EventName,
   type TaskLogPayload, type TaskProgressPayload, type TaskDonePayload,
@@ -192,6 +192,14 @@ export async function syncState(): Promise<boolean> {
 export async function runSync(): Promise<boolean> {
   await syncAll().catch(() => false)
   return syncState()
+}
+
+// refreshServices：轻量刷新的唯一入口（轮询那一拍、切换菜单、窗口重新拿到焦点都走这里）。
+// 它让后端现数一遍「Docker 上此刻有哪些服务容器」：变了就随 state:changed 回流，没变就不发。
+// 与 runSync 的区别是不逐个版本核镜像在不在本机，所以可以勤快；有任务在跑时后端自己会挡驾（app.go）。
+// 问不通就作罢——Docker 通不通由那条横幅说，这里绝不把「这次没问到」铺成「这台机器上没有服务」。
+export async function refreshServices(): Promise<boolean> {
+  return refreshServicesApi().catch(() => false)
 }
 
 // stopStateSync：反订阅（测试/热更新用）。

@@ -107,6 +107,14 @@ func (s *AppService) Calibrate(ctx context.Context) error {
 	return err
 }
 
+// RefreshServices 轻量刷新（§5.19.2 的轻量档）：把「这台机器的 Docker 此刻有哪些服务容器」现数一遍，
+// 有变化就发 state:changed 让界面跟着走，没变化后端一个字都不发。
+// 与手动「同步状态」的差别只在一件事上：这里不逐个版本去核镜像还在不在本机（那是 O(已安装版本数) 次调用）。
+func (s *AppService) RefreshServices(ctx context.Context) error {
+	_, err := s.lifecycle.Calibrate(ctx)
+	return err
+}
+
 // DockerStatus 探测 Docker 可用性（只读，供首启/轮询门禁；硬红线 7 的判定源，不改 Snapshot 不发事件）
 func (s *AppService) DockerStatus(ctx context.Context) model.DockerStatus {
 	cctx, cancel := context.WithTimeout(ctx, dockerProbeTimeout)

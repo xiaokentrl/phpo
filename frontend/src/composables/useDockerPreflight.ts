@@ -1,9 +1,12 @@
 // useDockerPreflight：首启 + 定时轮询探测 Docker 可用性（硬红线 7 判定源）。
 // 探测走只读绑定 DockerStatus（不发事件、不改 Snapshot）；结果经 app.setDocker 落地，
 // 供 DockerGate 决定两段式门禁（不可关闭引导 / 稍后再说 → 常驻横幅）。无宿主不拦截。
+// 同一拍顺带做一次轻量刷新（refreshServices）：服务页要一直对着「Docker 上此刻实际有什么」，
+// 不该只有手点「同步状态」才回正。这里不另起定时器——界面上只有一路轮询。
 import { useAppState } from '@/stores/appState'
 import { getDockerStatus } from '@/api/docker'
 import { hasBackend } from '@/api/site'
+import { refreshServices } from '@/composables/useStateSync'
 import type { DockerStatus } from '@/types'
 
 const POLL_MS = 12_000
@@ -36,8 +39,14 @@ export async function refreshDocker(): Promise<void> {
 }
 
 export function startDockerPreflight(): void {
-  void refreshDocker()
-  if (timer === null) timer = setInterval(() => void refreshDocker(), POLL_MS)
+  void poll()
+  if (timer === null) timer = setInterval(() => void poll(), POLL_MS)
+}
+
+// poll：这一拍做两件事——问 Docker 通不通（门禁判定），以及现数一遍 Docker 上此刻有哪些服务容器。
+async function poll(): Promise<void> {
+  await refreshDocker()
+  void refreshServices()
 }
 
 export function stopDockerPreflight(): void {

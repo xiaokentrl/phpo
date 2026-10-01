@@ -18,16 +18,18 @@ import (
 
 // fakeDocker 内存容器世界（name -> running）+ 数据卷（卸载不得触碰）
 type fakeDocker struct {
-	containers  map[string]bool
-	volumes     map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
-	localImages map[string]bool                 // 本机 Docker 镜像库（固化扩展镜像的判据）
-	lastSpec    map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
-	published   map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
-	createCalls int                             // 建容器次数（「未变即不重建」的判据）
-	imageChecks int                             // ImageExists 次数（轻量校准不得拨镜像探针的判据）
-	createErr   error                           // 非空则 CreateServiceContainer 失败（模拟端口绑不上等建容器错误）
-	imageErr    error                           // 非空则 ImageExists 失败（模拟镜像库探针本身不可用）
-	discovery   *engine.Discovery               // DiscoverServices 要现数的那份答案（轻量校准不得拨它）
+	containers    map[string]bool
+	volumes       map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
+	localImages   map[string]bool                 // 本机 Docker 镜像库（固化扩展镜像的判据）
+	lastSpec      map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
+	published     map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
+	createCalls   int                             // 建容器次数（「未变即不重建」的判据）
+	imageChecks   int                             // ImageExists 次数（轻量校准不得拨镜像探针的判据）
+	discoverCalls int                             // DiscoverServices 次数（每一档校准都要现数一次服务容器；全量档也不得多问）
+	createErr     error                           // 非空则 CreateServiceContainer 失败（模拟端口绑不上等建容器错误）
+	imageErr      error                           // 非空则 ImageExists 失败（模拟镜像库探针本身不可用）
+	discoverErr   error                           // 非空则 DiscoverServices 失败（模拟 Docker 这次没答上来）
+	discovery     *engine.Discovery               // DiscoverServices 要现数的那份答案（每档校准都问一次）
 }
 
 func newFakeDocker() *fakeDocker {
@@ -125,6 +127,10 @@ func (f *fakeDocker) ContainerExists(_ context.Context, name string) bool {
 // 预先摆好的那份 discovery——它是外部容器的唯一可见通道：上面的 ManagedContainers 只认
 // phpo- 前缀，用户自己 docker run 起来的那几只在这里才会出现。
 func (f *fakeDocker) DiscoverServices(context.Context) (*engine.Discovery, error) {
+	f.discoverCalls++
+	if f.discoverErr != nil {
+		return nil, f.discoverErr
+	}
 	return f.discovery, nil
 }
 
@@ -459,7 +465,7 @@ func TestSyncAll_ImageProbeError_Propagates(t *testing.T) {
 	}
 }
 
-// 分档：轻量校准（启动 / 每任务后）只判容器存在性，不拨镜像探针
+// 分档：轻量校准（启动 / 每任务后 / 视图刷新）不逐个版本探镜像——那是手动「同步状态」的全量档才付的代价（决策 28）
 func TestCalibrate_LightweightSkipsImageAudit(t *testing.T) {
 	l, d, s, _ := newSvc()
 	_ = s.SetInstalled("php", "8.4", true)
@@ -474,6 +480,74 @@ func TestCalibrate_LightweightSkipsImageAudit(t *testing.T) {
 	}
 	if len(s.snap.Gaps) != 0 {
 		t.Fatalf("容器在即无缺失，实得 %+v", s.snap.Gaps)
+	}
+}
+
+// 轻量校准也必须现数一遍「这台机器的 Docker 此刻有哪些服务容器」：用户在 Docker 里停掉或删掉一颗
+// （含 phpo 库里没记过的外部容器），不该只有手点「同步状态」界面才回正。它就一次 ContainerList，
+// 与本次已经要拨的那几次 Docker 调用同量级。
+func TestCalibrate_LightweightRefreshesDiscovered(t *testing.T) {
+	l, d, s, em := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	d.containers["phpo-php-8.4"] = true
+	// 快照里还是上次数出来的那一份：外部起的那颗 MySQL 此刻已不在 Docker 上
+	s.snap.Discovered = []model.DiscoveredService{
+		{Kind: "php", Version: "8.4", Name: "phpo-php-8.4", Running: true, MatchedBy: engine.MatchedName, PhpoNamed: true},
+		{Kind: "mysql", Version: "8.0", Name: "my-mysql", Running: false, MatchedBy: engine.MatchedImage},
+	}
+	d.discovery = &engine.Discovery{Services: []engine.FoundService{
+		{Kind: "php", Version: "8.4", Name: "phpo-php-8.4", Image: "php:8.4-fpm", Running: true, MatchedBy: engine.MatchedName, PhpoNamed: true},
+	}}
+
+	if _, err := l.Calibrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.discoverCalls != 1 {
+		t.Fatalf("轻量校准应现数一次服务容器，实得 %d 次", d.discoverCalls)
+	}
+	if len(s.snap.Discovered) != 1 || s.snap.Discovered[0].Name != "phpo-php-8.4" {
+		t.Fatalf("发现态应换成这次数出来的那份，实得 %+v", s.snap.Discovered)
+	}
+	if !em.has("state:changed") {
+		t.Fatalf("发现集合变了必须随快照回流界面，实得 %v", em.events)
+	}
+}
+
+// Docker 这次没答上来：轻量校准整体失败并上抛，绝不把「没问到」铺成「这台机器上没有服务容器」，
+// 也不回写运行态、不发事件（§5.19.3a 与 §5.19.3 第 3 条同一口径）
+func TestCalibrate_DiscoveryErrorPropagates(t *testing.T) {
+	l, d, s, em := newSvc()
+	_ = s.SetInstalled("php", "8.4", true)
+	_ = s.SetRunning("php", "8.4", true)
+	d.containers["phpo-php-8.4"] = true
+	d.discoverErr = errors.New("docker daemon unavailable")
+
+	if _, err := l.Calibrate(context.Background()); err == nil {
+		t.Fatal("发现态问不通应上抛错误")
+	}
+	if len(em.events) != 0 {
+		t.Fatalf("报错时不得发任何事件，实得 %v", em.events)
+	}
+	if !contains(s.snap.Running["php"], "8.4") {
+		t.Fatal("报错时不得回写任何状态")
+	}
+}
+
+// 全量档也只现数一次服务容器：逐个版本的镜像核查不得把它放大成 N 次
+func TestSyncAll_CountsDiscoveryOnce(t *testing.T) {
+	l, d, s, _ := newSvc()
+	for _, v := range []string{"8.0", "8.2", "8.4"} {
+		_ = s.SetInstalled("php", v, true)
+		d.localImages["php:"+v+"-fpm"] = true
+	}
+	if _, err := l.SyncAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.discoverCalls != 1 {
+		t.Fatalf("发现态应一次问全，实得 %d 次", d.discoverCalls)
+	}
+	if d.imageChecks == 0 {
+		t.Fatal("全量档仍要逐个版本核镜像")
 	}
 }
 

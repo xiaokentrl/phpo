@@ -104,8 +104,9 @@ func (l *LifecycleService) Snapshot() (*model.Snapshot, error) {
 //
 // 存在性漂移（缺失/孤儿）仅随事件上报，不自动删建，避免误删用户数据（§5.13.13）。
 //
-// 本口径是「每任务后 / 启动」的轻量校准：容器存在性用已经取到的实际态判，不额外拨 Docker。
-// 镜像层面的存在性核查（基座镜像、php 扩展固化镜像）只在手动「同步状态」这条全量口径里做，见 SyncAll。
+// 本口径是「每任务后 / 启动」的轻量校准：容器存在性用已经取到的实际态判，
+// 再现数一次「这台机器的 Docker 此刻有哪些服务容器」（含停着的、含 phpo 库里没记过的）。
+// 逐个版本核基座镜像与 php 扩展固化镜像还在不在本机，只在手动「同步状态」这条全量口径里做，见 SyncAll。
 func (l *LifecycleService) Calibrate(ctx context.Context) (*engine.CalibrateResult, error) {
 	return l.calibrate(ctx, false)
 }
@@ -132,16 +133,14 @@ func (l *LifecycleService) calibrate(ctx context.Context, auditImages bool) (*en
 		return nil, err
 	}
 	// 服务列表要看得见 Docker 上此刻真实存在的那些容器（含停着的、含 phpo 库里没记过的）。
-	// 只有手动「同步状态」才现数一遍：它要把整台机器的 Docker 列一遍，是一次额外调用；
-	// 每次任务后与启动跑的轻量档沿用上次数出来的那份，不放大这个开销（决策 28）。
-	discovered := snap.Discovered
-	if auditImages {
-		found, err := l.docker.DiscoverServices(ctx)
-		if err != nil {
-			return nil, err
-		}
-		discovered = discoveredOf(found)
+	// 每一档校准都现数一遍：它就是一次 ContainerList{All:true}，和本次已经要拨的那几次 Docker 调用同量级。
+	// 沿用上次数出来的那份，等于用户在 Docker 里停掉一个服务后界面照旧说它在跑，只能靠手点「同步状态」才回正。
+	// 真正贵的是逐个版本核镜像在不在本机（O(已安装版本数) 次调用），那仍然只在手动「同步状态」的全量档做（决策 28）。
+	found, err := l.docker.DiscoverServices(ctx)
+	if err != nil {
+		return nil, err
 	}
+	discovered := discoveredOf(found)
 	// 发不发事件只看「本次比上次多说了什么」：运行态修正在跑，或缺失项/发现项集合变了。
 	// 不用 res.Changed()——它把「存在性漂移」也算进去，而容器缺席是常态化的（停了就是缺席），
 	// 于是每次校准/每次点同步都会重发同样的 drift + 快照，抽屉被同一行刷屏。
