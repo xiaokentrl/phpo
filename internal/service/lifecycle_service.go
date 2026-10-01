@@ -29,6 +29,7 @@ type DockerOps interface {
 	ContainerRunning(ctx context.Context, name string) (bool, error)
 	ContainerExists(ctx context.Context, name string) bool
 	ImageExists(ctx context.Context, ref string) (bool, error)
+	DiscoverServices(ctx context.Context) (*engine.Discovery, error) // 数一遍 Docker 上此刻实际有哪些服务容器（含已停止的）
 }
 
 // StateStore SQLite 权威视图读写子集（*store.Store 满足）
@@ -36,7 +37,8 @@ type StateStore interface {
 	BuildSnapshot() (*model.Snapshot, error)
 	SetInstalled(kind, version string, installed bool) error
 	SetRunning(kind, version string, running bool) error
-	SetGaps(gaps []model.ServiceGap) // 缺失态是派生态：随快照广播，不落库（§5.19）
+	SetGaps(gaps []model.ServiceGap)              // 缺失态是派生态：随快照广播，不落库（§5.19）
+	SetDiscovered(list []model.DiscoveredService) // 发现态同理：Docker 上此刻实际有哪些服务容器，不落库
 }
 
 // Emitter §5.6 事件发射最小抽象（app.Emitter 满足）
@@ -129,10 +131,21 @@ func (l *LifecycleService) calibrate(ctx context.Context, auditImages bool) (*en
 	if err != nil {
 		return nil, err
 	}
-	// 发不发事件只看「本次比上次多说了什么」：运行态修正在跑，或缺失项集合变了。
+	// 服务列表要看得见 Docker 上此刻真实存在的那些容器（含停着的、含 phpo 库里没记过的）。
+	// 只有手动「同步状态」才现数一遍：它要把整台机器的 Docker 列一遍，是一次额外调用；
+	// 每次任务后与启动跑的轻量档沿用上次数出来的那份，不放大这个开销（决策 28）。
+	discovered := snap.Discovered
+	if auditImages {
+		found, err := l.docker.DiscoverServices(ctx)
+		if err != nil {
+			return nil, err
+		}
+		discovered = discoveredOf(found)
+	}
+	// 发不发事件只看「本次比上次多说了什么」：运行态修正在跑，或缺失项/发现项集合变了。
 	// 不用 res.Changed()——它把「存在性漂移」也算进去，而容器缺席是常态化的（停了就是缺席），
 	// 于是每次校准/每次点同步都会重发同样的 drift + 快照，抽屉被同一行刷屏。
-	if len(res.Corrections) == 0 && sameGaps(snap.Gaps, gaps) {
+	if len(res.Corrections) == 0 && sameGaps(snap.Gaps, gaps) && sameDiscovered(snap.Discovered, discovered) {
 		return &res, nil
 	}
 
@@ -142,6 +155,7 @@ func (l *LifecycleService) calibrate(ctx context.Context, auditImages bool) (*en
 		}
 	}
 	l.store.SetGaps(gaps)
+	l.store.SetDiscovered(discovered)
 	l.emitter.Emit("docker:state-drift", model.StateDrift{
 		Expected: driftView(snap.Installed, snap.Running),
 		Actual:   actualView(actual),
@@ -220,6 +234,39 @@ func sortedKinds(installed map[string][]string) []string {
 
 // sameGaps 两组缺失项是否等价（内容与顺序一致即等价；detectGaps 按 kind/version 排序产出，故顺序稳定）
 func sameGaps(a, b []model.ServiceGap) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// discoveredOf 把 engine 数出来的容器换成界面要用的那一份（engine 侧无 json tag，字段逐条搬）
+func discoveredOf(d *engine.Discovery) []model.DiscoveredService {
+	if d == nil {
+		return []model.DiscoveredService{}
+	}
+	out := make([]model.DiscoveredService, 0, len(d.Services))
+	for _, f := range d.Services {
+		out = append(out, model.DiscoveredService{
+			Kind:      f.Kind,
+			Version:   f.Version,
+			Name:      f.Name,
+			Image:     f.Image,
+			Running:   f.Running,
+			MatchedBy: f.MatchedBy,
+			PhpoNamed: f.PhpoNamed,
+		})
+	}
+	return out
+}
+
+// sameDiscovered 两次发现结果是否等价（DiscoverServices 按 kind/version/name 排序产出，故顺序稳定）
+func sameDiscovered(a, b []model.DiscoveredService) bool {
 	if len(a) != len(b) {
 		return false
 	}

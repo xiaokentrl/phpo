@@ -23,6 +23,9 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	}
 	// 缺失态在运行态库之前给出：外部删掉容器/镜像后，即便库里读不到东西也要让界面标出来
 	snap.Gaps = s.Gaps()
+	// 发现态同理：Docker 上此刻实际有什么容器（含已停止的、含 phpo 库里没记过的），
+	// 必须在建库之前就给出——首启还没建库时服务页也要看得见 Docker 的真实情况。
+	snap.Discovered = s.Discovered()
 	if !s.mayOpen() {
 		normalizeCollections(snap)
 		return snap, nil // 工作目录未设置：运行态定义为空，且不得建库（首启不在用户数据目录留文件）
@@ -83,6 +86,9 @@ func normalizeCollections(snap *model.Snapshot) {
 	}
 	if snap.Gaps == nil {
 		snap.Gaps = []model.ServiceGap{}
+	}
+	if snap.Discovered == nil {
+		snap.Discovered = []model.DiscoveredService{}
 	}
 }
 

@@ -19,6 +19,8 @@ const MOCK_SNAPSHOT: StateSnapshot = {
   dirReady: { PHPO_HOME: true, WWW_ROOT: true },
   // gaps 是后端全量校准派生的缺失态（§5.19）；mock 载荷给空集，形状与真实快照一致
   gaps: [],
+  // discovered 同样是从 Docker 当场数出来的派生态（§5.19）；演示通道查不到容器，给空集而不是编几颗
+  discovered: [],
   tasks: { running: { id: 't-1', label: 'mock · php 8.5 安装', type: 'install', step: 2, total: 6, startedAt: '2026-09-21T10:00:00Z' }, pending: [] },
 }
 

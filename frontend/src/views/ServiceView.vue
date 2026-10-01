@@ -15,7 +15,7 @@ import { dataDirOf, defaultDataDir, envKeyPort, setPort, setServiceDataDir } fro
 import PasswordField from '@/components/common/PasswordField.vue'
 import { DIR_ROWS, DEFAULT_FILE_COUNT, GAP_REASON_KEYS, SVC_META } from '@/constants/service'
 import { catalogFor } from '@/constants/ext'
-import type { ServiceKind, TaskBrief } from '@/types'
+import type { DiscoveredService, ServiceKind, TaskBrief } from '@/types'
 import { needsPort, needsPassword } from '@/utils/format'
 import { verRoot } from '@/utils/path'
 
@@ -27,7 +27,48 @@ const modals = useModals()
 const { preflight } = usePreflight()
 
 const meta = computed(() => SVC_META[props.kind])
-const versions = computed(() => state.installed[props.kind] || [])
+
+// Row：服务卡片的一行——版本号 + 它在 Docker 上的事实（没有事实即 undefined，回落库里那本账）
+interface Row { version: string; docker?: DiscoveredService }
+
+// 面板画的是「Docker 此刻有什么 ∪ 库里记过什么」，两样都看得见：
+// ① 容器停着也照常出现在列表里，只是状态点是「已停止」——不再因为没在跑就当它不存在；
+// ② 用户自己用 docker run / Docker Desktop / compose 起来的容器同样归类到这一页；
+// ③ 库里记着、Docker 上已经没有了的版本留在列表里标缺失态，点「启用」仍按当前配置幂等重建。
+// 库里那本 installed 一个字都不改：Docker 上有没有这个容器，不等于用户要 phpo 改「我装过哪些」的账。
+const rows = computed<Row[]>(() => {
+  const list = state.installed[props.kind] || []
+  const out: Row[] = list.map((version) => ({ version, docker: state.discoveredOf(props.kind, version) }))
+  const seen = new Set(list)
+  for (const d of state.discovered) {
+    if (d.kind !== props.kind || seen.has(d.version)) continue
+    seen.add(d.version)
+    out.push({ version: d.version, docker: d })
+  }
+  return out
+})
+
+// runningOf：这一版此刻在不在跑。有 Docker 事实就以 Docker 为准（容器停着就是停着），
+// 没有事实才回落到库里的运行标记——demo 通道查不到 Docker，行为与改动前一致。
+function runningOf(version: string): boolean {
+  const d = state.discoveredOf(props.kind, version)
+  return d ? d.running : state.isServiceRunning(props.kind, version)
+}
+
+// externalOnly：这颗粒能不能动手，取决于容器是不是 phpo 自己按规矩建的。
+// 名字不合 phpo-{kind}-{version} 的（用户自己 docker run / compose 起的）只展示：
+// phpo 没有它的配置、数据目录与端口键，给它「启用/停用/卸载」等于替用户改他没交给我们的东西。
+function externalOnly(version: string): boolean {
+  const d = state.discoveredOf(props.kind, version)
+  return !!d && !d.phpoNamed
+}
+
+// rowsWithDirs 卡片上那几行目录路径。外来容器一行都不给：
+// 这些路径是 phpo 建容器时才挂载的，别人起的容器挂的是什么我们不知道，
+// 拿 phpo 的默认路径去充数，等于把「不知道」画成「就是这样」（§0.2 规则 41）。
+function rowsWithDirs(version: string): Array<[string, string]> {
+  return externalOnly(version) ? [] : DIR_ROWS[props.kind]
+}
 
 // versionCard：端口键 {KIND}_{ver}_PORT（与后端 config.EnvKeyPort 同源，nginx 亦走此键）。
 // 键未落库时回退 SVC_META.defaultPort——它与后端 registry 的 Spec.HostPort 同值，即容器真正发布的端口；
@@ -202,7 +243,7 @@ async function browseDir(version: string): Promise<void> {
       </div>
     </header>
 
-    <div v-if="versions.length === 0" class="empty">
+    <div v-if="rows.length === 0" class="empty">
       <div class="empty-icon">{{ meta.icon }}</div>
       <h2>{{ t(meta.emptyTitleKey) }}</h2>
       <p>{{ t(meta.hintKey) }}</p>
@@ -210,20 +251,29 @@ async function browseDir(version: string): Promise<void> {
     </div>
 
     <div v-else class="grid grid-3">
-      <article v-for="version in versions" :key="version" class="card version-card">
+      <article v-for="{ version, docker } in rows" :key="version" class="card version-card">
         <div class="version-card-head">
           <span class="version-tag">{{ version }}</span>
-          <span v-if="state.isServiceRunning(kind, version)" class="status-pill pill-ok"><span class="pill-dot"></span>{{ t('svc.running') }}</span>
+          <span v-if="runningOf(version)" class="status-pill pill-ok"><span class="pill-dot"></span>{{ t('svc.running') }}</span>
           <span v-else class="status-pill pill-off"><span class="pill-dot"></span>{{ t('svc.stopped') }}</span>
           <span v-if="busyPill(version)" class="status-pill pill-warn" data-task-busy>{{ busyPill(version) }}</span>
           <!-- 缺失态（§5.19）：Docker 侧已被外部停/删，但库里仍记已安装——卡片点名缺的是哪一样，不自动改权威态 -->
           <span v-if="state.gapOf(kind, version)" class="status-pill pill-warn" data-gap :title="gapTip(version)">
             <span class="pill-dot"></span>{{ t('svc.gapMissing', { reason: gapReason(version) }) }}
           </span>
+          <!-- 外部容器：Docker 上有这个容器，但不是 phpo 按 phpo-{kind}-{version} 建的，只展示不给动手 -->
+          <span v-if="docker && !docker.phpoNamed" class="status-pill pill-warn" data-external :title="t('svc.discoveredTip', { name: docker.name })">{{ t('svc.discoveredExternal') }}</span>
         </div>
 
         <div>
-          <div v-if="needsPort(kind)" class="kv">
+          <!-- 这一条是从哪儿来的：容器在 Docker 上的真名（悬停看镜像）。库里没记过的版本也靠这行说明出处。 -->
+          <div v-if="docker" class="kv" data-discovered-source>
+            <span class="k">{{ t('svc.discoveredFrom') }}</span>
+            <span class="v" :title="docker.image">{{ docker.name }}</span>
+          </div>
+          <!-- 端口／密码／数据目录都是 phpo 建容器时才落定的东西。Docker 上别人起的容器我们不知道它的真值，
+               所以这三行对外来容器一律不显示——宁可少说，也不把 phpo 的默认值当成它的事实（§0.2 规则 41）。 -->
+          <div v-if="needsPort(kind) && !externalOnly(version)" class="kv">
             <span class="k">{{ t('svc.port') }}</span>
             <!-- 与原型一致：needsPort 的服务端口一律可行内改。nginx 的这项是「基准端口」，与站点端口并集一起发布 -->
             <span
@@ -255,12 +305,12 @@ async function browseDir(version: string): Promise<void> {
               <template v-else>{{ portValue(version) }}</template>
             </span>
           </div>
-          <div v-if="needsPassword(kind)" class="kv">
+          <div v-if="needsPassword(kind) && !externalOnly(version)" class="kv">
             <span class="k">{{ t('svc.password') }}</span>
             <PasswordField :kind="kind" :version="version" />
           </div>
 
-          <div v-for="[sub, labelKey] in DIR_ROWS[kind]" :key="sub" class="kv">
+          <div v-for="[sub, labelKey] in rowsWithDirs(version)" :key="sub" class="kv">
             <span class="k">{{ t(labelKey) }}</span>
             <template v-if="sub === 'data'">
               <span
@@ -298,16 +348,16 @@ async function browseDir(version: string): Promise<void> {
             <span v-else class="v" :title="dirPath(version, sub)">{{ dirPath(version, sub) }}</span>
           </div>
 
-          <div v-if="kind === 'php' || kind === 'nginx'" class="kv">
+          <div v-if="(kind === 'php' || kind === 'nginx') && !externalOnly(version)" class="kv">
             <span class="k">{{ t('svc.wwwDir') }}</span>
             <span class="v" :title="`${state.env.WWW_ROOT} → /var/www`">{{ state.env.WWW_ROOT }}</span>
           </div>
-          <div v-if="kind === 'nginx'" class="kv">
+          <div v-if="kind === 'nginx' && !externalOnly(version)" class="kv">
             <span class="k">{{ t('svc.sitesDir') }}</span>
             <span class="v" :title="`${state.env.NGINX_SITES_ROOT} → /etc/nginx/sites`">{{ state.env.NGINX_SITES_ROOT }}</span>
           </div>
 
-          <div v-if="kind === 'php'" class="kv">
+          <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
             <span class="k">{{ t('php.extensions') }}</span>
             <button class="btn btn-sm" data-action="php-extensions" :data-version="version" :title="t('php.manageExt')" @click="modals.openPhpExtensionsModal(version)">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18" /></svg>
@@ -318,17 +368,18 @@ async function browseDir(version: string): Promise<void> {
         </div>
 
         <div class="version-card-foot">
-          <button class="btn btn-sm" data-action="service-config" :data-kind="kind" :data-version="version" @click="modals.openConfigModal(kind, version)">
+          <span v-if="externalOnly(version)" class="dim" data-action="external-note">{{ t('svc.discoveredExternalNote') }}</span>
+          <button v-if="!externalOnly(version)" class="btn btn-sm" data-action="service-config" :data-kind="kind" :data-version="version" @click="modals.openConfigModal(kind, version)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5" /><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M8 13h8M8 17h5" /></svg>
             {{ t('svc.manageConfig') }}
             <span style="opacity: 0.55; font-family: var(--mono); font-size: 11px; margin-left: 2px">{{ DEFAULT_FILE_COUNT[kind] }}</span>
           </button>
-          <button v-if="state.isServiceRunning(kind, version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'service-stop', kind, version })" @click="modals.stopService(kind, version)">{{ t('svc.stop') }}</button>
-          <button v-else class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'service-start', kind, version })" @click="modals.startService(kind, version)">{{ t('svc.start') }}</button>
+          <button v-if="runningOf(version) && !externalOnly(version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'service-stop', kind, version })" @click="modals.stopService(kind, version)">{{ t('svc.stop') }}</button>
+          <button v-else-if="!externalOnly(version)" class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'service-start', kind, version })" @click="modals.startService(kind, version)">{{ t('svc.start') }}</button>
           <!-- 端口与密码只在建容器时落定：凡有宿主端口发布/密码的服务都给一条把配置送进容器的路（重建，数据卷保留）。
                nginx 的基准端口同属这一类，改完同样要重建才重新绑宿主端口 -->
-          <button v-if="needsPort(kind)" class="btn btn-sm" data-action="rebuild-service" :data-kind="kind" :data-version="version" :title="t('svc.rebuild.hint')" :disabled="tasks.isBusy({ type: 'update-config', kind, version })" @click="modals.openRebuildModal(kind, version)">{{ t('svc.rebuild') }}</button>
-          <button class="btn btn-sm btn-danger" data-action="uninstall" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'uninstall', kind, version })" @click="modals.openUninstallModal(kind, version)">{{ t('svc.uninstall') }}</button>
+          <button v-if="needsPort(kind) && !externalOnly(version)" class="btn btn-sm" data-action="rebuild-service" :data-kind="kind" :data-version="version" :title="t('svc.rebuild.hint')" :disabled="tasks.isBusy({ type: 'update-config', kind, version })" @click="modals.openRebuildModal(kind, version)">{{ t('svc.rebuild') }}</button>
+          <button v-if="!externalOnly(version)" class="btn btn-sm btn-danger" data-action="uninstall" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'uninstall', kind, version })" @click="modals.openUninstallModal(kind, version)">{{ t('svc.uninstall') }}</button>
         </div>
       </article>
     </div>

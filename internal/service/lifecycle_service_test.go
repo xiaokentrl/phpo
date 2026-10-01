@@ -27,6 +27,7 @@ type fakeDocker struct {
 	imageChecks int                             // ImageExists 次数（轻量校准不得拨镜像探针的判据）
 	createErr   error                           // 非空则 CreateServiceContainer 失败（模拟端口绑不上等建容器错误）
 	imageErr    error                           // 非空则 ImageExists 失败（模拟镜像库探针本身不可用）
+	discovery   *engine.Discovery               // DiscoverServices 要现数的那份答案（轻量校准不得拨它）
 }
 
 func newFakeDocker() *fakeDocker {
@@ -120,6 +121,13 @@ func (f *fakeDocker) ContainerExists(_ context.Context, name string) bool {
 	return ok
 }
 
+// DiscoverServices 数「Docker 上此刻实际有哪些服务容器」。假世界不现场推断，直接交出测试
+// 预先摆好的那份 discovery——它是外部容器的唯一可见通道：上面的 ManagedContainers 只认
+// phpo- 前缀，用户自己 docker run 起来的那几只在这里才会出现。
+func (f *fakeDocker) DiscoverServices(context.Context) (*engine.Discovery, error) {
+	return f.discovery, nil
+}
+
 func parseName(name string) (kind, ver string, ok bool) {
 	if len(name) < len(dockerutil.NamespacePrefix) || name[:len(dockerutil.NamespacePrefix)] != dockerutil.NamespacePrefix {
 		return "", "", false
@@ -169,6 +177,9 @@ func (s *fakeStore) SetRunning(kind, version string, running bool) error {
 
 // SetGaps 缺失态是内存派生态：写回假快照，与 store.Store 同构
 func (s *fakeStore) SetGaps(gaps []model.ServiceGap) { s.snap.Gaps = gaps }
+
+// SetDiscovered 发现态同样是内存派生态：写回假快照，不改 installed/running 任何一行
+func (s *fakeStore) SetDiscovered(list []model.DiscoveredService) { s.snap.Discovered = list }
 
 // EnvReader 子集：密码恒回落默认；端口读 setPort 预置值（未设时回落注册表默认）
 func (s *fakeStore) GetPassword(_, _ string) (string, bool, error) { return "", false, nil }

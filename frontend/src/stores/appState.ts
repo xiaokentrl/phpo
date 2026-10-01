@@ -2,7 +2,7 @@
 // 硬红线 4：本仓只由后端 state:changed / service:changed 事件落地（见 composables/useStateSync.ts），无本地乐观更新。
 import { defineStore } from 'pinia'
 import { computed, reactive } from 'vue'
-import type { Backup, DockerStatus, Env, OfflineTree, ServiceGap, ServiceKind, Site, StateSnapshot, TaskBoard } from '@/types'
+import type { Backup, DiscoveredService, DockerStatus, Env, OfflineTree, ServiceGap, ServiceKind, Site, StateSnapshot, TaskBoard } from '@/types'
 import { derivePaths, DEFAULT_HOME, DEFAULT_WWW } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 
@@ -109,6 +109,16 @@ export const useAppState = defineStore('appState', () => {
     return gaps.find((g) => g.kind === kind && g.version === version)
   }
 
+  // discovered：Docker 上此刻实际有什么服务容器（§5.19 之外的另一件事——它不看库里记没记过）。
+  // 停着的容器照样在里面（running=false），用户用 docker run / Docker Desktop / compose 自己起的也在。
+  // 只由权威快照落地（硬红线 4）：不改 installed——Docker 上有这个容器，不等于用户要 phpo 记成「我装的」。
+  const discovered = reactive<DiscoveredService[]>([])
+
+  // discoveredOf：某个服务版本在 Docker 上的事实（同名至多一条，取最先命中的）；没有即 undefined
+  function discoveredOf(kind: ServiceKind, version: string): DiscoveredService | undefined {
+    return discovered.find((d) => d.kind === kind && d.version === version)
+  }
+
   // tasks：任务队列详情（运行中一项 + 其后 FIFO 排队项），来自权威快照的 tasks 字段。
   // 排队态由「所在分区」表达，不新增第 5 个任务状态（§0.3）；日志明细在 taskStore。
   const tasks = reactive<TaskBoard>({ running: null, pending: [] })
@@ -146,6 +156,7 @@ export const useAppState = defineStore('appState', () => {
     for (const [k, v] of Object.entries(s.phpExtensions ?? {})) phpExtensions[k] = [...v]
     Object.assign(dirReady, s.dirReady)
     gaps.splice(0, gaps.length, ...(s.gaps ?? []))
+    discovered.splice(0, discovered.length, ...(s.discovered ?? []))
     applyTaskBoard(s.tasks)
   }
 
@@ -160,6 +171,7 @@ export const useAppState = defineStore('appState', () => {
     offline.total = ''
     offline.trees.splice(0, offline.trees.length)
     gaps.splice(0, gaps.length)
+    discovered.splice(0, discovered.length)
     for (const k of Object.keys(phpExtensions)) delete phpExtensions[k]
     for (const k of Object.keys(env)) delete env[k]
     Object.assign(env, derivePaths(DEFAULT_HOME, DEFAULT_WWW))
@@ -183,5 +195,5 @@ export const useAppState = defineStore('appState', () => {
 
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, tasks, gaps, isServiceRunning, gapOf, applySnapshot, applyTaskBoard, enterRealHost, setServiceRunning, setBackups, setDocker, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, tasks, gaps, discovered, isServiceRunning, gapOf, discoveredOf, applySnapshot, applyTaskBoard, enterRealHost, setServiceRunning, setBackups, setDocker, phpVersions }
 })

@@ -53,7 +53,9 @@ export interface TaskDonePayload { id: string; status: string; duration: number 
 export interface UpdateAvailablePayload { version: string; changelog: string; size: number; source?: string; download_page?: string }
 export interface UpdateProgressPayload { stage: string; percent: number; speed: number }
 export interface UpdateDonePayload { status: string; version?: string; error?: string }
-export interface DockerCleanupPayload { stage: string; resource: string; action: string }
+// step / total 只有总览页那 60 行清单在扫描时才给（界面进度条 = 已报到段数 / 总段数）；
+// 逐颗删除那一路仍只有 stage · resource · action，两个字段缺席即不推进度条。
+export interface DockerCleanupPayload { stage: string; resource: string; action: string; step?: number; total?: number }
 export interface DockerOrphanFoundPayload { resources: unknown[] }
 // error 是启动校准失败这一路的实际载荷（internal/app/di.go）：拿不到比对值只有一个 error 字符串，
 // 协议表里的 expected / actual 此时缺席，故两者皆为可选。

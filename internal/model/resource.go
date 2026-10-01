@@ -71,6 +71,20 @@ type ServiceGap struct {
 	Ref     string `json:"ref"` // 缺席对象的具体名字：容器名 / 镜像引用
 }
 
+// DiscoveredService 这台机器上 Docker 里**实际存在**的一个服务容器。
+// 它回答的是「现在到底有什么」：phpo 的库里可能没这一条（用户用 docker run / Docker Desktop / compose 自己装的），
+// 也可能这条容器已经停了——停着的服务同样在这里出现，只是 running=false，界面要画成停止态而不是当作没装。
+// 这份集合是派生态、不落库：它只用来把服务列表面全，不改写 installed/running 任何一行（§5.19 的口径）。
+type DiscoveredService struct {
+	Kind      string `json:"kind"`
+	Version   string `json:"version"`
+	Name      string `json:"name"`      // 容器在 Docker 上的真名
+	Image     string `json:"image"`     // 这个容器用的镜像引用
+	Running   bool   `json:"running"`   // 此刻在跑吗（停止的容器为 false）
+	MatchedBy string `json:"matchedBy"` // 凭什么认出来的：容器名 / 镜像
+	PhpoNamed bool   `json:"phpoNamed"` // 名字是不是 phpo 的命名规矩——不是的话只展示，不给启停卸载
+}
+
 // docker:state-drift 事件载荷（期望态 ≡ 实际态 被破坏时发射）
 type StateDrift struct {
 	Expected any          `json:"expected"`

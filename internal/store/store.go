@@ -38,6 +38,9 @@ type Store struct {
 
 	gapsMu sync.RWMutex       // 保护 gaps：同步状态在任务线写、快照在事件线读
 	gaps   []model.ServiceGap // 最近一次全量同步点名的缺失项（派生态，不落库）
+
+	discMu sync.RWMutex              // 保护 disc：与 gaps 同理，写读分处两条线
+	disc   []model.DiscoveredService // 最近一次全量同步在 Docker 上数出来的服务容器（派生态，不落库）
 }
 
 // New 返回延迟打开的运行态存储：不建目录、不建库、不迁移。装配期用它注入各服务门面。
@@ -73,6 +76,24 @@ func (s *Store) Gaps() []model.ServiceGap {
 	s.gapsMu.RLock()
 	defer s.gapsMu.RUnlock()
 	return s.gaps
+}
+
+// SetDiscovered 记下最近一次全量同步在 Docker 上数出来的服务容器。
+// 它回答「这台机器上 Docker 现在到底有什么」——包括已经停着的容器、也包括用户用 docker run
+// 或 Docker Desktop 自己装的、phpo 库里从来没记过的那一些。
+// 同样不落库（重启后由启动同步重新现取），也不改动 installed / running 任何一行：
+// 外部有容器不等于用户要 phpo 把它当成「我装的」，装上这本账仍只在用户点安装/启用时才写。
+func (s *Store) SetDiscovered(list []model.DiscoveredService) {
+	s.discMu.Lock()
+	defer s.discMu.Unlock()
+	s.disc = list
+}
+
+// Discovered 读回当前发现态（快照出口的唯一来源）
+func (s *Store) Discovered() []model.DiscoveredService {
+	s.discMu.RLock()
+	defer s.discMu.RUnlock()
+	return s.disc
 }
 
 func (s *Store) Close() error {

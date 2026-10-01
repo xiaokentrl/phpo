@@ -228,6 +228,24 @@ export interface ServiceGap {
   ref: string
 }
 
+// DiscoveredService 是「这台机器上 Docker 里此刻实际有一个服务容器」这一条事实，
+// 与后端 model.DiscoveredService（internal/model/resource.go）JSON 逐字对齐。
+// 它回答的是「现在到底有什么」：里面既有 phpo 自己装的，也有用户用 docker run / Docker Desktop /
+// compose 自己起来的；容器停着也照样在这里出现，只是 running=false——界面要画成停止态，不能当作没装。
+// 只由权威快照落地（硬红线 4），不改 installed：Docker 上有这个容器，不等于用户要 phpo 把它记成「我装的」。
+export interface DiscoveredService {
+  kind: ServiceKind
+  version: string
+  // name：容器在 Docker 上的真名，界面用它说明这一条是从哪儿来的
+  name: string
+  image: string
+  running: boolean
+  // matchedBy：凭什么认出这是哪种服务的哪个版本（容器名 / 镜像）
+  matchedBy: string
+  // phpoNamed：名字不合 phpo 的命名规矩（如外部用 docker run 起的）就只展示，不给启用/停用/卸载
+  phpoNamed: boolean
+}
+
 // StateSnapshot 与后端 model.Snapshot（internal/model/snapshot.go）JSON 逐字对齐；
 // 是 state:changed 事件载荷，前端只按其落地、绝不本地乐观更新（硬红线 4）。
 export interface StateSnapshot {
@@ -239,6 +257,7 @@ export interface StateSnapshot {
   dirReady: Record<string, boolean>
   tasks: TaskBoard
   gaps: ServiceGap[]
+  discovered: DiscoveredService[]
 }
 
 // DockerStatus 与后端 model.DockerStatus（internal/model/dto.go）JSON 逐字对齐；
