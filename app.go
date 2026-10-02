@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -402,6 +403,29 @@ func (a *App) SiteAddHosts(ctx context.Context, domain string) (string, error) {
 		return "", errNotReady
 	}
 	return a.container.SiteService.AddHosts(ctx, domain)
+}
+
+// OpenFolder 在系统文件管理器里打开这个文件夹（站点列表「点路径开目录」）。只读：不落库、不建任务、不发事件
+func (a *App) OpenFolder(path string) error {
+	abs, err := config.ValidateRootPath(path) // 硬红线 3：路径穿越在这里裁决
+	if err != nil {
+		return err
+	}
+	abs = config.ExpandHome(abs)
+	fi, err := os.Stat(abs)
+	if err != nil || !fi.IsDir() {
+		return fmt.Errorf("文件夹不存在或打不开：%s", abs)
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", abs)
+	case "darwin":
+		cmd = exec.Command("open", abs)
+	default:
+		cmd = exec.Command("xdg-open", abs)
+	}
+	return cmd.Run() // argv 直传，不经 shell
 }
 
 // ---- M5 数据服务 env 绑定：密码/端口明文落库（§1.5 零校验），写入后 state:changed 回流（硬红线 4）----

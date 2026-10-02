@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 装机向导：忠实迁移原型 openHomeSetupWizard（1959–2132），三步 + 目录树预览 + 校验
-// 验证/确认走后端 HomeVerify / HomeEnsure（硬红线 4/5：确认后不本地乐观更新，等 state:changed 回流）
+// 装机向导：两步 + 目录树预览（v2.9.14 简化：删掉首屏标题文字，验证与确认并创建合成一步）
+// 点「确认并创建」先跑只读 HomeVerify，通过才调 HomeEnsure 落盘（硬红线 4/5：确认后不本地乐观更新，等 state:changed 回流）
 // 无宿主（纯 Vite demo）时回退到原型动画 + 本地写 env/dirReady
 import { computed, onMounted, ref } from 'vue'
 import { Dialogs } from '@wailsio/runtime'
@@ -21,8 +21,7 @@ const app = useAppState()
 const canBrowse = hasBackend() // 有宿主才提供原生目录选择器（沿用 SiteAddModal 同套 Dialogs.OpenFile）
 
 const step = ref(1)
-const verified = ref(false)
-const verifying = ref(false)
+const confirming = ref(false)
 // env 解析出的默认目录（快照 env > config.yaml 的 phpo_home > ~/phpo）：作输入框预填与浏览起始目录的兜底源
 const envHome = ref('')
 const envWww = ref('')
@@ -31,8 +30,8 @@ const homeVal = ref(app.env.PHPO_HOME || DEFAULT_HOME)
 const wwwVal = ref(app.env.WWW_ROOT || DEFAULT_WWW)
 const homeDirty = ref(false)
 const wwwDirty = ref(false)
-// alreadySet：后端先决检测「工作目录已设置」→ 只回显两根 + 「完成」，不提供三步设置、验证与确认并创建（禁止重复创建）
 const alreadySet = ref(false)
+// alreadySet：后端先决检测「工作目录已设置」→ 只回显两根 + 「完成」，不提供两步设置与验证并创建（禁止重复创建）
 // busy：'' | 'sync' | 'restart'，在弹框内同步明示「正在同步主界面 / 正在重启应用」
 const busy = ref<'' | 'sync' | 'restart'>('')
 
@@ -135,20 +134,12 @@ const verifyLog = ref<Seg[]>([])
 const showLog = computed(() => verifyLog.value.length > 0)
 
 function next(): void {
-  if (step.value === 1) {
-    if (!homeVal.value.trim()) { toast(t('wiz.needHome'), 'err'); return }
-    step.value = 2
-    return
-  }
-  if (step.value === 2) {
-    if (!wwwVal.value.trim()) { toast(t('wiz.needWww'), 'err'); return }
-    if (normHome.value === normWww.value) { toast(t('wiz.samePath'), 'err'); return }
-    step.value = 3
-    verified.value = false
-  }
+  if (!homeVal.value.trim()) { toast(t('wiz.needHome'), 'err'); return }
+  step.value = 2
 }
 function prev(): void {
-  if (step.value > 1) { step.value--; verified.value = false; verifyLog.value = [] }
+  step.value = 1
+  verifyLog.value = []
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -168,46 +159,33 @@ async function runDemoVerify(h: string, w: string): Promise<void> {
   for (const sd of HOME_SUBDIRS) { push({ c: 'ok', x: `    ✓ ${h}/${sd.path}/   ${sd.label}` }); await wait(60) }
   push({ c: 'ok', x: `✓ ${t('wiz.s3.wwwCreate')}：${w}` })
   await wait(200)
-  push({ c: 'ok', x: '✓ ' + t('wiz.s3.chmod') + '   u+rwX,go+rX' })
+  push({ c: 'ok', x: '✓ ' + t('wiz.s3.chmod') })
   await wait(200)
   push({ c: 'ok', x: '✓ ' + t('wiz.s3.rw') + '   write / read / delete OK' })
-  verified.value = true
 }
 
-async function doVerify(): Promise<void> {
-  if (verifying.value) return
+const done = ref(false) // 目录设置成功后置真：向导内展示成功提示，用户点「完成」才关闭返回主界面
+async function doConfirm(): Promise<void> {
+  if (confirming.value) return
   const h = normHome.value
   const w = normWww.value
   if (!h) { toast(t('wiz.needHome'), 'err'); return }
   if (!w) { toast(t('wiz.needWww'), 'err'); return }
   if (h === w) { toast(t('wiz.samePath'), 'err'); return }
-  verifying.value = true
-  try {
-    const r = await homeVerify(h, w)
-    if (r === null) { await runDemoVerify(h, w); return }
-    const segs: Seg[] = []
-    for (const ln of r.lines) segs.push({ c: ln.startsWith('⚠') ? 'warn' : 'ok', x: ln })
-    for (const e of r.errors) segs.push({ c: 'err', x: e })
-    verifyLog.value = segs
-    verified.value = r.ok
-    if (!r.ok && r.errors[0]) toast(r.errors[0], 'err')
-  } catch (e) {
-    verifyLog.value = [{ c: 'err', x: String((e as Error)?.message ?? e) }]
-    verified.value = false
-  } finally {
-    verifying.value = false
-  }
-}
-
-const confirming = ref(false)
-const done = ref(false) // 目录设置成功后置真：向导内展示成功提示，用户点「完成」才关闭返回主界面
-async function doConfirm(): Promise<void> {
-  if (confirming.value) return
   confirming.value = true
-  const h = normHome.value
-  const w = normWww.value
   try {
-    await homeEnsure(h, w) // 有宿主：只有这一步才真正建目录 → 写 config.yaml → 广播 state:changed（dirReady 由快照派生，硬红线 4/5）
+    // 先只读验证：HomeVerify 不建目录、不写文件，日志逐行进本步的「验证日志」
+    const r = await homeVerify(h, w)
+    if (r === null) {
+      await runDemoVerify(h, w) // 无宿主：原型动画，不落盘
+    } else {
+      const segs: Seg[] = []
+      for (const ln of r.lines) segs.push({ c: ln.startsWith('⚠') ? 'warn' : 'ok', x: ln })
+      for (const e of r.errors) segs.push({ c: 'err', x: e })
+      verifyLog.value = segs
+      if (!r.ok) { if (r.errors[0]) toast(r.errors[0], 'err'); return } // 未通过：不落盘，日志留在原地说明缺哪一步
+      await homeEnsure(h, w) // 通过后才真正建目录 → 写 config.yaml → 广播 state:changed（dirReady 由快照派生，硬红线 4/5）
+    }
     busy.value = 'sync'
     await syncState() // 目录设置完成后第一件事：立刻同步权威快照，主界面即时归位（不靠事件时序，也不本地乐观更新）
     busy.value = ''
@@ -229,17 +207,11 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
 
 <template>
   <ModalShell size="lg" :locked="props.locked" @close="emit('close')">
-    <template #head>
-      <h3>{{ t('wiz.title') }}</h3>
-      <p>{{ t('wiz.subtitle') }}</p>
-    </template>
     <div v-if="!done && !alreadySet" class="wiz-bar">
       <div class="wiz-steps">
         <div class="wiz-step" :class="step > 1 ? 'done' : step === 1 ? 'active' : ''"><span class="wiz-num">{{ step > 1 ? '✓' : '1' }}</span><span class="wiz-label">{{ t('wiz.step1') }}</span></div>
         <div class="wiz-line" :class="{ done: step > 1 }" />
-        <div class="wiz-step" :class="step > 2 ? 'done' : step === 2 ? 'active' : ''"><span class="wiz-num">{{ step > 2 ? '✓' : '2' }}</span><span class="wiz-label">{{ t('wiz.step2') }}</span></div>
-        <div class="wiz-line" :class="{ done: step > 2 }" />
-        <div class="wiz-step" :class="step === 3 ? 'active' : ''"><span class="wiz-num">3</span><span class="wiz-label">{{ t('wiz.step3') }}</span></div>
+        <div class="wiz-step" :class="step === 2 ? 'active' : ''"><span class="wiz-num">2</span><span class="wiz-label">{{ t('wiz.step2') }}</span></div>
       </div>
     </div>
     <template #body>
@@ -278,15 +250,6 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
         <div class="field"><label>{{ t('wiz.s2.tree') }}</label>
           <div class="dir-log"><div v-for="(ln, i) in wwwTree" :key="i"><span v-for="(s, j) in ln" :key="j" :class="s.c">{{ s.x }}</span></div></div>
         </div>
-      </template>
-      <template v-else>
-        <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s3.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s3.desc') }}</div></div>
-        <div class="field"><label>{{ t('wiz.s3.summary') }}</label>
-          <div class="wiz-confirm-kv">
-            <div class="row"><span class="k">PHPO_HOME</span><span class="v">{{ normHome }}</span></div>
-            <div class="row"><span class="k">WWW_ROOT</span><span class="v">{{ normWww }}</span></div>
-          </div>
-        </div>
         <div v-if="showLog" class="field"><label>{{ t('wiz.s3.log') }}</label>
           <div class="dir-log" style="max-height: 220px"><div v-for="(s, i) in verifyLog" :key="i" :class="s.c">{{ s.x }}</div></div>
         </div>
@@ -295,11 +258,10 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
     <template #foot>
       <button v-if="done || alreadySet" class="btn btn-primary" type="button" :disabled="busy !== ''" @click="finish">{{ t('wiz.done.btn') }}</button>
       <template v-else>
-        <button v-if="step > 1" class="btn" type="button" @click="prev">← {{ t('wiz.prev') }}</button>
+        <button v-if="step === 2" class="btn" type="button" @click="prev">← {{ t('wiz.prev') }}</button>
         <button v-else-if="!props.locked" class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
-        <button v-if="step < 3" class="btn btn-primary" type="button" @click="next">{{ t('wiz.next') }} →</button>
-        <button v-else-if="verified" class="btn btn-primary" type="button" :disabled="confirming" @click="doConfirm">{{ t('dir.confirm') }}</button>
-        <button v-else class="btn btn-primary" type="button" :disabled="verifying" @click="doVerify">{{ t('dir.verify') }}</button>
+        <button v-if="step === 1" class="btn btn-primary" type="button" @click="next">{{ t('wiz.next') }} →</button>
+        <button v-else class="btn btn-primary" type="button" :disabled="confirming" @click="doConfirm">{{ t('dir.confirm') }}</button>
       </template>
     </template>
   </ModalShell>

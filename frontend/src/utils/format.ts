@@ -13,10 +13,12 @@ export function cmpVer(a: string, b: string): number {
   return 0
 }
 
+// siteUrl：按端口决定网址方案——443 走 https，80 不带端口，其余端口把端口带上
 export function siteUrl(site: Site): string {
   if (!site || !site.domain) return ''
   const port = site.port
-  if (port && port !== 80 && port !== 443) return `http://${site.domain}:${port}`
+  if (port === 443) return `https://${site.domain}`
+  if (port && port !== 80) return `http://${site.domain}:${port}`
   return `http://${site.domain}`
 }
 

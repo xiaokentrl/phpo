@@ -84,3 +84,8 @@ export function setSiteVhostContent(domain: string, content: string): Promise<vo
 export function addSiteHosts(domain: string): Promise<string> {
   return app.SiteAddHosts(domain)
 }
+
+// openSiteFolder 在系统文件管理器里打开这个文件夹；打不开就是后端返回的错误原文，转达给用户即可
+export function openSiteFolder(path: string): Promise<void> {
+  return app.OpenFolder(path)
+}

@@ -145,7 +145,7 @@ How to verify each package's signature yourself: see [docs/打包发布.md](./do
 - Working root (PHPO_HOME, default `~/phpo`) — per-service config, logs, data and the offline cache all land here.
 - Site root (WWW_ROOT, default `~/www`) — one subdirectory per site.
 
-The "Verify" step in the wizard is a **read-only pre-flight**: it only checks whether the directory exists and whether its parent is writable. It creates nothing. Only "Confirm and create" writes to disk. That is a hard design requirement, not a courtesy.
+When you click "Confirm and create", the wizard first runs a **read-only pre-flight**: it only checks whether the directory exists and whether its parent is writable, and it creates nothing. If the check fails, nothing lands on disk and the failing line says exactly what is missing — pick a writable path and click again. Only after the check passes does anything get written. That is a hard design requirement, not a courtesy.
 
 > Every `./` below refers to that working root, not the repository root. It defaults to `~/phpo`, but once you change it, `~` has nothing to do with it.
 

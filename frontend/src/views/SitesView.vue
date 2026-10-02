@@ -11,11 +11,13 @@ import { usePhpSwitch } from '@/composables/usePhpSwitch'
 import { usePortSuggest } from '@/composables/usePortSuggest'
 import type { Site, TaskBrief } from '@/types'
 import { cmpVer, siteUrl } from '@/utils/format'
+import { copyText } from '@/utils/str'
 import { hostToContainer } from '@/utils/path'
 import { SVC_META } from '@/constants/service'
-import { addSiteHosts, hasBackend } from '@/api/site'
+import { addSiteHosts, hasBackend, openSiteFolder } from '@/api/site'
 import { envKeyPort } from '@/api/env'
 import { toast } from '@/composables/useToast'
+import { Browser } from '@wailsio/runtime'
 import { runTask } from '@/composables/useTask'
 import { syncState } from '@/composables/useStateSync'
 
@@ -129,6 +131,31 @@ function openRowMenu(anchor: HTMLElement, domain: string): void {
   menuPos.value = { left: left / s, top: top / s }
   menuDomain.value = domain
 }
+// 站点根目录：行内只画末级目录名，完整路径留在鼠标悬停提示里
+function rootLeaf(path: string): string {
+  const s = path.replace(/[\\/]+$/, '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+  return i >= 0 ? s.slice(i + 1) : s
+}
+// 域名点击交给系统浏览器：在用户自己的浏览器里开新标签页，而不是在应用窗口内跳
+function openSite(site: Site): void {
+  const url = siteUrl(site)
+  if (!url) return
+  if (!hasBackend()) {
+    window.open(url, '_blank', 'noopener')
+    return
+  }
+  Browser.OpenURL(url)
+}
+// 点路径即在系统文件管理器里打开这个文件夹；打不开就把后端原话转达给用户
+function onOpenRoot(site: Site): void {
+  if (!hasBackend()) return
+  openSiteFolder(site.root).catch((e: unknown) => toast(String(e), 'err', 4600))
+}
+// 复制完整路径：小按钮和右键各一路，两条都只复制、不改任何东西
+function onCopyRoot(site: Site): void {
+  copyText(site.root).then((ok) => toast(ok ? t('common.copied') : t('common.copyFailed'), ok ? 'ok' : 'err', 2400))
+}
 function onDocClick(e: MouseEvent): void {
   if (menuDomain.value && !(e.target as HTMLElement).closest('.row-menu') && !(e.target as HTMLElement).closest('[data-action="row-menu"]')) closeRowMenu()
 }
@@ -179,19 +206,19 @@ onBeforeUnmount(() => {
         <table>
           <thead>
             <tr>
-              <th style="width: 22%">{{ t('sites.col.domain') }}</th>
-              <th class="col-port" style="width: 9%">{{ t('sites.col.port') }}</th>
-              <th style="width: 11%">{{ t('sites.col.php') }}</th>
-              <th style="width: 22%">{{ t('sites.col.root') }}</th>
-              <th style="width: 10%">{{ t('sites.col.health') }}</th>
-              <th style="width: 10%">{{ t('sites.col.hosts') }}</th>
-              <th class="col-actions" style="width: 16%"></th>
+              <th>{{ t('sites.col.domain') }}</th>
+              <th class="col-port">{{ t('sites.col.port') }}</th>
+              <th>{{ t('sites.col.php') }}</th>
+              <th>{{ t('sites.col.root') }}</th>
+              <th>{{ t('sites.col.health') }}</th>
+              <th>{{ t('sites.col.hosts') }}</th>
+              <th class="col-actions"></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="site in state.sites" :key="site.domain">
               <td>
-                <a class="site-domain" :href="siteUrl(site)" target="_blank" rel="noopener noreferrer" :title="siteUrl(site)">
+                <a class="site-domain" :href="siteUrl(site)" :title="siteUrl(site)" @click.prevent="openSite(site)">
                   <span class="favicon">{{ site.domain.charAt(0).toUpperCase() }}</span>
                   <span class="domain-text">{{ site.domain }}</span>
                   <svg class="external-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14 21 3" /></svg>
@@ -227,9 +254,12 @@ onBeforeUnmount(() => {
                 </select>
               </td>
               <td>
-                <button class="path-btn" data-action="open-path" :data-path="site.root" :title="`${site.root} → ${hostToContainer(state.env, site.root)}`">
+                <button class="path-btn" @click="onOpenRoot(site)" @contextmenu.prevent="onCopyRoot(site)" :title="`${site.root} → ${hostToContainer(state.env, site.root)}`">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-                  <span class="path-text">{{ site.root }}</span>
+                  <span class="path-text">{{ rootLeaf(site.root) }}</span>
+                </button>
+                <button class="icon-btn path-copy" :title="t('common.copy')" @click="onCopyRoot(site)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
                 </button>
               </td>
               <td>
