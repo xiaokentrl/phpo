@@ -83,7 +83,7 @@ function finalRuleEqualsPreset(presetRule: string): boolean {
         </div>
       </div>
       <div class="field">
-        <label>{{ t('rw.rule') }} <span style="font-weight: 400; color: var(--text-mute); font-size: 11.5px">{{ t('rw.rule.hint') }}</span></label>
+        <label>{{ t('rw.rule') }} <span class="rule-hint">{{ t('rw.rule.hint') }}</span></label>
         <textarea v-model="rule" class="rw-editor" spellcheck="false" />
         <div class="hint">{{ t('rw.writeHint', { domain, root: siteRoot }) }}</div>
       </div>
@@ -92,7 +92,7 @@ function finalRuleEqualsPreset(presetRule: string): boolean {
           <span class="arrow">▼</span>
           <span>{{ previewOpen ? t('rw.hidePreview') : t('rw.showPreview') }}</span>
         </button>
-        <div v-if="previewOpen" class="cmd-preview" style="white-space: pre-wrap; max-height: 240px; overflow-y: auto">{{ rule }}</div>
+        <div v-if="previewOpen" class="cmd-preview preview-scroll">{{ rule }}</div>
       </div>
       <div class="alert alert-info">{{ t('rw.applyHint') }}</div>
     </template>
@@ -102,3 +102,17 @@ function finalRuleEqualsPreset(presetRule: string): boolean {
     </template>
   </ModalShell>
 </template>
+
+<style scoped>
+.rule-hint {
+  font-weight: 400;
+  color: var(--text-mute);
+  font-size: 11.5px;
+}
+
+.preview-scroll {
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow-y: auto;
+}
+</style>

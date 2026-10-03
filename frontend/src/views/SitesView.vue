@@ -198,7 +198,7 @@ onBeforeUnmount(() => {
       <div class="summary">
         <div class="summary-item"><div class="summary-num">{{ state.sites.length }}</div><div class="summary-label">{{ t('sites.count') }}</div></div>
         <div class="summary-item"><div class="summary-num">{{ phpVers.length }}</div><div class="summary-label">{{ t('sites.phpVersions') }}</div></div>
-        <div class="summary-item"><div class="summary-num" style="color: var(--ok)">{{ healthy }}</div><div class="summary-label">{{ t('sites.healthy') }}</div></div>
+        <div class="summary-item"><div class="summary-num summary-num-ok">{{ healthy }}</div><div class="summary-label">{{ t('sites.healthy') }}</div></div>
         <div class="summary-item"><div class="summary-num">{{ nginxPort }}</div><div class="summary-label">{{ t('sites.nginxPort') }}</div></div>
       </div>
 
@@ -254,16 +254,18 @@ onBeforeUnmount(() => {
                 </select>
               </td>
               <td>
-                <button class="path-btn" @click="onOpenRoot(site)" @contextmenu.prevent="onCopyRoot(site)" :title="`${site.root} → ${hostToContainer(state.env, site.root)}`">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-                  <span class="path-text">{{ rootLeaf(site.root) }}</span>
-                </button>
-                <button class="icon-btn path-copy" :title="t('common.copy')" @click="onCopyRoot(site)">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
-                </button>
+                <div class="root-cell">
+                  <button class="path-btn" @click="onOpenRoot(site)" @contextmenu.prevent="onCopyRoot(site)" :title="`${site.root} → ${hostToContainer(state.env, site.root)}`">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                    <span class="path-text">{{ rootLeaf(site.root) }}</span>
+                  </button>
+                  <button class="icon-btn path-copy" :title="t('common.copy')" @click="onCopyRoot(site)">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+                  </button>
+                </div>
               </td>
               <td>
-                <span style="display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center">
+                <span class="health-pills">
                   <span class="status-pill" :class="healthPill(site.health)"><span class="pill-dot"></span>{{ healthLabel(site.health) }}</span>
                   <span v-if="busyPill(site.domain)" class="status-pill pill-warn" data-task-busy>{{ busyPill(site.domain) }}</span>
                 </span>
@@ -301,3 +303,24 @@ onBeforeUnmount(() => {
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+.summary-num-ok {
+  color: var(--ok);
+}
+
+.root-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.health-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+</style>

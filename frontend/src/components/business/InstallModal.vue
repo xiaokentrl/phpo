@@ -152,9 +152,9 @@ function onOk(): void {
         <div class="hint">{{ t('install.dataDir.hint', { path: defaultDataDir(kind, version || meta.suggested[0]) }) }}</div>
       </div>
       <div v-if="needExt" class="field">
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="picked-head">
           <label>{{ t('php.extensions') }}</label>
-          <span class="mono" style="font-size: 11.5px; color: var(--text-mute)">{{ t('ext.pickedTotal', { count: extensions.length, total: catalogCount }) }}</span>
+          <span class="mono picked-count">{{ t('ext.pickedTotal', { count: extensions.length, total: catalogCount }) }}</span>
         </div>
         <ExtPicker v-model="extensions" :version="version.trim() || meta.suggested[0]" />
         <div class="hint">{{ t('install.ext.hint') }}</div>
@@ -170,3 +170,16 @@ function onOk(): void {
     </template>
   </ModalShell>
 </template>
+
+<style scoped>
+.picked-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.picked-count {
+  font-size: 11.5px;
+  color: var(--text-mute);
+}
+</style>

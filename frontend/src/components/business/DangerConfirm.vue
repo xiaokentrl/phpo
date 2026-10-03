@@ -42,7 +42,7 @@ function confirm() {
     <template #head>
       <div class="danger-header">
         <div class="danger-icon">⚠</div>
-        <div style="flex: 1">
+        <div class="danger-text">
           <h3>{{ title }}</h3>
           <p v-if="description">{{ description }}</p>
         </div>
@@ -59,7 +59,18 @@ function confirm() {
     </template>
     <template #foot>
       <button class="btn" @click="emit('close')">{{ t('common.cancel') }}</button>
-      <button class="btn btn-danger" :disabled="!canConfirm" style="background: var(--danger-bg); border-color: var(--danger-bg)" @click="confirm">{{ confirmLabel }}</button>
+      <button class="btn btn-danger danger-submit" :disabled="!canConfirm" @click="confirm">{{ confirmLabel }}</button>
     </template>
   </ModalShell>
 </template>
+
+<style scoped>
+.danger-text {
+  flex: 1;
+}
+
+.danger-submit {
+  background: var(--danger-bg);
+  border-color: var(--danger-bg);
+}
+</style>

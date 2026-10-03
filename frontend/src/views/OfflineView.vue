@@ -116,12 +116,12 @@ function runRemove(e: CacheEntry): void {
       <table>
         <thead>
           <tr>
-            <th style="width: 15%">{{ t('offline.col.svc') }}</th>
-            <th style="width: 10%">{{ t('offline.col.ver') }}</th>
-            <th style="width: 27%">{{ t('offline.col.path') }}</th>
-            <th style="width: 9%">{{ t('offline.col.size') }}</th>
-            <th style="width: 9%">{{ t('offline.col.items') }}</th>
-            <th style="width: 14%">{{ t('offline.col.lastVerify') }}</th>
+            <th class="off-th-svc">{{ t('offline.col.svc') }}</th>
+            <th class="off-th-ver">{{ t('offline.col.ver') }}</th>
+            <th class="off-th-path">{{ t('offline.col.path') }}</th>
+            <th class="off-th-size">{{ t('offline.col.size') }}</th>
+            <th class="off-th-items">{{ t('offline.col.items') }}</th>
+            <th class="off-th-verify">{{ t('offline.col.lastVerify') }}</th>
             <th></th>
           </tr>
         </thead>
@@ -136,8 +136,8 @@ function runRemove(e: CacheEntry): void {
             </td>
             <td><span class="chip chip-accent">{{ e.version }}</span></td>
             <td><code class="mono off-path" :title="e.path">{{ e.path }}</code></td>
-            <td><span class="mono" style="color: var(--text-dim)">{{ humanSize(e.totalSize) }}</span></td>
-            <td><span class="mono" style="color: var(--text-mute)">{{ e.apkCount + e.peclCount }}</span></td>
+            <td><span class="mono off-td-size">{{ humanSize(e.totalSize) }}</span></td>
+            <td><span class="mono off-td-count">{{ e.apkCount + e.peclCount }}</span></td>
             <td>
               <span :class="e.verifyOk ? 'pill-ok' : 'pill-err'">{{ e.verifyOk ? t('offline.verify.ok') : t('offline.verify.bad') }}</span>
               <span class="mono off-time">{{ fmt(e.lastVerify) }}</span>
@@ -163,4 +163,12 @@ function runRemove(e: CacheEntry): void {
 .off-time { display: block; color: var(--text-mute); font-size: 11.5px; margin-top: 2px; }
 .pill-ok { color: var(--ok); font-size: 11px; padding: 1px 7px; border-radius: 999px; }
 .pill-err { color: var(--danger); font-size: 11px; padding: 1px 7px; border-radius: 999px; }
+.off-th-svc { width: 15%; }
+.off-th-ver { width: 10%; }
+.off-th-path { width: 27%; }
+.off-th-size { width: 9%; }
+.off-th-items { width: 9%; }
+.off-th-verify { width: 14%; }
+.off-td-size { color: var(--text-dim); }
+.off-td-count { color: var(--text-mute); }
 </style>

@@ -122,9 +122,9 @@ async function apply(): Promise<void> {
     </template>
     <template #body>
       <div class="field">
-        <div style="display: flex; justify-content: space-between; align-items: center">
+        <div class="picked-head">
           <label>{{ t('ext.enabled') }}</label>
-          <span class="mono" style="font-size: 11.5px; color: var(--text-mute)">{{ t('ext.pickedTotal', { count: selected.length, total: catalogCount }) }}</span>
+          <span class="mono picked-count">{{ t('ext.pickedTotal', { count: selected.length, total: catalogCount }) }}</span>
         </div>
         <div v-if="loading" class="alert alert-info"><strong>{{ t('ext.fetching') }}</strong></div>
         <div v-else-if="!live" class="alert alert-warn"><strong>{{ t('ext.nonLive') }}</strong></div>
@@ -133,7 +133,7 @@ async function apply(): Promise<void> {
       </div>
       <div class="field">
         <label>{{ t('ext.add') }}</label>
-        <div style="display: flex; gap: 8px">
+        <div class="add-row">
           <input v-model="addName" type="text" :placeholder="t('ext.add.placeholder')" autocomplete="off" @keydown.enter="addExt()">
           <button class="btn btn-primary" type="button" @click="addExt">{{ t('ext.add.btn') }}</button>
         </div>
@@ -147,3 +147,21 @@ async function apply(): Promise<void> {
     </template>
   </ModalShell>
 </template>
+
+<style scoped>
+.picked-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.picked-count {
+  font-size: 11.5px;
+  color: var(--text-mute);
+}
+
+.add-row {
+  display: flex;
+  gap: 8px;
+}
+</style>

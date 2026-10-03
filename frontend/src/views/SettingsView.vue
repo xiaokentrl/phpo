@@ -112,12 +112,12 @@ function pickLang(l: Locale) {
       </div>
     </header>
 
-    <div class="card" style="margin-bottom: 16px">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px">
-        <h3 style="font-size: 14px; font-weight: 600">{{ t('settings.layout') }}</h3>
+    <div class="card card-gap">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.layout') }}</h3>
         <span class="chip">{{ t('settings.layout.hint') }}</span>
       </div>
-      <div style="display: flex; flex-direction: column; gap: 16px">
+      <div class="stack-16">
         <div class="field">
           <label>{{ t('settings.layout.presets') }}</label>
           <div class="quick-picks">
@@ -143,12 +143,12 @@ function pickLang(l: Locale) {
       </div>
     </div>
 
-    <div class="card" style="margin-bottom: 16px">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px">
-        <h3 style="font-size: 14px; font-weight: 600">{{ t('settings.zoom') }}</h3>
+    <div class="card card-gap">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.zoom') }}</h3>
         <span class="chip">{{ t('settings.zoom.hint') }}</span>
       </div>
-      <div style="display: flex; flex-direction: column; gap: 16px">
+      <div class="stack-16">
         <div class="field">
           <label>{{ t('settings.zoom.presets') }}</label>
           <div class="quick-picks">
@@ -166,9 +166,9 @@ function pickLang(l: Locale) {
       </div>
     </div>
 
-    <div class="card" style="margin-bottom: 16px">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px">
-        <h3 style="font-size: 14px; font-weight: 600">{{ t('settings.appearance') }}</h3>
+    <div class="card card-gap">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.appearance') }}</h3>
         <span class="chip">{{ t('settings.appearance.hint') }}</span>
       </div>
       <div class="field">
@@ -180,76 +180,182 @@ function pickLang(l: Locale) {
       </div>
     </div>
 
-    <div class="card" style="margin-bottom: 16px">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px">
-        <h3 style="font-size: 14px; font-weight: 600">{{ t('settings.tray') }}</h3>
+    <div class="card card-gap">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.tray') }}</h3>
         <span class="chip">{{ t('settings.tray.hint') }}</span>
       </div>
-      <div style="display: flex; flex-direction: column; gap: 12px">
-        <label class="danger-check" style="background: var(--bg); border-color: var(--border); cursor: pointer">
-          <input v-model="prefs.tray.minimizeOnClose" type="checkbox" id="tray-minimize" style="accent-color: var(--accent)" />
-          <span class="check-label" style="color: var(--text-dim)">{{ t('settings.tray.minimize') }}</span>
+      <div class="stack-12">
+        <label class="danger-check tray-check">
+          <input v-model="prefs.tray.minimizeOnClose" type="checkbox" id="tray-minimize" class="tray-check-input" />
+          <span class="check-label text-dim">{{ t('settings.tray.minimize') }}</span>
         </label>
-        <label class="danger-check" style="background: var(--bg); border-color: var(--border); cursor: pointer">
-          <input v-model="prefs.tray.enabled" type="checkbox" id="tray-show" style="accent-color: var(--accent)" />
-          <span class="check-label" style="color: var(--text-dim)">{{ t('settings.tray.show') }}</span>
+        <label class="danger-check tray-check">
+          <input v-model="prefs.tray.enabled" type="checkbox" id="tray-show" class="tray-check-input" />
+          <span class="check-label text-dim">{{ t('settings.tray.show') }}</span>
         </label>
       </div>
     </div>
 
-    <div class="card" style="margin-bottom: 16px">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px">
-        <h3 style="font-size: 14px; font-weight: 600">{{ t('settings.docker') }}</h3>
+    <div class="card card-gap">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.docker') }}</h3>
         <span class="chip">{{ t('settings.docker.hint') }}</span>
       </div>
-      <div class="alert alert-warn" v-if="!dockerReady" style="margin-bottom: 12px">{{ t('settings.docker.noBackend') }}</div>
+      <div class="alert alert-warn alert-gap" v-if="!dockerReady">{{ t('settings.docker.noBackend') }}</div>
       <div class="field">
         <label>{{ t('settings.docker.label') }}</label>
         <textarea v-model="dockerText" rows="4" spellcheck="false" :disabled="!dockerReady"
-          style="font-family: var(--mono); font-size: 12.5px; resize: vertical"
+          class="source-textarea"
           :placeholder="t('settings.docker.placeholder')" />
         <div class="hint">{{ t('settings.docker.hint2') }}</div>
       </div>
-      <div style="display: flex; gap: 8px; margin-top: 12px">
+      <div class="source-actions">
         <button class="btn btn-primary" type="button" id="docker-source-save" :disabled="!dockerReady || dockerSaving || !dockerDirty" @click="saveDockerSources">{{ t('settings.docker.save') }}</button>
         <button class="btn" type="button" id="docker-source-test" :disabled="!dockerReady || dockerTesting || !dockerLines.length" @click="testDockerSources">{{ dockerTesting ? t('settings.docker.testing') : t('settings.docker.test') }}</button>
       </div>
 
-      <div v-if="dockerResults" class="table-wrap" style="margin-top: 14px">
-        <table style="min-width: 0">
+      <div v-if="dockerResults" class="table-wrap probe-grid">
+        <table class="probe-table">
           <thead>
             <tr>
-              <th style="width: 44%">{{ t('settings.docker.col.source') }}</th>
-              <th style="width: 20%">{{ t('settings.docker.col.latency') }}</th>
+              <th class="th-source">{{ t('settings.docker.col.source') }}</th>
+              <th class="th-latency">{{ t('settings.docker.col.latency') }}</th>
               <th>{{ t('settings.docker.col.verdict') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="(r, i) in dockerResults" :key="i">
-              <td><span class="mono" style="font-size: 12.5px">{{ r.host }}</span></td>
-              <td><span class="mono" style="color: var(--text-dim)">{{ r.ok ? `${r.latencyMs} ms` : '—' }}</span></td>
+              <td><span class="mono mono-size">{{ r.host }}</span></td>
+              <td><span class="mono text-dim">{{ r.ok ? `${r.latencyMs} ms` : '—' }}</span></td>
               <td>
                 <span v-if="i === dockerFastest" class="chip chip-accent">{{ t('settings.docker.fastest') }}</span>
                 <span v-if="r.ok" class="chip">{{ t('settings.docker.ok') }}</span>
-                <span v-else style="color: var(--danger); font-size: 12.5px">{{ r.error }}</span>
+                <span v-else class="cell-error">{{ r.error }}</span>
               </td>
             </tr>
           </tbody>
         </table>
-        <div class="hint" style="padding: 0 12px 10px; font-size: 11.5px; color: var(--text-mute); line-height: 1.5">{{ t('settings.docker.hint3') }}</div>
+        <div class="hint hint-table">{{ t('settings.docker.hint3') }}</div>
       </div>
-      <div class="hint" v-else-if="dockerSaved.length === 0" style="margin-top: 10px; font-size: 11.5px; color: var(--text-mute); line-height: 1.5">{{ t('settings.docker.empty') }}</div>
+      <div class="hint hint-empty" v-else-if="dockerSaved.length === 0">{{ t('settings.docker.empty') }}</div>
     </div>
 
     <div class="card">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px">
-        <h3 style="font-size: 14px; font-weight: 600">{{ t('settings.upgrade') }}</h3>
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.upgrade') }}</h3>
         <span class="chip">{{ t('settings.upgrade.hint') }}</span>
       </div>
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px">
-        <span style="color: var(--text-dim)">{{ t('update.subtitle', { version }) }}</span>
+      <div class="upgrade-row">
+        <span class="text-dim">{{ t('update.subtitle', { version }) }}</span>
         <button class="btn btn-primary" type="button" id="check-update-btn" @click="openUpdateModal()">{{ t('update.check') }}</button>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.card-gap {
+  margin-bottom: 16px;
+}
+
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stack-16 {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stack-12 {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tray-check {
+  background: var(--bg);
+  border-color: var(--border);
+  cursor: pointer;
+}
+
+.tray-check-input {
+  accent-color: var(--accent);
+}
+
+.text-dim {
+  color: var(--text-dim);
+}
+
+.alert-gap {
+  margin-bottom: 12px;
+}
+
+.source-textarea {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.source-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.probe-grid {
+  margin-top: 14px;
+}
+
+.probe-table {
+  min-width: 0;
+}
+
+.th-source {
+  width: 44%;
+}
+
+.th-latency {
+  width: 20%;
+}
+
+.mono-size {
+  font-size: 12.5px;
+}
+
+.cell-error {
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+.hint-table {
+  padding: 0 12px 10px;
+  font-size: 11.5px;
+  color: var(--text-mute);
+  line-height: 1.5;
+}
+
+.hint-empty {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--text-mute);
+  line-height: 1.5;
+}
+
+.upgrade-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+</style>

@@ -67,24 +67,24 @@ async function saveRoot(root: string): Promise<void> {
       @save="saveRoot"
       @reset="saveRoot('')"
     />
-    <div class="alert alert-warn" style="margin-bottom: 16px">{{ t('backup.warning') }}</div>
+    <div class="alert alert-warn alert-gap">{{ t('backup.warning') }}</div>
 
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th style="width: 32%">{{ t('backup.col.file') }}</th>
-            <th style="width: 10%">{{ t('backup.col.size') }}</th>
-            <th style="width: 18%">{{ t('backup.col.time') }}</th>
-            <th style="width: 10%">{{ t('backup.col.content') }}</th>
+            <th class="th-file">{{ t('backup.col.file') }}</th>
+            <th class="th-size">{{ t('backup.col.size') }}</th>
+            <th class="th-time">{{ t('backup.col.time') }}</th>
+            <th class="th-content">{{ t('backup.col.content') }}</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="b in state.backups" :key="b.file">
-            <td><span class="mono" style="font-size: 12.5px">{{ b.file }}</span></td>
-            <td><span class="mono" style="color: var(--text-dim)">{{ b.size }}</span></td>
-            <td><span class="mono" style="color: var(--text-mute); font-size: 12px">{{ b.at }}</span></td>
+            <td><span class="mono mono-size">{{ b.file }}</span></td>
+            <td><span class="mono text-dim">{{ b.size }}</span></td>
+            <td><span class="mono cell-time">{{ b.at }}</span></td>
             <td><span class="chip">{{ b.items }} {{ t('backup.col.items') }}</span></td>
             <td>
               <div class="row-actions">
@@ -102,3 +102,38 @@ async function saveRoot(root: string): Promise<void> {
     </div>
   </div>
 </template>
+
+<style scoped>
+.alert-gap {
+  margin-bottom: 16px;
+}
+
+.th-file {
+  width: 32%;
+}
+
+.th-size {
+  width: 10%;
+}
+
+.th-time {
+  width: 18%;
+}
+
+.th-content {
+  width: 10%;
+}
+
+.mono-size {
+  font-size: 12.5px;
+}
+
+.text-dim {
+  color: var(--text-dim);
+}
+
+.cell-time {
+  color: var(--text-mute);
+  font-size: 12px;
+}
+</style>

@@ -126,7 +126,7 @@ async function apply(): Promise<void> {
             type="button"
             @click="selectFile(f.name)"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M14 3v5h5" /><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /></svg>
+            <svg class="file-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5" /><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /></svg>
             <span class="file-name">{{ f.name }}</span>
             <span class="file-dot" />
           </button>
@@ -134,19 +134,19 @@ async function apply(): Promise<void> {
         <div class="config-editor-wrap">
           <div class="config-editor-head">
             <span class="path-text" :title="fullPath()">{{ fullPath() }}</span>
-            <span style="font-size: 11.5px; color: var(--text-mute); flex-shrink: 0">{{ t('config.editorHint') }}</span>
+            <span class="editor-hint">{{ t('config.editorHint') }}</span>
           </div>
           <textarea v-model="drafts[activeFile]" class="config-editor" spellcheck="false" :disabled="loading" @keydown="onTab" />
         </div>
       </div>
-      <div style="padding: 12px 22px; border-top: 1px solid var(--border-2); background: var(--surface-2)">
-        <div class="alert alert-info" style="padding: 8px 12px">{{ t('config.hint') }}</div>
-        <div style="margin-top: 8px"><MountList :kind="kind" :version="version" /></div>
+      <div class="modal-note">
+        <div class="alert alert-info alert-tight">{{ t('config.hint') }}</div>
+        <div class="mounts-gap"><MountList :kind="kind" :version="version" /></div>
       </div>
     </template>
     <template #foot>
-      <span style="flex: 1; font-size: 12px; color: var(--text-mute); font-family: var(--mono)">
-        <span v-if="changed.length" style="color: var(--warn)">● {{ t('config.unsaved') }} · {{ changed.length }}/{{ files.length }}</span>
+      <span class="foot-status">
+        <span v-if="changed.length" class="foot-warn">● {{ t('config.unsaved') }} · {{ changed.length }}/{{ files.length }}</span>
       </span>
       <button class="btn" type="button" :disabled="!isModified(activeFile)" @click="resetActive">{{ t('config.reset') }}</button>
       <button class="btn" type="button" @click="emit('close')">{{ t('common.cancel') }}</button>
@@ -154,3 +154,40 @@ async function apply(): Promise<void> {
     </template>
   </ModalShell>
 </template>
+
+<style scoped>
+.file-icon {
+  flex-shrink: 0;
+}
+
+.editor-hint {
+  font-size: 11.5px;
+  color: var(--text-mute);
+  flex-shrink: 0;
+}
+
+.modal-note {
+  padding: 12px 22px;
+  border-top: 1px solid var(--border-2);
+  background: var(--surface-2);
+}
+
+.alert-tight {
+  padding: 8px 12px;
+}
+
+.mounts-gap {
+  margin-top: 8px;
+}
+
+.foot-status {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-mute);
+  font-family: var(--mono);
+}
+
+.foot-warn {
+  color: var(--warn);
+}
+</style>

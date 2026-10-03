@@ -32,16 +32,16 @@ function fmt(ts: string): string {
           <table>
             <thead>
               <tr>
-                <th style="width: 14%">{{ t('cleanup.trash.col.kind') }}</th>
-                <th style="width: 46%">{{ t('cleanup.trash.col.path') }}</th>
-                <th style="width: 26%">{{ t('cleanup.trash.col.expires') }}</th>
+                <th class="th-kind">{{ t('cleanup.trash.col.kind') }}</th>
+                <th class="th-path">{{ t('cleanup.trash.col.path') }}</th>
+                <th class="th-expires">{{ t('cleanup.trash.col.expires') }}</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="it in store.trash" :key="it.id">
                 <td><span class="chip">{{ it.kind }}</span></td>
-                <td><span class="mono" style="font-size: 11.5px">{{ it.origPath }}</span></td>
+                <td><span class="mono mono-size">{{ it.origPath }}</span></td>
                 <td>
                   {{ fmt(it.expiresAt) }}
                   <span v-if="it.expired" class="trash-expired">{{ t('cleanup.trash.expired') }}</span>
@@ -66,4 +66,8 @@ function fmt(ts: string): string {
 .trash { min-height: 60px; }
 .trash-empty { color: var(--text-mute); font-size: 13px; padding: 8px 0; }
 .trash-expired { margin-left: 6px; color: var(--danger); font-size: 11.5px; }
+.th-kind { width: 14%; }
+.th-path { width: 46%; }
+.th-expires { width: 26%; }
+.mono-size { font-size: 11.5px; }
 </style>

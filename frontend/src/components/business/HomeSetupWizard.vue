@@ -226,7 +226,7 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
       <template v-else-if="step === 1">
         <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s1.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s1.desc') }}</div></div>
         <div class="field">
-          <label class="mono" style="font-size: 12px">PHPO_HOME</label>
+          <label class="mono mono-sm">PHPO_HOME</label>
           <div class="input-with-action">
             <input v-model="homeVal" type="text" spellcheck="false" autocomplete="off" @input="homeDirty = true">
             <button v-if="canBrowse" class="input-action-btn" type="button" @click="browseDir('home')">{{ t('siteAdd.browse') }}</button>
@@ -240,7 +240,7 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
       <template v-else-if="step === 2">
         <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s2.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s2.desc') }}</div></div>
         <div class="field">
-          <label class="mono" style="font-size: 12px">WWW_ROOT</label>
+          <label class="mono mono-sm">WWW_ROOT</label>
           <div class="input-with-action">
             <input v-model="wwwVal" type="text" spellcheck="false" autocomplete="off" @input="wwwDirty = true">
             <button v-if="canBrowse" class="input-action-btn" type="button" @click="browseDir('www')">{{ t('siteAdd.browse') }}</button>
@@ -251,7 +251,7 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
           <div class="dir-log"><div v-for="(ln, i) in wwwTree" :key="i"><span v-for="(s, j) in ln" :key="j" :class="s.c">{{ s.x }}</span></div></div>
         </div>
         <div v-if="showLog" class="field"><label>{{ t('wiz.s3.log') }}</label>
-          <div class="dir-log" style="max-height: 220px"><div v-for="(s, i) in verifyLog" :key="i" :class="s.c">{{ s.x }}</div></div>
+          <div class="dir-log dir-log-tight"><div v-for="(s, i) in verifyLog" :key="i" :class="s.c">{{ s.x }}</div></div>
         </div>
       </template>
     </template>
@@ -266,3 +266,13 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
     </template>
   </ModalShell>
 </template>
+
+<style scoped>
+.mono-sm {
+  font-size: 12px;
+}
+
+.dir-log-tight {
+  max-height: 220px;
+}
+</style>

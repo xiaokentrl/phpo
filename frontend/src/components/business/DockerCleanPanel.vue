@@ -428,7 +428,7 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
       <table>
         <thead>
           <tr>
-            <th style="width:42px;">
+            <th class="col-check">
               <input
                 type="checkbox"
                 id="selectAllCheckbox"
@@ -437,12 +437,12 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
                 @click.stop="onSelectAllClick"
               />
             </th>
-            <th style="width:18%;">{{ t('clean.panel.col.row') }}</th>
-            <th style="width:30%;">{{ t('clean.panel.col.desc') }}</th>
-            <th style="width:13%;">{{ t('clean.panel.col.amount') }}</th>
-            <th style="width:9%;">{{ t('clean.panel.col.risk') }}</th>
-            <th style="width:10%;">{{ t('clean.panel.col.status') }}</th>
-            <th style="width:90px; text-align:right;">{{ t('clean.ui.colAction') }}</th>
+            <th class="col-row">{{ t('clean.panel.col.row') }}</th>
+            <th class="col-desc">{{ t('clean.panel.col.desc') }}</th>
+            <th class="col-amount">{{ t('clean.panel.col.amount') }}</th>
+            <th class="col-risk">{{ t('clean.panel.col.risk') }}</th>
+            <th class="col-status">{{ t('clean.panel.col.status') }}</th>
+            <th class="col-action">{{ t('clean.ui.colAction') }}</th>
           </tr>
         </thead>
         <tbody id="otherTableBody">
@@ -596,6 +596,13 @@ thead th {
   text-align: left; font-size: 11.5px; font-weight: 600; color: var(--text-mute);
   padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--surface-2);
 }
+.col-check { width:42px; }
+.col-row { width:18%; }
+.col-desc { width:30%; }
+.col-amount { width:13%; }
+.col-risk { width:9%; }
+.col-status { width:10%; }
+.col-action { width:90px; text-align:right; }
 tbody td { padding: 8px 10px; font-size: 12.5px; border-bottom: 1px solid var(--border); vertical-align: top; }
 
 .group-row td { padding: 0; background: var(--surface-2); border-bottom: 1px solid var(--border); }

@@ -163,7 +163,7 @@ async function onWithdraw(id: string): Promise<void> {
         </span>
       </div>
       <div class="drawer-right">
-        <span v-if="progress" class="chip" style="font-size: 10px; padding: 1px 6px" :title="t('task.progressTitle')">{{ progress.step }}/{{ progress.total }}</span>
+        <span v-if="progress" class="chip progress-chip" :title="t('task.progressTitle')">{{ progress.step }}/{{ progress.total }}</span>
         <span class="drawer-status">{{ statusText }}</span>
         <button v-show="isRunning" class="icon-btn" :title="t('drawer.cancelTitle')" @click="onCancel">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -182,10 +182,10 @@ async function onWithdraw(id: string): Promise<void> {
         <!-- 需求（v2.9.13）：把当前操作的直观名字摆在日志之上——用户点开抽屉第一眼即知「这是哪一件事」。
              文本唯一来源仍是权威快照的 TaskBrief.Label（硬红线 4）；无选中任务（系统日志通道）时不渲染。
              头部三区不动（§5.6.1 左区恒为「服务」二字），故标题落在日志栏内。 -->
-        <div v-if="task" class="drawer-task-title" :title="task.label" style="flex-shrink: 0; padding: 8px 16px; font-size: 12.5px; font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ task.label }}</div>
+        <div v-if="task" class="drawer-task-title" :title="task.label">{{ task.label }}</div>
         <div v-if="progress" class="drawer-progress"><div class="drawer-progress-bar" :style="{ width: progress.percent + '%' }"></div></div>
         <div v-if="errorText" class="drawer-error">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>
+          <svg class="error-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>
           <span class="drawer-error-text" :title="errorText">{{ t('task.reason') }}: {{ errorText }}</span>
         </div>
         <pre ref="logRef" class="drawer-log"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ l.s || ' ' }}</div><div v-if="!lines.length" class="log-line dim">{{ task ? t('task.noLog') : t('task.sysEmpty') }}</div></pre>
@@ -219,3 +219,26 @@ async function onWithdraw(id: string): Promise<void> {
     </div>
   </section>
 </template>
+
+<style scoped>
+.progress-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.drawer-task-title {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error-icon {
+  flex-shrink: 0;
+}
+</style>

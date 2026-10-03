@@ -88,7 +88,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onEsc, true))
       <div class="config-editor-wrap">
         <div class="config-editor-head">
           <span class="path-text">{{ confPath }}</span>
-          <span style="font-size: 11.5px; color: var(--text-mute); flex-shrink: 0">{{ t('config.editorHint') }}</span>
+          <span class="cfg-hint">{{ t('config.editorHint') }}</span>
         </div>
         <textarea v-model="content" class="config-editor" spellcheck="false" @keydown="onTab" />
       </div>
@@ -121,3 +121,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onEsc, true))
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+.cfg-hint {
+  font-size: 11.5px;
+  color: var(--text-mute);
+  flex-shrink: 0;
+}
+</style>

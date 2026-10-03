@@ -112,7 +112,7 @@ function jump(kind: ServiceKind) {
     <template v-else>
       <div class="summary">
         <div class="summary-item"><div class="summary-num">{{ all.length }}</div><div class="summary-label">{{ t('overview.instances') }}</div></div>
-        <div class="summary-item"><div class="summary-num" style="color: var(--ok)">{{ running }}</div><div class="summary-label">{{ t('overview.running') }}</div></div>
+        <div class="summary-item"><div class="summary-num ov-summary-ok">{{ running }}</div><div class="summary-label">{{ t('overview.running') }}</div></div>
         <div class="summary-item"><div class="summary-num">{{ stopped }}</div><div class="summary-label">{{ t('overview.stopped') }}</div></div>
         <div class="summary-item"><div class="summary-num">{{ lines }}</div><div class="summary-label">{{ t('overview.lines') }}</div></div>
       </div>
@@ -121,10 +121,10 @@ function jump(kind: ServiceKind) {
         <table>
           <thead>
             <tr>
-              <th style="width: 22%">{{ t('overview.col.svc') }}</th>
-              <th style="width: 16%">{{ t('overview.col.ver') }}</th>
-              <th style="width: 18%">{{ t('overview.col.status') }}</th>
-              <th style="width: 30%">{{ t('overview.col.container') }}</th>
+              <th class="ov-th-svc">{{ t('overview.col.svc') }}</th>
+              <th class="ov-th-ver">{{ t('overview.col.ver') }}</th>
+              <th class="ov-th-status">{{ t('overview.col.status') }}</th>
+              <th class="ov-th-container">{{ t('overview.col.container') }}</th>
               <th></th>
             </tr>
           </thead>
@@ -138,7 +138,7 @@ function jump(kind: ServiceKind) {
                 <span v-if="item.running" class="status-pill pill-ok"><span class="pill-dot"></span>{{ t('svc.running') }}</span>
                 <span v-else class="status-pill pill-off"><span class="pill-dot"></span>{{ t('svc.stopped') }}</span>
               </td>
-              <td><span class="mono" style="font-size: 11.5px; color: var(--text-mute)">phpo-{{ item.kind }}-{{ item.version }}</span></td>
+              <td><span class="mono ov-td-container">phpo-{{ item.kind }}-{{ item.version }}</span></td>
               <td>
                 <div class="row-actions">
                   <button class="btn btn-sm" @click="jump(item.kind)">{{ t('overview.manage') }}</button>
@@ -195,6 +195,25 @@ function jump(kind: ServiceKind) {
   color: var(--text);
 }
 .doctor-hint {
+  color: var(--text-mute);
+}
+.ov-summary-ok {
+  color: var(--ok);
+}
+.ov-th-svc {
+  width: 22%;
+}
+.ov-th-ver {
+  width: 16%;
+}
+.ov-th-status {
+  width: 18%;
+}
+.ov-th-container {
+  width: 30%;
+}
+.ov-td-container {
+  font-size: 11.5px;
   color: var(--text-mute);
 }
 </style>

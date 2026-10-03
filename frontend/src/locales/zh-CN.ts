@@ -12,7 +12,7 @@ const messages: Record<string, string> = {
   "nav.nginx": "Nginx",
   "nav.backup": "备份恢复",
   "nav.offline": "离线缓存",
-  "nav.settings": "设置/Setting",
+  "nav.settings": "设置",
   "nav.overview": "总览",
   "common.cmdPalette": "命令面板",
   "common.refresh": "同步状态",

@@ -362,7 +362,7 @@ async function browseDir(version: string): Promise<void> {
             <button class="btn btn-sm" data-action="php-extensions" :data-version="version" :title="t('php.manageExt')" @click="modals.openPhpExtensionsModal(version)">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18" /></svg>
               {{ t('php.manageExt') }}
-              <span style="opacity: 0.6; font-family: var(--mono); font-size: 11px; margin-left: 2px">{{ extCount(version) }}</span>
+              <span class="ext-count">{{ extCount(version) }}</span>
             </button>
           </div>
         </div>
@@ -372,7 +372,7 @@ async function browseDir(version: string): Promise<void> {
           <button v-if="!externalOnly(version)" class="btn btn-sm" data-action="service-config" :data-kind="kind" :data-version="version" @click="modals.openConfigModal(kind, version)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5" /><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M8 13h8M8 17h5" /></svg>
             {{ t('svc.manageConfig') }}
-            <span style="opacity: 0.55; font-family: var(--mono); font-size: 11px; margin-left: 2px">{{ DEFAULT_FILE_COUNT[kind] }}</span>
+            <span class="file-count">{{ DEFAULT_FILE_COUNT[kind] }}</span>
           </button>
           <button v-if="runningOf(version) && !externalOnly(version)" class="btn btn-sm" data-action="stop-service" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'service-stop', kind, version })" @click="modals.stopService(kind, version)">{{ t('svc.stop') }}</button>
           <button v-else-if="!externalOnly(version)" class="btn btn-sm btn-primary" data-action="start-service" :data-kind="kind" :data-version="version" :disabled="tasks.isBusy({ type: 'service-start', kind, version })" @click="modals.startService(kind, version)">{{ t('svc.start') }}</button>
@@ -385,3 +385,19 @@ async function browseDir(version: string): Promise<void> {
     </div>
   </div>
 </template>
+
+<style scoped>
+.ext-count {
+  opacity: 0.6;
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-left: 2px;
+}
+
+.file-count {
+  opacity: 0.55;
+  font-family: var(--mono);
+  font-size: 11px;
+  margin-left: 2px;
+}
+</style>
