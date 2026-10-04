@@ -116,6 +116,15 @@ func (c *Client) StartContainer(ctx context.Context, name string) error {
 	return c.waitRunning(ctx, name)
 }
 
+// RestartContainer 重启容器并等待其稳定运行（php.ini / fpm 池这类「仅启动期读取」的配置保存后生效用）。
+// 与 StartContainer 同一套等待与失败诊断：不等就报成功，调用方只会看到一眼状态字符串而拿不到真因。
+func (c *Client) RestartContainer(ctx context.Context, name string) error {
+	if err := c.cli.ContainerRestart(ctx, name, container.StopOptions{}); err != nil {
+		return err
+	}
+	return c.waitRunning(ctx, name)
+}
+
 // waitRunning 轮询到容器稳定 running：running 后静默 startHold 再复验，躲开「起来即崩」窗口；
 // 其余状态一律等到超时——崩溃循环里的自愈（改完配置等下次重试）不能被一眼 exited 判死。
 func (c *Client) waitRunning(ctx context.Context, name string) error {

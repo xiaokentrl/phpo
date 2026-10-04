@@ -3903,6 +3903,13 @@ const (
 > **验真**：`npx vue-tsc --noEmit` EXIT=0 · 五项门禁全绿（i18n 两侧各 **864** 键、集合相等）· `gofmt -l .`／`go vet ./...`／`go build ./...`／`go test ./... -count=1` 全绿（语言是纯前端改动，Go 侧未被触碰，这批只是同轮回归）。`pnpm build` **未跑**（同上，避免弄脏 `frontend/dist/index.html` 占位产物）。
 > **仍欠的那一件**：**真宿主 GUI 未走查**——「全新装机（`localStorage` 里没有 `phpo-locale`）首屏确实是英文」「切成中文后重启应用仍是中文」这两件事要在原生窗口里点一次才算；本轮只有代码与产物级证据。**未 commit、未 push**（等指令）。
 >
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 配置保存即生效 + 切 PHP 备好上游（生效时序收口）**：
+> **这是干什么的**：两处「改完不生效」缺口收口。① `ConfigSaveFiles` 保存后新增**生效步**——php 侧文件（php.ini / fpm 池，仅启动期读取）自动**重启对应 php 容器**（`engine.RestartContainer` 新增，等稳定 running）；nginx 侧文件自动 **reload**（平滑，不重建容器）；mysql/pgsql/redis **不自动重启**（数据服务不打断依赖它的站点，落一行「下次启动生效」说明）。生效步失败一律**不判死保存**：文件已落盘，任务回滚会把刚保存的内容退回去，等于把「保存成功但重载失败」变成「保存失败」（§5.16.2 后置环节不撤回先例），只落 err 行。② 切换 PHP 的任务链新增**前置「备好上游」步**（排在写盘之前）——目标容器没起就先启动（走 di 注入的 `LifecycleService.Start` 既有路径：StartContainer 幂等、稳定 running 验证、状态落库广播），随后才 reload nginx；preflight 对停着的目标版本**只警告不阻止**（「PHP x 容器未运行，切换时将自动启动」）。**顺序原则（本轮成文）**：谁的脸变了动谁、用最轻的手段、先备上游再切流量——「每次都把两个都重启」不对：nginx 容器重建期间全站断连，php 重启会打断该版本所有站点的进行中请求。
+> **落点**：`engine.RestartContainer`（新增）、`config_service.go`（`ContainerRestarter`/`NginxReloader` 窄接口 + `effectSteps`/`phpRestartStep`/`nginxReloadStep`）、`site_service.go`（`PHPStarter` 注入口 + `ensurePHPRunningStep` + `writeVHost` 增可变前置步）、`rules_site.go phpSwitch`（警告）、`di.go`（nginxContainer 解析上移，ConfigService 注入 cli + reloader；SiteService 注入 starter）。
+> **承载**：事件/快照/门面签名零变化（`NewConfigService` 增参是装配层内部）；preflight 仍 **20** action、NEEDS_HOME 仍 **18**、`errs` 仍 **28** 码；engine 新增一个导出方法不占门面（不经 bindings）。
+> **验真**：`go test ./internal/...` 16 包全绿（新增 config 生效步 6 例：php 重启/停着不拉起/重启失败仍保存、nginx 重载/重载失败仍保存、数据服务不动；site 切换 2 例：starter 收到目标版本、starter 失败整单失败且 vhost/库不动；preflight 2 例：停着警告不阻止、运行中无警告）；五门禁全绿。**真宿主走查欠账**：改 php.ini 后任务日志出现「已重启…新配置已生效」、切到停着的版本看到「启动…（切换目标未运行）」两行要在真实 Docker 上点一次。
+> **同源同步**：CHANGELOG 未发布段。
+>
 > **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 单实例模式：再点快捷方式前置已有窗口**：
 > **这是干什么的**：重复点桌面快捷方式不再开出第二个 phpo——`main.go` 启用 Wails v3 内置单实例（`application.Options.SingleInstance`，Linux 走 D-Bus + 文件锁，win/mac 各有原生实现，`UniqueID = io.github.xiaokentrl.phpo`）。第二实例在 `application.New` 阶段即被识别并以 ExitCode 0 干净退出——**不建窗、不装配对象图、不碰 Docker**；首实例经 `OnSecondInstanceLaunch` 回调调 `App.Activate()`（`window.Show() + window.Focus()`）把主窗口前置并聚焦，**从托盘召回同一路径**。`App.Attach` 因此把 window 句柄存进 `App.window`（此前只交给托盘）。**为什么这么定**：双实例等于两套后端同时对着 Docker 跑校准与任务队列，是隐患而非便利。**边界**：`Attach` 未完成时回调静默跳过（启动早段抢跑）；`wails3 dev` 重建时先杀旧进程再拉新，不受影响。**验真**：`go build`（含 CGO/GTK 全量编译）· `go vet` · 17 包测试全绿；**真宿主走查欠账**——「双击两次只出一个窗、第二次前置」是原生外壳行为，要在真实桌面点一次才算。**同源同步**：CHANGELOG 未发布段。
 >

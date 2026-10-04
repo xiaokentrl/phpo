@@ -246,6 +246,56 @@ func TestSiteService_WriteOps_PortPhpRewrite(t *testing.T) {
 	}
 }
 
+// TestSiteService_SwitchPHP_EnsuresTargetRunning 切换前置「备好上游」步：starter 收到目标版本、
+// 且切换正常完成（追加需求）——先备上游再 reload nginx
+func TestSiteService_SwitchPHP_EnsuresTargetRunning(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(context.Background(), AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	var called []string
+	svc.SetPHPStarter(func(_ context.Context, version string, log task.StepLog) error {
+		called = append(called, version)
+		log.Log("ok", "started "+version)
+		return nil
+	})
+	if err := svc.SwitchPHP(context.Background(), "demo.test", "8.3"); err != nil {
+		t.Fatal(err)
+	}
+	if len(called) != 1 || called[0] != "8.3" {
+		t.Fatalf("starter 应收到目标版本 8.3，实得 %v", called)
+	}
+	conf := filepath.Join(env.NginxSitesRoot, "demo.test.conf")
+	b, _ := os.ReadFile(conf)
+	if !strings.Contains(string(b), "php-8.3-fpm:9000") {
+		t.Fatalf("切换仍应落盘新上游:\n%s", string(b))
+	}
+	if st.sites[0].PHP != "8.3" {
+		t.Fatalf("库未同步: %+v", st.sites[0])
+	}
+}
+
+// TestSiteService_SwitchPHP_StarterFailureAborts starter 失败 = 上游没备好：整单失败、
+// vhost 与库都不动（「先备上游再切流量」的语义，不留下指向死上游的新 vhost）
+func TestSiteService_SwitchPHP_StarterFailureAborts(t *testing.T) {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(context.Background(), AddInput{Domain: "demo.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetPHPStarter(func(context.Context, string, task.StepLog) error { return errors.New("start boom") })
+	if err := svc.SwitchPHP(context.Background(), "demo.test", "8.2"); err == nil {
+		t.Fatal("starter 失败应使切换失败")
+	}
+	conf := filepath.Join(env.NginxSitesRoot, "demo.test.conf")
+	b, _ := os.ReadFile(conf)
+	if strings.Contains(string(b), "php-8.2-fpm:9000") {
+		t.Fatalf("上游没备好不得写新 vhost:\n%s", string(b))
+	}
+	if st.sites[0].PHP != "8.4" {
+		t.Fatalf("库不得切换: %+v", st.sites[0])
+	}
+}
+
 // TestSiteService_SwitchPHP_BlockedByNginxT nginx -t 失败：vhost 文件与库均不落地（硬红线 2 回滚）
 func TestSiteService_SwitchPHP_BlockedByNginxT(t *testing.T) {
 	svc, st, env, _ := newSiteSvc(t, nil)

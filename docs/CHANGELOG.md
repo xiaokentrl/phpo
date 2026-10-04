@@ -6,6 +6,13 @@
 
 ## [未发布 / M7 收尾]
 
+- **配置保存即生效 + 切 PHP 备好上游（AGENTS.md 折叠段 · `internal/engine/container.go` · `internal/service/{config_service,site_service}.go` · `internal/preflight/rules_site.go` · `internal/app/di.go`）**：现象是用户的问题原话——**「切换 php 版本、修改端口号、修改根目录、添加 HOSTS、修改配置文件……之后是不是应该立刻重启 nginx 和 php？哪个先重启？」**。排查结论：站点类操作本来就对（写盘→nginx reload→端口集变了才重建）；真正的缺口是 **① 配置保存后什么都不做**（改 `php.ini`/`nginx.conf` 要等容器重建才生效）、**② 切 PHP 不确保目标容器在跑**（目标停着时切完即 502）。
+  - **修复 ①**：`ConfigSaveFiles` 保存后按改动对象追加「生效步」——php 文件→**重启对应 php 容器**（新增 `engine.RestartContainer`，等稳定 running；未运行的容器不强行拉起，下次启动自然生效）；nginx 文件→**平滑 reload**；mysql/pgsql/redis→**不自动重启**（数据服务不打断依赖它的站点），落一行说明。生效步失败一律不判死保存（回滚会把刚保存的内容退回去，等于把「保存成功但重载失败」变成「保存失败」），只落 err 行。
+  - **修复 ②**：切 PHP 任务链新增前置「备好上游」步——目标容器没起就先启动（复用 lifecycle 既有启动路径：幂等、稳定 running 验证、状态广播），随后才 reload nginx；preflight 对停着的目标**只警告不阻止**（「PHP x 容器未运行，切换时将自动启动」）。
+  - **顺序原则（本轮成文）**：谁的脸变了动谁、用最轻的手段、先备上游再切流量。「每次都重启两个」不对——nginx 容器重建期间全站断连，php 重启会打断进行中请求；加 HOSTS 本来就什么都不用动。
+  - **验真**：`go test ./internal/...` 16 包全绿——新增 10 例：config 生效步 6 例（php 重启/停着不拉起/重启失败仍保存、nginx 重载/重载失败仍保存、数据服务不动）、site 切换 2 例（starter 收到目标版本并先于写盘、starter 失败整单失败且 vhost/库不动）、preflight 2 例（停着警告不阻止、运行中无警告）；五门禁全绿。**真宿主走查欠账**：改 php.ini 看到重启行、切到停着的版本看到自动启动行。
+  - **同源同步**：AGENTS.md 折叠段、本条。
+
 - **单实例模式：再点快捷方式不再开新窗，改为前置已有窗口（AGENTS.md 折叠段 · `main.go` / `app.go`）**：现象是用户直接给出的需求——**「每次点击快捷方式都会重复打开新的 phpo，我希望以单例模式打开，如果程序已经在运行就前置窗口」**。
   - **落点**：`main.go` 启用 Wails v3 内置单实例（`SingleInstanceOptions{UniqueID: "io.github.xiaokentrl.phpo", ExitCode: 0}`；Linux 走 D-Bus + 文件锁，win/mac 各有原生实现）——第二实例在 `application.New` 阶段即被识别并干净退出，**不建窗、不装配对象图、不碰 Docker**；`app.go` 新增 `App.window` 句柄（`Attach` 时存入）与 `Activate()`（`window.Show() + window.Focus()`），首实例经 `OnSecondInstanceLaunch` 回调前置窗口，**从托盘召回走同一条路**。
   - **现在用户看得见什么**：连点两次快捷方式，桌面上始终只有一个 phpo；第二次点击时已有窗口弹到最前（最小化/收进托盘都一样）。**怎么回来**：想开第二个实例？本产品定位是单实例管理器，没有这个入口——退出当前实例（托盘退出）后再点即可。

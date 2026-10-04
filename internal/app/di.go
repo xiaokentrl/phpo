@@ -233,7 +233,10 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	lc.SetExtImageLoader(cacheMgr)
 	c.AppService = service.NewAppService(lc, tm, cacheMgr, cli, env)
 	c.EnvService = service.NewEnvService(cfg, st, c.Emitter)
-	c.ConfigService = service.NewConfigService(env, tm)
+	// nginx 单例容器名解析器先于各门面构造：vhost 的 nginx -t / reload、站点端口发布、配置保存后的
+	// 生效步都按它现取容器名（版本由快照现答，不写死——§1.6 版本开放输入）
+	nginxContainer := nginxContainerOf(st)
+	c.ConfigService = service.NewConfigService(env, tm, cli, vhost.NewNginxReloader(nginxContainer))
 
 	// M4 站点对象图：vhost 管理器 + hosts + 回收站 + 真实 nginx -t/ reload（走 phpo-nginx 容器）
 	trashRoot, err := config.TrashRoot()
@@ -242,7 +245,6 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 		_ = cli.Close()
 		return err
 	}
-	nginxContainer := nginxContainerOf(st)
 	vh := vhost.New(env)
 	hm := hosts.New()
 	c.SiteService = service.NewSiteService(
@@ -256,6 +258,17 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	)
 	// 站点端口并集发布到 nginx（增删改站点端口后重建 nginx 容器以重绑宿主端口）
 	c.SiteService.SetNginxPublisher(lc)
+	// 切换 PHP 版本前备好上游：目标容器没起就先启动（走 lifecycle 既有启动路径：StartContainer 幂等、
+	// 稳定 running 验证、状态落库广播），随后站点链路才 reload nginx——先备上游再切流量，避免 502 窗口。
+	c.SiteService.SetPHPStarter(func(ctx context.Context, version string, log task.StepLog) error {
+		name := dockerutil.ContainerName("php", version)
+		if running, err := cli.ContainerRunning(ctx, name); err == nil && running {
+			log.Log(string(model.LogDim), name+" 已在运行，无需启动")
+			return nil
+		}
+		log.Log(string(model.LogDim), "启动 "+name+"（切换目标未运行）")
+		return lc.Start(ctx, model.KindPHP, version)
+	})
 	// 反向并集：装/重装 nginx 时按当前站点端口集发布宿主端口，单一权威在站点侧（§5.8）
 	lc.SetNginxPortSource(c.SiteService)
 	// nginx 由停到起后补齐降级站点的 vhost 与端口发布（建站门禁在 preflight：nginx 未装即阻断）

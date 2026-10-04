@@ -109,6 +109,11 @@ func (r *run) phpSwitch() {
 	}
 	if !contains(r.w.Snap.Installed["php"], c.NewPhp) {
 		r.errf("%s: PHP %s", errs.NotInstalled, c.NewPhp)
+		return
+	}
+	// 目标容器未运行只警告不阻止：切换链路会先自动启动它（备好上游再 reload nginx），启动失败才在任务里报错
+	if !contains(r.w.Snap.Running["php"], c.NewPhp) {
+		r.warnf("PHP %s 容器未运行，切换时将自动启动", c.NewPhp)
 	}
 }
 

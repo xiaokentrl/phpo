@@ -2,6 +2,7 @@
 package preflight
 
 import (
+	"strings"
 	"testing"
 
 	"phpo/internal/config"
@@ -30,6 +31,38 @@ func firstErr(res *model.PreflightResult) string {
 		return ""
 	}
 	return res.Errors[0]
+}
+
+// —— 切换 PHP：目标容器未运行只警告不阻止（切换链路会自动启动它，追加需求） ——
+
+func TestPhpSwitchStoppedTargetWarnsNotBlocks(t *testing.T) {
+	// 8.1 已安装但未运行：警告「将自动启动」，不拦截
+	res := Run(ActPhpSwitch, Ctx{Domain: "demo.test", NewPhp: "8.1"}, readyWorld())
+	if !res.Ok {
+		t.Fatalf("目标容器停着只警告不阻止: %v", res.Errors)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "自动启动") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("应有「将自动启动」警告: %v", res.Warnings)
+	}
+}
+
+func TestPhpSwitchRunningTargetNoWarn(t *testing.T) {
+	// 8.4 已在运行：不应出现该警告
+	res := Run(ActPhpSwitch, Ctx{Domain: "demo.test", NewPhp: "8.4"}, readyWorld())
+	if !res.Ok {
+		t.Fatalf("切换到运行中的版本应通过: %v", res.Errors)
+	}
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "自动启动") {
+			t.Fatalf("运行中的目标不应有自动启动警告: %v", res.Warnings)
+		}
+	}
 }
 
 // —— 对账：action 数与 NEEDS_HOME 数 ——

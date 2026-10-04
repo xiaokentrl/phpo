@@ -32,17 +32,18 @@ type SiteStore interface {
 
 // SiteService 组合 vhost/hosts/回收站/任务引擎，落地站点生命周期
 type SiteService struct {
-	store     SiteStore
-	vhosts    *vhost.Manager
-	hosts     steps.HostsOps
-	trash     *engine.Trash
-	validate  vhost.Validator
-	reload    Reloader
-	tasks     *task.Manager
-	emitter   Emitter
-	env       config.Env
-	publisher NginxPublisher
-	seq       atomic.Uint64
+	store      SiteStore
+	vhosts     *vhost.Manager
+	hosts      steps.HostsOps
+	trash      *engine.Trash
+	validate   vhost.Validator
+	reload     Reloader
+	tasks      *task.Manager
+	emitter    Emitter
+	env        config.Env
+	publisher  NginxPublisher
+	phpStarter PHPStarter
+	seq        atomic.Uint64
 }
 
 // Reloader 写盘后重载 nginx（真实实现走 docker exec；测试注入 noop）。nil 视为无需重载。
@@ -62,6 +63,27 @@ func NewSiteService(st SiteStore, vh *vhost.Manager, hosts steps.HostsOps, trash
 
 // SetNginxPublisher 注入端口重发布器（di 装配期调用）；未注入则站点写链路不触 nginx 重建。
 func (s *SiteService) SetNginxPublisher(p NginxPublisher) { s.publisher = p }
+
+// PHPStarter 确保 php/{version} 容器在跑（真实实现走 LifecycleService.Start：StartContainer 幂等、
+// 稳定 running 验证、状态落库广播）；nil 表示无法启动（单测 / 未注入），切换链路仅跳过该步。
+type PHPStarter func(ctx context.Context, version string, log task.StepLog) error
+
+// SetPHPStarter 注入切换目标容器的启动器（di 装配期调用）。
+func (s *SiteService) SetPHPStarter(fn PHPStarter) { s.phpStarter = fn }
+
+// ensurePHPRunningStep 切换目标版本的上游备妥步：排在写盘之前——先让上游就绪再 reload nginx，
+// 否则切换完成到容器就绪之间站点是 502 窗口。starter 未注入时是空步（老测试零改动）。
+func (s *SiteService) ensurePHPRunningStep(version string) task.Step {
+	return &task.FuncStep{
+		BaseStep: task.BaseStep{StepName: "启动 PHP " + version + "（切换目标）"},
+		Exec: func(ctx context.Context, log task.StepLog) error {
+			if s.phpStarter == nil {
+				return nil
+			}
+			return s.phpStarter(ctx, version, log)
+		},
+	}
+}
 
 // AddInput 建站入参；Root 为空时回落 {WWW_ROOT}/{domain}，Port 为 0 时回落 80
 type AddInput struct {
@@ -289,11 +311,12 @@ func (s *SiteService) SetPort(ctx context.Context, domain string, port int) erro
 	}, domain)
 }
 
-// SwitchPHP 切换 PHP（T405，硬红线 1 精确上游）
+// SwitchPHP 切换 PHP（T405，硬红线 1 精确上游）。前置「备好上游」步：目标容器没起就先启动——
+// 先让上游就绪再 reload nginx，否则切换完成到容器就绪之间站点是 502 窗口（追加需求）。
 func (s *SiteService) SwitchPHP(ctx context.Context, domain, php string) error {
 	return s.writeVHost(ctx, "php-switch", "切换 PHP "+php+" · "+domain, func(m *vhost.Manager) string {
 		return m.ApplyPhp(domain, php)
-	}, domain)
+	}, domain, s.ensurePHPRunningStep(php))
 }
 
 // SetRewrite 改伪静态（T406）
@@ -360,8 +383,9 @@ func (s *SiteService) AddHosts(ctx context.Context, domain string) (string, erro
 	return warning, nil
 }
 
-// writeVHost 通用编排：把权威站点灌入管理器→mutate 得新正文→写盘(校验)+reload→落库+广播
-func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate func(*vhost.Manager) string, domain string) error {
+// writeVHost 通用编排：把权威站点灌入管理器→mutate 得新正文→写盘(校验)+reload→落库+广播。
+// pre 为可变前置步（SwitchPHP 的「备好上游」用），排在写盘之前执行。
+func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate func(*vhost.Manager) string, domain string, pre ...task.Step) error {
 	sites, _ := s.store.ListSites()
 	s.vhosts.Sync(sites)
 	content := mutate(s.vhosts)
@@ -372,7 +396,8 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 	if !ok {
 		return fmt.Errorf("站点状态缺失: %s", domain)
 	}
-	stepList := []task.Step{
+	stepList := append([]task.Step{}, pre...)
+	stepList = append(stepList,
 		steps.NewWriteVHost("写入 vhost", s.vhosts, s.validate, domain, content),
 		&task.FuncStep{StepName: "重载 Nginx", Exec: func(ctx context.Context, _ task.StepLog) error {
 			if s.reload == nil {
@@ -380,7 +405,7 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 			}
 			return s.reload.Reload(ctx)
 		}},
-	}
+	)
 	if rp := s.republishStep(s.publishPorts(sites, domain, updated.Port)); rp != nil {
 		stepList = append(stepList, rp)
 	}
