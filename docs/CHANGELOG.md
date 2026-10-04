@@ -1,10 +1,15 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.70`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.75`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
 
 ## [未发布 / M7 收尾]
+
+- **主题卡片按背景明暗排序：浅色在前、深色按亮度递减（`frontend/src/constants/themes.ts`）**：用户直接调整——选择主题弹窗的 9 张卡从「新增时间序」改为「背景亮度由亮到暗」：晨光白 → 樱花粉 → 暖黄 → 青绿 → 森林绿 → 钛灰 → 深海蓝 → 午夜蓝 → 极夜黑，选卡时的视觉跳变更可预期。
+  - **承载**：仅数组顺序与注释，ID/键/色值零变化；`prefsStore` 按切换存档，用户当前主题不受影响。
+  - **验真**：`vue-tsc`（随本轮全量构建）· 顺序以文件为准（晨光白与樱花粉亮度几乎并列，先后保持现状）。
+  - **同源同步**：本条。
 
 - **覆盖安装/升级后的换血闭环：单实例发现版本不一致自动重启成新版本（AGENTS.md 折叠段 · `main.go` / `app.go` / `app_test.go`）**：现象是用户报「**覆盖安装新的安装包之后界面没有及时同步**」。排查结论：不是数据同步慢——**旧实例驻留托盘、仍持有单实例锁**：覆盖安装只换磁盘二进制，再点快捷方式时新进程被判为第二实例退出、旧实例窗口前置，用户看到的永远是旧界面。单实例上线前第二次点击恰好开出新进程（新版本），问题被掩盖；应用内升级同理（设计上等用户手动退出旧实例）。
   - **修复（换血闭环）**：第二实例经 `SingleInstanceOptions.AdditionalData` 把自己的版本号带给首实例；首实例 `App.Activate(data)` 比对运行中版本——**不一致且无任务在跑** → 自动换血：置 `restartPending` → `Quit()` → `ServiceShutdown` 收尾后由既有 `relaunchSelf()` 拉起磁盘上的新二进制；**有任务在跑**不打断（只前置窗口）；**版本一致/缺席**维持「前置窗口」原行为。
