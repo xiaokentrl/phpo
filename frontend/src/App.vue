@@ -4,7 +4,7 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
-import { refreshServices, runSync, startStateSync, stopStateSync, syncState } from '@/composables/useStateSync'
+import { refreshServices, runSync, startStateSync, stopStateSync, bootstrapState } from '@/composables/useStateSync'
 import { subscribeUpdater, unsubscribeUpdater } from '@/composables/useUpdater'
 import { subscribeCache, unsubscribeCache } from '@/composables/useCache'
 import { startDockerPreflight, stopDockerPreflight } from '@/composables/useDockerPreflight'
@@ -40,7 +40,7 @@ onMounted(async () => {
   startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
   subscribeUpdater() // 订阅 update:* 事件：后台发现新版本即时提示（硬红线 4）
   subscribeCache() // 订阅 6 类 cache:* 事件：缓存命中/未命中/提升/损坏/清理/临时目录清空落地 cacheStore
-  await syncState() // 启动权威快照（T607/硬红线 4）：dirReady/env 以 config.yaml + DB 为准；无宿主则不动占位值
+  await bootstrapState() // 启动权威快照（T607/硬红线 4）：dirReady/env 以 config.yaml + DB 为准；后端未就绪时有界重试，不再把首屏留在占位态（demo 无宿主单次即返）
   // 首启引导：真实宿主下主目录/网站目录未初始化 → 弹出装机向导。可关闭（右上 X），
   // 关闭后任何写操作仍由后端 preflight 权威拦截（目录未就绪报错），不放水；再次触发安装/建站会重新弹出。
   if (hasBackend() && !app.homeReady) openHomeSetupWizard()

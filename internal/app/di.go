@@ -330,13 +330,21 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	}
 
 	// §5.13.9 启动时校准：仅在工作目录已落地后执行（校准会读写运行态存储并访问容器；首启未配置则零落盘、零拨号）。
-	// Docker 缺席/未运行时容忍失败，不阻断 GUI 启动。
-	// 首帧走全量口径（SyncAll）：用户用第三方工具停掉/删掉容器或镜像后，打开应用就该看见缺失态，
-	// 不必等他先点一次「同步状态」（§5.19）。每任务后的校准仍是轻量的 SetDoneWatcher 那条。
+	// Docker 缺席/未运行时容忍失败，不阻断 GUI 启动。口径按 §5.19 冻结条款走轻量档（Calibrate：容器存在性 +
+	// 发现态那一次 ContainerList）；镜像级缺失（基座/固化镜像被第三方删除）由手动「同步状态」的全量档点名，
+	// 启动不拨 O(已安装版本数) 次镜像探针。每任务后的校准仍是轻量的 SetDoneWatcher 那条。
+	// 校准放后台跑：Docker 冷启动时连 ContainerList 都可能挂数秒，不得推迟主窗口出现（§5.9 升级首查同先例）；
+	// 结果照常经 state:changed / docker:state-drift 回流，首帧快照由前端 syncState 现取。对象图若已重绑
+	// （启动后用户改了自定义根），这份旧图的校准静默放弃——重绑后的校准由新图的任务终态出口接手。
 	if calibrate && cfg.RootsPersisted() {
-		if _, cerr := lc.SyncAll(ctx); cerr != nil {
-			c.Emitter.Emit(EventDockerStateDrift, map[string]any{"error": cerr.Error()})
-		}
+		go func() {
+			if cur, ok := c.GraphConfig(); !ok || cur != cfg {
+				return
+			}
+			if _, cerr := lc.Calibrate(ctx); cerr != nil {
+				c.Emitter.Emit(EventDockerStateDrift, map[string]any{"error": cerr.Error()})
+			}
+		}()
 	}
 	c.graphCleanup = func(ctx context.Context) error {
 		_ = cli.Close()

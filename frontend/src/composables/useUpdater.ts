@@ -30,6 +30,11 @@ export function subscribeUpdater(): void {
     onEvent(EVENT.UpdateProgress, (p) => s.setProgress(p as UpdateProgress)),
     onEvent(EVENT.UpdateDone, (p) => s.setDone(p as UpdateDone)),
   )
+  // 订阅建立后补拉一次检查（无宿主时 checkUpdate 内部直接返回 null）：后端启动首查已后台化（§5.9），
+  // 若它先于本订阅完成，update:available 会被错过——这次拉取让后端 Check 现发一次事件，竞态闭环。
+  // 无新版本时后端不发事件、这里也不弹提示（update:available 是唯一 toast 来源）；网络失败静默，
+  // 启动调度器自己的 dim 日志已覆盖该场景。
+  void checkUpdate().catch(() => {})
 }
 
 export function unsubscribeUpdater(): void {

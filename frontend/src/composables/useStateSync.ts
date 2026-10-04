@@ -10,6 +10,7 @@ import { reactive, readonly, type DeepReadonly } from 'vue'
 import { useAppState } from '@/stores/appState'
 import { useTaskStore, type LineType, type TaskStatus } from '@/stores/taskStore'
 import { getState, syncAll, refreshServices as refreshServicesApi } from '@/api/state'
+import { hasBackend } from '@/api/site'
 import {
   ALL_EVENTS, EVENT, onEvent, type EventName,
   type TaskLogPayload, type TaskProgressPayload, type TaskDonePayload,
@@ -184,6 +185,19 @@ export async function syncState(): Promise<boolean> {
   if (!snap) return false
   landEvent(EVENT.StateChanged, { snapshot: snap })
   return true
+}
+
+// bootstrapState：首屏权威快照的有界重试兜底。后端启动钩子未跑完（对象图未装配 → errNotReady）
+// 或瞬时不可达时，syncState 一次失败会让首屏停在占位态、装机向导误弹——这里最多再试 2 次（间隔 1.5s），
+// 不把「刷新页面才正常」留给用户（§5.6.3：刷新不能当验收）。demo 通道（无宿主）失败一次即返回，不空转。
+export async function bootstrapState(attempts = 3, delayMs = 1500): Promise<boolean> {
+  if (!hasBackend()) return syncState()
+  let ok = await syncState()
+  for (let i = 1; !ok && i < attempts; i++) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+    ok = await syncState()
+  }
+  return ok
 }
 
 // runSync：手动「同步状态」的唯一入口（侧栏按钮与 ⌘R 同源）。
