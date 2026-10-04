@@ -226,6 +226,16 @@ async function browseDir(version: string): Promise<void> {
   const abs = String(picked || '').replace(/\/+$/, '')
   if (abs) await commitDir(version, abs)
 }
+
+// 目录行折叠（需求）：mysql/pgsql/redis/nginx 的目录行默认收起、点击整组展开；php 保持铺开不变。
+// 展开态按版本记在组件本地（UI 偏好，不入库、不进快照，§3.1 原则 5），默认 undefined = 收起。
+const dirsOpen = ref<Record<string, boolean>>({})
+function dirCollapsible(): boolean {
+  return props.kind === 'mysql' || props.kind === 'pgsql' || props.kind === 'redis' || props.kind === 'nginx'
+}
+function toggleDirs(version: string): void {
+  dirsOpen.value[version] = !dirsOpen.value[version]
+}
 </script>
 
 <template>
@@ -310,51 +320,78 @@ async function browseDir(version: string): Promise<void> {
             <PasswordField :kind="kind" :version="version" />
           </div>
 
-          <div v-for="[sub, labelKey] in rowsWithDirs(version)" :key="sub" class="kv">
-            <span class="k">{{ t(labelKey) }}</span>
-            <template v-if="sub === 'data'">
-              <span
-                class="v inline-edit"
-                :class="{ editing: dirEditing === version, saving: dirSaving === version }"
-                data-inline="data-dir"
-                :data-kind="kind"
-                :data-version="version"
-                tabindex="0"
-                :title="t('svc.dataDirEdit')"
-                @click="dirEditing !== version && startEditDir(version)"
-                @keydown.enter="dirEditing !== version && startEditDir(version)"
-              >
-                <input
-                  v-if="dirEditing === version"
-                  v-model="dirDraft"
-                  class="port-input"
-                  type="text"
-                  spellcheck="false"
-                  autocomplete="off"
-                  autofocus
-                  :placeholder="defaultDataDir(kind, version)"
-                  @keydown.enter.prevent="commitDir(version)"
-                  @keydown.esc.prevent="cancelDir"
-                  @blur="commitDir(version)"
-                >
-                <template v-else>{{ dirPath(version, sub) }}</template>
-              </span>
-              <button v-if="hasBackend()" class="btn btn-sm" type="button" data-action="browse-data-dir" :data-kind="kind" :data-version="version" :title="t('svc.dataDirBrowse')" @click="browseDir(version)">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-                {{ t('dir.browse') }}
-              </button>
-              <span v-if="isCustomDataDir(version)" class="chip chip-accent">{{ t('root.custom') }}</span>
-            </template>
-            <span v-else class="v" :title="dirPath(version, sub)">{{ dirPath(version, sub) }}</span>
-          </div>
-
-          <div v-if="(kind === 'php' || kind === 'nginx') && !externalOnly(version)" class="kv">
+          <!-- nginx：站点源码与 vhost 目录是这张卡最高频的两行，向前移到端口/密码之后（需求） -->
+          <div v-if="kind === 'nginx' && !externalOnly(version)" class="kv">
             <span class="k">{{ t('svc.wwwDir') }}</span>
             <span class="v" :title="`${state.env.WWW_ROOT} → /var/www`">{{ state.env.WWW_ROOT }}</span>
           </div>
           <div v-if="kind === 'nginx' && !externalOnly(version)" class="kv">
             <span class="k">{{ t('svc.sitesDir') }}</span>
             <span class="v" :title="`${state.env.NGINX_SITES_ROOT} → /etc/nginx/sites`">{{ state.env.NGINX_SITES_ROOT }}</span>
+          </div>
+
+          <!-- mysql/pgsql/redis/nginx：目录行默认折叠，点击整组展开（需求）；php 不折叠、照旧铺开 -->
+          <div
+            v-if="dirCollapsible() && !externalOnly(version) && rowsWithDirs(version).length"
+            class="kv dir-toggle"
+            data-action="toggle-dirs"
+            :data-kind="kind"
+            :data-version="version"
+            role="button"
+            tabindex="0"
+            :title="t('svc.dirGroupTip')"
+            @click="toggleDirs(version)"
+            @keydown.enter.prevent="toggleDirs(version)"
+            @keydown.space.prevent="toggleDirs(version)"
+          >
+            <span class="k">{{ t('svc.dirGroup') }}<span class="file-count">{{ rowsWithDirs(version).length }}</span></span>
+            <span class="v dir-chev" :class="{ open: !!dirsOpen[version] }" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+            </span>
+          </div>
+          <template v-if="!dirCollapsible() || !!dirsOpen[version]">
+            <div v-for="[sub, labelKey] in rowsWithDirs(version)" :key="sub" class="kv">
+              <span class="k">{{ t(labelKey) }}</span>
+              <template v-if="sub === 'data'">
+                <span
+                  class="v inline-edit"
+                  :class="{ editing: dirEditing === version, saving: dirSaving === version }"
+                  data-inline="data-dir"
+                  :data-kind="kind"
+                  :data-version="version"
+                  tabindex="0"
+                  :title="t('svc.dataDirEdit')"
+                  @click="dirEditing !== version && startEditDir(version)"
+                  @keydown.enter="dirEditing !== version && startEditDir(version)"
+                >
+                  <input
+                    v-if="dirEditing === version"
+                    v-model="dirDraft"
+                    class="port-input"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    autofocus
+                    :placeholder="defaultDataDir(kind, version)"
+                    @keydown.enter.prevent="commitDir(version)"
+                    @keydown.esc.prevent="cancelDir"
+                    @blur="commitDir(version)"
+                  >
+                  <template v-else>{{ dirPath(version, sub) }}</template>
+                </span>
+                <button v-if="hasBackend()" class="btn btn-sm" type="button" data-action="browse-data-dir" :data-kind="kind" :data-version="version" :title="t('svc.dataDirBrowse')" @click="browseDir(version)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                  {{ t('dir.browse') }}
+                </button>
+                <span v-if="isCustomDataDir(version)" class="chip chip-accent">{{ t('root.custom') }}</span>
+              </template>
+              <span v-else class="v" :title="dirPath(version, sub)">{{ dirPath(version, sub) }}</span>
+            </div>
+          </template>
+
+          <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
+            <span class="k">{{ t('svc.wwwDir') }}</span>
+            <span class="v" :title="`${state.env.WWW_ROOT} → /var/www`">{{ state.env.WWW_ROOT }}</span>
           </div>
 
           <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
@@ -399,5 +436,26 @@ async function browseDir(version: string): Promise<void> {
   font-family: var(--mono);
   font-size: 11px;
   margin-left: 2px;
+}
+
+/* 目录行折叠组：整行可点，chevron 随展开态旋转（样式只在本组件，不动 base.css 与原型 SSOT） */
+.dir-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.dir-toggle:hover .k {
+  color: var(--accent);
+}
+
+.dir-chev {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-mute);
+  transition: transform var(--motion-fast);
+}
+
+.dir-chev.open {
+  transform: rotate(90deg);
 }
 </style>

@@ -134,6 +134,8 @@ const messages: Record<string, string> = {
   "svc.wwwDir": "Site sources",
   "svc.confDir": "Config dir",
   "svc.initdbDir": "Initdb dir",
+  "svc.dirGroup": "Directory details",
+  "svc.dirGroupTip": "Click to expand or collapse this version's directory details",
   "svc.gapMissing": "{reason} missing",
   "svc.gap.container": "Container",
   "svc.gap.image": "Base image",

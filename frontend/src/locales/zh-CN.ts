@@ -134,6 +134,8 @@ const messages: Record<string, string> = {
   "svc.wwwDir": "站点源码",
   "svc.confDir": "配置目录",
   "svc.initdbDir": "初始化脚本",
+  "svc.dirGroup": "目录明细",
+  "svc.dirGroupTip": "点击展开或收起这一版的目录明细",
   "svc.gapMissing": "{reason}缺失",
   "svc.gap.container": "容器",
   "svc.gap.image": "基座镜像",
