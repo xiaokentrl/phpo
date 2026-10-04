@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+
 	phpapp "phpo/internal/app"
 	"phpo/internal/config"
 	"phpo/internal/model"
@@ -16,6 +18,32 @@ import (
 )
 
 // TestRestartBlockedByMarker 已带重启标记仍被请求重启 → 拒绝且不改状态，防无限重启循环
+// —— 单实例 Activate：版本不一致自动换血（覆盖安装后旧实例驻留托盘的根治） ——
+
+func TestActivate_VersionMismatchRestarts(t *testing.T) {
+	a := NewApp()
+	a.Activate(application.SecondInstanceData{AdditionalData: map[string]string{"version": a.container.CurrentVersion + "-new"}})
+	if !a.restartPending {
+		t.Fatal("版本不一致应置 restartPending（ServiceShutdown 收尾后 relaunchSelf 换血成磁盘新版本）")
+	}
+}
+
+func TestActivate_SameVersionNoRestart(t *testing.T) {
+	a := NewApp()
+	a.Activate(application.SecondInstanceData{AdditionalData: map[string]string{"version": a.container.CurrentVersion}})
+	if a.restartPending {
+		t.Fatal("版本一致不应换血，只前置窗口")
+	}
+}
+
+func TestActivate_NoVersionOnlyActivates(t *testing.T) {
+	a := NewApp()
+	a.Activate(application.SecondInstanceData{}) // 空版本（老版本第二实例 / 通知缺字段）：只前置，不换血
+	if a.restartPending {
+		t.Fatal("无版本号不得触发换血")
+	}
+}
+
 func TestRestartBlockedByMarker(t *testing.T) {
 	t.Setenv(restartMarker, "1")
 	a := &App{}

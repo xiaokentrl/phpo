@@ -63,9 +63,19 @@ func (a *App) Attach(app *application.App, window *application.WebviewWindow) {
 	a.tray = ui.InstallTray(app, emitter, window)
 }
 
-// Activate 单实例的「再点一次快捷方式」：首实例收到通知后把主窗口前置并聚焦。
-// 窗口收进托盘时同样生效（Show 召回）；Attach 未完成（第二实例在启动早段抢跑）时静默跳过。
-func (a *App) Activate() {
+// Activate 单实例的「再点一次快捷方式」。第二实例带来的版本号与运行中进程不一致时，
+// 说明磁盘二进制已被覆盖安装/升级（旧实例驻留托盘是常态）——自动换血：置 restartPending 走
+// ServiceShutdown 收尾后由 relaunchSelf 拉起磁盘上的新二进制，用户点快捷方式即无感完成升级收尾；
+// 有任务在跑时不打断（只前置窗口，任务收口后再点即换）。版本一致维持原行为：前置主窗口并聚焦
+// （从托盘召回同一路径）；Attach 未完成（第二实例在启动早段抢跑）时静默跳过。
+func (a *App) Activate(data application.SecondInstanceData) {
+	if v := data.AdditionalData["version"]; v != "" && v != a.container.CurrentVersion && !a.Running() {
+		a.restartPending = true
+		if a.wails != nil {
+			a.wails.Quit()
+		}
+		return
+	}
 	if a.window == nil {
 		return
 	}
