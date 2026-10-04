@@ -4,8 +4,7 @@
 
 > A local Docker development environment manager for PHP developers. Desktop app for three platforms — **GUI only, no command line**.
 >
-> Latest release: **0.1.42** · Download: https://github.com/xiaokentrl/phpo/releases/latest
-> The single authority for this project's rules is [AGENTS.md](./AGENTS.md) (Chinese, frozen document). This file is the entry point for "understand the project and use it". **Switch to the Chinese version above, or go straight to [README.md](./README.md); note that the 32 documents under `docs/` are Chinese-only.**
+> Latest release Download: https://github.com/xiaokentrl/phpo/releases/latest
 
 ---
 
