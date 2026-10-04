@@ -208,3 +208,32 @@ func TestSchedulerRunsOnce(t *testing.T) {
 		t.Fatalf("启动应立即检查，得检查 %d 次", src.n)
 	}
 }
+
+// —— 调度器：Start 不等待首查 ——
+
+// blockingSource 把首查挂住直到测试放行，用于验证 Start 本身不被网络拖住
+type blockingSource struct{ release chan struct{} }
+
+func (b *blockingSource) FetchLatest(ctx context.Context) (*Release, error) {
+	<-b.release
+	return &Release{Version: "0.0.1"}, nil
+}
+
+func TestSchedulerStartDoesNotBlock(t *testing.T) {
+	src := &blockingSource{release: make(chan struct{})}
+	c := NewChecker("9.9.9", src, &capEmitter{})
+	s := NewScheduler(c, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		s.Start(ctx)
+		close(done)
+	}()
+	select {
+	case <-done: // Start 已返回而首查仍被源挂住：后台运行成立
+	case <-time.After(time.Second):
+		t.Fatal("Start 应立即返回，不等待首查")
+	}
+	close(src.release)
+}

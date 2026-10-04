@@ -530,7 +530,7 @@ const messages: Record<string, string> = {
   "task.queue": "Task queue",
   "task.queued": "Waiting",
   "task.withdraw": "Withdraw (not started yet)",
-  "task.clear": "Clear",
+  "task.clear": "Clear logs",
   "task.clearTitle": "Clear the queue and its logs (keeps the running task and its log)",
   "task.cleared": "Queue cleared; the running task is kept",
   "task.progressTitle": "Step progress",

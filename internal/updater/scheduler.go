@@ -24,12 +24,13 @@ func NewScheduler(c *Checker, interval time.Duration) *Scheduler {
 	return &Scheduler{checker: c, interval: interval}
 }
 
-// Start 立即检查一次，随后按周期检查，直到 ctx 取消；后台运行不阻塞调用方
+// Start 立即检查一次，随后按周期检查，直到 ctx 取消；整个循环后台运行，不阻塞调用方——
+// 启动钩子若同步等首查，发布源不可达时最坏阻塞 15 秒，直接推迟主窗口出现
 func (s *Scheduler) Start(ctx context.Context) {
-	s.runOnce(ctx)
 	go func() {
 		t := time.NewTicker(s.interval)
 		defer t.Stop()
+		s.runOnce(ctx)
 		for {
 			select {
 			case <-ctx.Done():
