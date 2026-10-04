@@ -1,0 +1,24 @@
+/* 钛灰（金属钛灰）— 新增主题：中性石墨底、钢青主色，弱化彩色倾向 */
+[data-theme="titanium"] {
+  --bg: #101214;
+  --surface: #16191c;
+  --surface-2: #1d2227;
+  --surface-3: #242b32;
+  --border: #2c343d;
+  --border-2: #242b32;
+  --text: #e3e7eb;
+  --text-dim: #9aa7b2;
+  --text-mute: #6b7784;
+  --accent: #8fb0c9;
+  --accent-2: #aac4d8;
+  --accent-bg: rgba(143, 176, 201, 0.14);
+  --ok: #34d399;
+  --ok-bg: rgba(52, 211, 153, 0.13);
+  --warn: #fbbf24;
+  --warn-bg: rgba(251, 191, 36, 0.14);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.13);
+  --purple: #a5b4fc;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}

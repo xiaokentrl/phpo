@@ -1,0 +1,24 @@
+/* 青绿（青绿深色）— 新增主题：深青底、青碧主色 */
+[data-theme="teal"] {
+  --bg: #071713;
+  --surface: #0b211c;
+  --surface-2: #0f2b25;
+  --surface-3: #143730;
+  --border: #1a463d;
+  --border-2: #163a33;
+  --text: #ddeee8;
+  --text-dim: #7fb2a5;
+  --text-mute: #528175;
+  --accent: #2dd4bf;
+  --accent-2: #5eead4;
+  --accent-bg: rgba(45, 212, 191, 0.13);
+  --ok: #4ade80;
+  --ok-bg: rgba(74, 222, 128, 0.13);
+  --warn: #fbbf24;
+  --warn-bg: rgba(251, 191, 36, 0.14);
+  --danger: #fb7185;
+  --danger-bg: rgba(251, 113, 133, 0.14);
+  --purple: #a78bfa;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}

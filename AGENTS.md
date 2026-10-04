@@ -194,7 +194,7 @@
 | MOUNTS 挂载表数 | **5** | `MOUNTS` |
 | REWRITE_PRESETS 数 | **9** | `REWRITE_PRESETS` |
 | DEFAULT_CONFIGS | **5 服务 7 文件** | `DEFAULT_CONFIGS` |
-| THEMES 数 | **6** | `THEMES` |
+| THEMES 数 | **9**（原型 6 + 暖黄/青绿/钛灰） | `THEMES` |
 | CMD_ITEMS 数 | **20** | `CMD_ITEMS` |
 | MESSAGES 键数 | **约 300+** | `MESSAGES['zh-CN']` |
 | UI_SCALE 档位数 | **7** | `UI_SCALE.snap` |
@@ -3902,6 +3902,9 @@ const (
 >
 > **验真**：`npx vue-tsc --noEmit` EXIT=0 · 五项门禁全绿（i18n 两侧各 **864** 键、集合相等）· `gofmt -l .`／`go vet ./...`／`go build ./...`／`go test ./... -count=1` 全绿（语言是纯前端改动，Go 侧未被触碰，这批只是同轮回归）。`pnpm build` **未跑**（同上，避免弄脏 `frontend/dist/index.html` 占位产物）。
 > **仍欠的那一件**：**真宿主 GUI 未走查**——「全新装机（`localStorage` 里没有 `phpo-locale`）首屏确实是英文」「切成中文后重启应用仍是中文」这两件事要在原生窗口里点一次才算；本轮只有代码与产物级证据。**未 commit、未 push**（等指令）。
+>
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 新增三套主题：暖黄／青绿／钛灰（THEMES 6 → 9）**：
+> **这是干什么的**：应用主题从 6 套扩到 **9** 套——暖黄（amber，暖调浅色：米黄底 + 琥珀主色）、青绿（teal，深青底 + 青碧主色）、钛灰（titanium，中性石墨底 + 钢青主色）。落点：`frontend/src/styles/themes/{amber,teal,titanium}.css` 各配齐全套 21 个变量 + `index.css` 追加 import；`prefsStore.THEME_IDS` 白名单与 `constants/themes.ts` 的 `THEMES`（选择器色带）各加三项；文案键 +6。**为什么这样承载**：主题是纯前端 UI 偏好（§3.1 原则 5），只落 `localStorage` 的 `phpo-theme` 白名单——已有用户存档不受影响（只增不改）。**§0.3 数字权威表同步**：THEMES 数 6 → **9**（本条即出处；原型时代 6 套的冻结事实见历史折叠段，原型 SSOT 一字未改——本条是能力新增而非对原型的改写）。**用户看得见什么**：选择主题弹窗 9 张卡（3×3 紧凑密度），点卡即切。**验真**：`vue-tsc` EXIT=0 · i18n 门禁 **872** 对称 · 浏览器逐卡实测 `data-theme` 与背景色命中设计值。**同源同步**：`docs/{界面规格,用户手册}.md`、CHANGELOG 未发布段。
 >
 > **v2.9.14 追加（未发布版本内折叠，不另计版本号）· PHP 卡扩展行前移 + 站点源码收进折叠组（追加需求 ③）**：
 > **这是干什么的**：用户又点名一档——「向前移 Extensions；Config dir／Log dir／Site sources 做成默认折叠，点击展开」。落点：php 的「扩展」行移到卡片首行（折叠组之前）；「站点源码」行从独立前移位收进折叠组，排在配置/日志目录之后（与用户列举顺序一致）；折叠计数改由 `dirGroupSize()` 给出（DIR_ROWS 之外 php 加 1 行），打开组内 3 行、计数即 3，不谎报。**用户看得见什么**：php 卡收起时 = 扩展 → 目录明细 (3)；展开 = 配置目录 → 日志目录 → 站点源码。nginx/mysql/pgsql/redis 卡不受影响（nginx 仍站点源码+目录明细(2) 前置）。**承载**：文案键零新增（仍每侧 **866**）、`DIR_ROWS` 未动。**验真**：`vue-tsc` EXIT=0 · 浏览器走查（收起/展开顺序、计数 3；nginx 回归抽查不变）。**同源同步**：CHANGELOG 未发布段。

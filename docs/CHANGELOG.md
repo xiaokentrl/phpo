@@ -6,6 +6,13 @@
 
 ## [未发布 / M7 收尾]
 
+- **新增三套主题：暖黄（amber）／青绿（teal）／钛灰（titanium），THEMES 6 → 9（AGENTS.md §0.3 数字权威表 · `docs/界面规格.md` §7 · `docs/用户手册.md` · `frontend/src/styles/themes/{amber,teal,titanium}.css` + `index.css` · `frontend/src/constants/themes.ts` · `frontend/src/stores/prefsStore.ts` · `frontend/src/locales/{zh-CN,en-US}.ts`）**：现象是用户直接给出的需求——**「增加 3 个主题，暖黄/青绿/钛灰」**。设计取向：暖黄为**暖调浅色**（米黄底、琥珀主色，与晨光白/樱花粉同属浅色族）；青绿为**深青底、青碧主色**（介于森林绿与深海蓝之间的青色系）；钛灰为**中性石墨底、钢青主色**（弱化彩色倾向的金属灰）。
+  - **落点**：三份主题 CSS 各配齐全套 21 个变量（`--bg/--surface*/--border*/--text*/--accent*/--ok/--warn/--danger/--purple/--shadow` + `color-scheme`），`index.css` 追加三条 `@import`；`THEME_IDS` 与 `THEMES` 各加三项（选择器色带四段色同步）；文案键 +6（`theme.{amber,teal,titanium}` 及 Desc），i18n 现每侧 **872** 键、集合相等。
+  - **现在用户看得见什么**：选择主题弹窗 9 张卡（3×3，紧凑密度），点卡即切并记住；已有用户的存档主题不受影响（ID 校验白名单只增不改）。**怎么回来**：点任意主题卡即切回。
+  - **承载**：事件/快照/门面零变化；原型 SSOT 一字未改（新增主题属**能力新增**而非对原型的改写，无偏离登记必要——原型时代 THEMES=6 的冻结数字由 §0.3 随本条更新为 9）。
+  - **验真**：`npx vue-tsc --noEmit` EXIT=0 · i18n 门禁 872 对称 · 浏览器实测：9 卡齐整、逐一点击三张新卡 `data-theme` 与 `body` 背景色逐一命中设计值（amber `rgb(250,246,236)` / teal `rgb(8,24,20)` / titanium `rgb(16,18,20)`），截图留档。
+  - **同源同步**：AGENTS.md §0.3（THEMES 6→9）+ 折叠段、`docs/界面规格.md` §7、`docs/用户手册.md` 偏好段、本条。
+
 - **PHP 卡「扩展」前移、「站点源码」收进折叠组（AGENTS.md 折叠段 · `frontend/src/views/ServiceView.vue`）**：现象是用户接连的追加原话——**「向前移 Extensions；Config dir / Log dir / Site sources 做成默认折叠，点击后展开」**。至此 php 卡收起时只剩两行：**扩展 → 目录明细 (3)**，展开顺序 = 配置目录 → 日志目录 → 站点源码（与需求列举一致）。
   - **前端落点**：① php 的「扩展」行移到卡片首行（折叠组之前）；② 「站点源码」行从独立前移位收进折叠组、排在配置/日志目录之后；③ 折叠计数改由 `dirGroupSize()` 给出（DIR_ROWS 行数之外 php 加 1），组内 3 行计数即 3，不谎报；④ nginx/mysql/pgsql/redis 卡不受影响（nginx 仍为 站点源码→vhost 目录→目录明细(2)）。
   - **现在用户看得见什么**：php 卡一屏只见「扩展」与「目录明细」两行，点开才见三条路径。**怎么回来**：再点「目录明细」即收起；展开态按版本记组件本地（UI 偏好不落库）。

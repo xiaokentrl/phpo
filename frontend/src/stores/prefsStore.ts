@@ -1,4 +1,4 @@
-// 主题与托盘偏好：6 套 data-theme + 托盘开关，仅存 localStorage（§3.1 原则 5：UI 偏好留前端）；
+// 主题与托盘偏好：9 套 data-theme + 托盘开关，仅存 localStorage（§3.1 原则 5：UI 偏好留前端）；
 // 托盘两项额外投影到原生外壳（api/state.ts#setTrayPrefs），localStorage 仍是唯一权威。
 import { defineStore } from 'pinia'
 import { reactive, ref, watchEffect } from 'vue'
@@ -7,7 +7,7 @@ import { toast } from '@/composables/useToast'
 import { t } from '@/composables/useI18n'
 import type { TrayPrefs } from '@/types'
 
-export const THEME_IDS = ['light', 'midnight', 'oled', 'forest', 'ocean', 'sakura'] as const
+export const THEME_IDS = ['light', 'midnight', 'oled', 'forest', 'ocean', 'sakura', 'amber', 'teal', 'titanium'] as const
 export type ThemeId = (typeof THEME_IDS)[number]
 
 const DEFAULT_THEME: ThemeId = 'light'

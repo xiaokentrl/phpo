@@ -1,0 +1,24 @@
+/* 暖黄（暖调浅色）— 新增主题：以晨光白为基线调暖，琥珀主色 */
+[data-theme="amber"] {
+  --bg: #faf6ec;
+  --surface: #fffdf7;
+  --surface-2: #f5efe0;
+  --surface-3: #efe7d3;
+  --border: #e5dbc2;
+  --border-2: #ece4d0;
+  --text: #3b3222;
+  --text-dim: #7d7157;
+  --text-mute: #a79b7f;
+  --accent: #d97706;
+  --accent-2: #b45309;
+  --accent-bg: rgba(217, 119, 6, 0.12);
+  --ok: #16a34a;
+  --ok-bg: rgba(22, 163, 74, 0.12);
+  --warn: #ea580c;
+  --warn-bg: rgba(234, 88, 12, 0.12);
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.1);
+  --purple: #9333ea;
+  --shadow: 0 8px 32px rgba(122, 90, 26, 0.12);
+  color-scheme: light;
+}
