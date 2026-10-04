@@ -5,8 +5,6 @@
 > PHP 本地 Docker 开发环境管理器。三平台 GUI，无 CLI。  
 > 下载：https://github.com/xiaokentrl/phpo/releases/latest
 
-**一句话**：不是 PHP 集成环境，是把 Docker 藏起来、也掀得开的工具；日志逐行透明。
-
 ## 核心
 
 - 多版本 PHP/MySQL/PostgreSQL/Redis/Nginx 并存；容器 `phpo-{service}-{version}`；站点切 PHP → `php-{version}-fpm:9000`。

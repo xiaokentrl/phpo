@@ -5,8 +5,6 @@
 > A local Docker development environment manager for PHP developers. Cross-platform desktop GUI, no CLI.  
 > Download: https://github.com/xiaokentrl/phpo/releases/latest
 
-**One sentence**: It is not another PHP integrated environment; it is a tool that hides the Docker layer for you while keeping it liftable. Logs are transparent line by line.
-
 ## Core
 
 - Multiple versions of PHP/MySQL/PostgreSQL/Redis/Nginx coexist; containers `phpo-{service}-{version}`; switching a site's PHP → `php-{version}-fpm:9000`.
