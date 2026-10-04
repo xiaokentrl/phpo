@@ -233,6 +233,11 @@ const dirsOpen = ref<Record<string, boolean>>({})
 function toggleDirs(version: string): void {
   dirsOpen.value[version] = !dirsOpen.value[version]
 }
+
+// dirGroupSize 折叠组的行数：DIR_ROWS 之外，php 的「站点源码」行也收进组里（追加需求）
+function dirGroupSize(version: string): number {
+  return rowsWithDirs(version).length + (props.kind === 'php' && !externalOnly(version) ? 1 : 0)
+}
 </script>
 
 <template>
@@ -317,8 +322,16 @@ function toggleDirs(version: string): void {
             <PasswordField :kind="kind" :version="version" />
           </div>
 
-          <!-- php/nginx：站点源码（nginx 另有 vhost 目录）是这张卡最高频的行，向前移到端口/密码之后（需求） -->
-          <div v-if="(kind === 'php' || kind === 'nginx') && !externalOnly(version)" class="kv">
+          <!-- php/nginx：高频行前移——php 的扩展入口、nginx 的站点源码与 vhost 目录（需求） -->
+          <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
+            <span class="k">{{ t('php.extensions') }}</span>
+            <button class="btn btn-sm" data-action="php-extensions" :data-version="version" :title="t('php.manageExt')" @click="modals.openPhpExtensionsModal(version)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18" /></svg>
+              {{ t('php.manageExt') }}
+              <span class="ext-count">{{ extCount(version) }}</span>
+            </button>
+          </div>
+          <div v-if="kind === 'nginx' && !externalOnly(version)" class="kv">
             <span class="k">{{ t('svc.wwwDir') }}</span>
             <span class="v" :title="`${state.env.WWW_ROOT} → /var/www`">{{ state.env.WWW_ROOT }}</span>
           </div>
@@ -327,9 +340,9 @@ function toggleDirs(version: string): void {
             <span class="v" :title="`${state.env.NGINX_SITES_ROOT} → /etc/nginx/sites`">{{ state.env.NGINX_SITES_ROOT }}</span>
           </div>
 
-          <!-- 五个服务：目录行默认折叠，点击整组展开（需求，php 由追加需求并入） -->
+          <!-- 五个服务：目录行默认折叠，点击整组展开（php 组内含站点源码，见 dirGroupSize） -->
           <div
-            v-if="!externalOnly(version) && rowsWithDirs(version).length"
+            v-if="!externalOnly(version) && dirGroupSize(version) > 0"
             class="kv dir-toggle"
             data-action="toggle-dirs"
             :data-kind="kind"
@@ -341,7 +354,7 @@ function toggleDirs(version: string): void {
             @keydown.enter.prevent="toggleDirs(version)"
             @keydown.space.prevent="toggleDirs(version)"
           >
-            <span class="k">{{ t('svc.dirGroup') }}<span class="file-count">{{ rowsWithDirs(version).length }}</span></span>
+            <span class="k">{{ t('svc.dirGroup') }}<span class="file-count">{{ dirGroupSize(version) }}</span></span>
             <span class="v dir-chev" :class="{ open: !!dirsOpen[version] }" aria-hidden="true">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
             </span>
@@ -384,18 +397,13 @@ function toggleDirs(version: string): void {
               </template>
               <span v-else class="v" :title="dirPath(version, sub)">{{ dirPath(version, sub) }}</span>
             </div>
+            <!-- php：站点源码也收进折叠组（追加需求），排在配置/日志目录之后 -->
+            <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
+              <span class="k">{{ t('svc.wwwDir') }}</span>
+              <span class="v" :title="`${state.env.WWW_ROOT} → /var/www`">{{ state.env.WWW_ROOT }}</span>
+            </div>
           </template>
-
-          <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
-            <span class="k">{{ t('php.extensions') }}</span>
-            <button class="btn btn-sm" data-action="php-extensions" :data-version="version" :title="t('php.manageExt')" @click="modals.openPhpExtensionsModal(version)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18" /></svg>
-              {{ t('php.manageExt') }}
-              <span class="ext-count">{{ extCount(version) }}</span>
-            </button>
-          </div>
         </div>
-
         <div class="version-card-foot">
           <span v-if="externalOnly(version)" class="dim" data-action="external-note">{{ t('svc.discoveredExternalNote') }}</span>
           <button v-if="!externalOnly(version)" class="btn btn-sm" data-action="service-config" :data-kind="kind" :data-version="version" @click="modals.openConfigModal(kind, version)">
