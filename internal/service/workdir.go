@@ -1,7 +1,7 @@
 // prepareService：安装前把 bind 挂载所需的宿主工作目录与默认配置落盘到 PHPO_HOME，
 // 使 MOUNTS 表解析出的每个挂载源在 Docker 建容器前即存在且类型正确（目录/文件），
 // 兑现「容器创建即可起」并兑现 §0.2 规则 19 / §5.13 清洁性（幂等：仅在缺失时写入，重装不覆盖用户改动；
-// 唯一例外是旧版 postgresql.conf 的日志段按原文精确匹配后就地修复，见 healPgLogging）。
+// 例外是两类旧版默认配置的就地修复，见 healPgLogging 与 healPhpAllowedClients）。
 package service
 
 import (
@@ -69,6 +69,7 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 		logf(log, model.LogDim, fmt.Sprintf("保留既有配置 %d 个（重装不覆盖用户改动）", kept))
 	}
 	healPgLogging(env, kind, version, log)
+	healPhpAllowedClients(env, kind, version, log)
 	return nil
 }
 
@@ -106,6 +107,45 @@ func healPgLogging(env config.Env, kind model.ServiceKind, version string, log t
 		return
 	}
 	logf(log, model.LogOk, "已把 "+path+" 的日志改回 stderr（旧写法往宿主 logs 目录建文件，容器内无权限即崩溃循环）")
+}
+
+// healPhpAllowedClients 就地删除磁盘上 php-fpm.conf 里旧模板写入的 `listen.allowed_clients = any`。
+// `any` 不是合法 IP（fpm 解析即报 Wrong IP address 'any'），且允许列表会变成空集——
+// 所有 FastCGI 连接（含 nginx）一律当场丢弃，站点全部 502（真机取证：Connection disallowed ... dropped；
+// fpm 却照常运行，nginx 报的是 upstream prematurely closed 而非 refused）。
+// 「允许所有客户端」的正确写法是整行不写（缺省不限来源），因此只删值为 any 这一种已知坏值：
+// 用户自己写的 IP 白名单原样保留。与 healPgLogging 同理必须在「启用」路径上也跑一次——
+// prepareService 只在装/重建时执行，且对已存在的配置一律保留不覆盖，旧装机的坏行等不到被换掉。
+func healPhpAllowedClients(env config.Env, kind model.ServiceKind, version string, log task.StepLog) {
+	if kind != model.KindPHP {
+		return
+	}
+	path := filepath.Join(env.RootFor(string(kind), version), "conf", "php-fpm.conf")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return // 尚未落盘：新装由模板直接给出正确内容
+	}
+	lines := strings.Split(string(raw), "\n")
+	out := make([]string, 0, len(lines))
+	removed := 0
+	for _, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		if idx := strings.Index(trimmed, "="); idx >= 0 &&
+			strings.HasPrefix(trimmed, "listen.allowed_clients") &&
+			strings.EqualFold(strings.TrimSpace(trimmed[idx+1:]), "any") {
+			removed++
+			continue
+		}
+		out = append(out, ln)
+	}
+	if removed == 0 {
+		return
+	}
+	if err := util.WriteFile(path, []byte(strings.Join(out, "\n"))); err != nil {
+		logf(log, model.LogErr, fmt.Sprintf("修复 %s 失败: %v", path, err))
+		return
+	}
+	logf(log, model.LogOk, "已删除 "+path+" 里非法的 listen.allowed_clients = any（fpm 不认该值，会把 nginx 的连接全部拒掉造成 502）；重启或重建容器后生效")
 }
 
 // logf 向步骤日志写一行；未注入 logger（只读校验路径）时静默

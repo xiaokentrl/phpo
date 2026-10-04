@@ -6,6 +6,14 @@
 
 ## [未发布 / M7 收尾]
 
+- **修复全站 502：php 池配置里 `listen.allowed_clients = any` 是非法值，fpm 把所有连接一律拒掉（AGENTS.md 折叠段 · `internal/template/templates/php/php-fpm.conf.tmpl` · `internal/service/workdir.go` / `app_service.go` · `scripts/check-templates.go`）**：现象是用户真机取证——nginx 502 `upstream prematurely closed`，`docker logs phpo-php-8.0` 里 fpm 报 `Wrong IP address 'any' in listen.allowed_clients` 与 `Connection disallowed: IP address '172.18.0.8' has been dropped`（172.18.0.8 = phpo-nginx，与 network inspect 逐位吻合）。
+  - **根因**：phpo 模板自 M3 起写了 `listen.allowed_clients = any`；`any` 不是合法 IP，fpm 解析失败后允许列表变成空集——容器照常运行、照常监听，但 nginx 的每条 FastCGI 连接握手后被当场掐断、零响应头，故 nginx 报 prematurely closed 而非 refused。与「改 nginx 端口」无因果，模板在哪台机器上生成过配置，哪台机器的站点就走不通。
+  - **修复**：① 模板删行（缺省＝允许所有客户端，正是原意图）；② 新增 `healPhpAllowedClients` 照 `healPgLogging` 先例挂在 `prepareService` 与 `AppService.Start` 两条路径——就地删除磁盘 conf 里值为 `any` 的行，**用户自设的 IP 白名单一字不动**，改写报一行 ok；③ `check-templates.go` golden 同步删行，头注释登记为第二处生产偏离（第一处：pgsql 日志改 stderr）。
+  - **现在用户看得见什么**：装/重建/点「启用」任何一个动作都会自动修好磁盘配置，重启或重建 php 容器后站点恢复。**怎么回来**：老装机若不等新版本，手动删掉 `~/phpo/php/{版本}/conf/php-fpm.conf` 里的这一行、重启容器即愈。
+  - **承载**：golden 偏离已在门禁头注释登记（照 pgsql 先例，原型正本不改）；事件/快照/门面零变化。
+  - **验真**：新增 `TestPhpFpmConfHasNoAllowedClients`（渲染产物回归门禁）+ heal 三例 + `TestPrepareService_FreshPhpHasNoAllowedClients`；`go test ./internal/...` 16 包全绿；五门禁全绿（模板门禁以修正后 golden 通过）。
+  - **同源同步**：AGENTS.md 折叠段、本条。
+
 - **新增三套主题：暖黄（amber）／青绿（teal）／钛灰（titanium），THEMES 6 → 9（AGENTS.md §0.3 数字权威表 · `docs/界面规格.md` §7 · `docs/用户手册.md` · `frontend/src/styles/themes/{amber,teal,titanium}.css` + `index.css` · `frontend/src/constants/themes.ts` · `frontend/src/stores/prefsStore.ts` · `frontend/src/locales/{zh-CN,en-US}.ts`）**：现象是用户直接给出的需求——**「增加 3 个主题，暖黄/青绿/钛灰」**。设计取向：暖黄为**暖调浅色**（米黄底、琥珀主色，与晨光白/樱花粉同属浅色族）；青绿为**深青底、青碧主色**（介于森林绿与深海蓝之间的青色系）；钛灰为**中性石墨底、钢青主色**（弱化彩色倾向的金属灰）。
   - **落点**：三份主题 CSS 各配齐全套 21 个变量（`--bg/--surface*/--border*/--text*/--accent*/--ok/--warn/--danger/--purple/--shadow` + `color-scheme`），`index.css` 追加三条 `@import`；`THEME_IDS` 与 `THEMES` 各加三项（选择器色带四段色同步）；文案键 +6（`theme.{amber,teal,titanium}` 及 Desc），i18n 现每侧 **872** 键、集合相等。
   - **现在用户看得见什么**：选择主题弹窗 9 张卡（3×3，紧凑密度），点卡即切并记住；已有用户的存档主题不受影响（ID 校验白名单只增不改）。**怎么回来**：点任意主题卡即切回。

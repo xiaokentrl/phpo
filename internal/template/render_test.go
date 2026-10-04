@@ -132,3 +132,18 @@ func versionOf(kind string) string {
 		return "8.4"
 	}
 }
+
+// 旧模板写入的 `listen.allowed_clients = any` 不是合法值（fpm 启动即报 Wrong IP address 'any'，
+// 且允许列表变成空集、FastCGI 连接一律丢弃 → 站点全 502，真机取证 Connection disallowed ... dropped）。
+// 「允许所有客户端」的正确写法是整行不写——渲染产物必须永远不含这一行（真机事故回归门禁）。
+func TestPhpFpmConfHasNoAllowedClients(t *testing.T) {
+	files, err := FilesFor("php", "8.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.Contains(f.Content, "allowed_clients") {
+			t.Fatalf("%s 不应包含 allowed_clients（`= any` 非法，缺省才是允许所有）:\n%s", f.Path, f.Content)
+		}
+	}
+}

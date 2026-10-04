@@ -191,13 +191,15 @@ func (s *AppService) serviceSteps(kind model.ServiceKind, version string, apply 
 	}
 }
 
-// Start 启动已安装容器；启动前先就地修复旧版 postgresql.conf（崩溃循环的服务光靠「启用」要能自救，
-// 而 prepareService 只在装/重建时跑）；启动 nginx 可能让降级站点转为可服务，故带补齐
+// Start 启动已安装容器；启动前先就地修复旧版默认配置（崩溃循环或全拒连接的服务光靠「启用」要能自救，
+// 而 prepareService 只在装/重建时跑）：postgresql.conf 的日志段、php-fpm.conf 的 allowed_clients=any；
+// 启动 nginx 可能让降级站点转为可服务，故带补齐
 func (s *AppService) Start(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
 	return s.one(serviceMeta(opStart, kind, version), "启动 "+name,
 		func(ctx context.Context, log task.StepLog) error {
 			healPgLogging(s.env, kind, version, log)
+			healPhpAllowedClients(s.env, kind, version, log)
 			return s.lifecycle.Start(ctx, kind, version)
 		}, s.healStep(kind, opStart))
 }

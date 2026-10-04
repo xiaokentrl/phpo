@@ -117,3 +117,89 @@ func TestPrepareService_FreshPgsqlHasNoCollector(t *testing.T) {
 		t.Fatalf("新装不该报修复日志: %q", log.text())
 	}
 }
+
+// —— php 池配置 allowed_clients 自愈门禁：`= any` 不是合法 IP，fpm 把允许列表当成空集、
+// 连接一律丢弃（站点全 502），必须靠「启用」就能救回来；用户自己写的 IP 白名单一字不动。 ——
+
+// phpConf 写出某内容的 php-fpm.conf，返回其宿主路径
+func phpConf(t *testing.T, env config.Env, version, content string) string {
+	t.Helper()
+	path := filepath.Join(env.RootFor(string(model.KindPHP), version), "conf", "php-fpm.conf")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestHealPhpAllowedClients_RemovesAnyValue(t *testing.T) {
+	env := config.DerivePaths(t.TempDir(), t.TempDir())
+	log := &capLog{}
+	content := "; phpo · PHP-FPM 8.0 pool\n[www]\nlisten = 0.0.0.0:9000\nlisten.allowed_clients = any\npm = dynamic\n"
+	path := phpConf(t, env, "8.0", content)
+	healPhpAllowedClients(env, model.KindPHP, "8.0", log)
+	got := read(t, path)
+	if strings.Contains(got, "allowed_clients") {
+		t.Fatalf("`= any` 行应被删除: %q", got)
+	}
+	for _, keep := range []string{"[www]", "listen = 0.0.0.0:9000", "pm = dynamic"} {
+		if !strings.Contains(got, keep) {
+			t.Fatalf("原有内容 %q 被改掉: %q", keep, got)
+		}
+	}
+	if !strings.Contains(log.text(), "allowed_clients") {
+		t.Fatalf("改写了配置必须报一行日志: %q", log.text())
+	}
+}
+
+func TestHealPhpAllowedClients_KeepsUserWhitelist(t *testing.T) {
+	env := config.DerivePaths(t.TempDir(), t.TempDir())
+	log := &capLog{}
+	content := "listen.allowed_clients = 127.0.0.1, 172.18.0.8\n"
+	path := phpConf(t, env, "8.0", content)
+	healPhpAllowedClients(env, model.KindPHP, "8.0", log)
+	if got := read(t, path); got != content {
+		t.Fatalf("用户自设的 IP 白名单不得改写: %q", got)
+	}
+	if len(log.lines) != 0 {
+		t.Fatalf("未改写就不该有日志: %q", log.text())
+	}
+}
+
+func TestHealPhpAllowedClients_IdempotentAndTolerant(t *testing.T) {
+	env := config.DerivePaths(t.TempDir(), t.TempDir())
+	healed := "[www]\nlisten = 0.0.0.0:9000\npm = dynamic\n"
+	path := phpConf(t, env, "8.0", healed)
+	log := &capLog{}
+	healPhpAllowedClients(env, model.KindPHP, "8.0", log)
+	if read(t, path) != healed || log.lines != nil {
+		t.Fatalf("已干净的配置应原样跳过，实得 %q / 日志 %q", read(t, path), log.text())
+	}
+	healPhpAllowedClients(env, model.KindPHP, "99", log)  // 文件不存在：静默
+	healPhpAllowedClients(env, model.KindRedis, "8", log) // 非 php：不碰文件
+	if read(t, path) != healed {
+		t.Fatalf("其它服务不应改 php 配置")
+	}
+	if len(log.lines) != 0 {
+		t.Fatalf("静默情形不该有日志: %q", log.text())
+	}
+}
+
+// prepareService 对全新 php 安装直接给出正确内容（不含 allowed_clients，也不报修复日志）
+func TestPrepareService_FreshPhpHasNoAllowedClients(t *testing.T) {
+	home := t.TempDir()
+	env := config.DerivePaths(home, filepath.Join(home, "www"))
+	log := &capLog{}
+	if err := prepareService(env, model.KindPHP, "8.4", log); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, filepath.Join(env.RootFor("php", "8.4"), "conf", "php-fpm.conf"))
+	if strings.Contains(got, "allowed_clients") {
+		t.Fatalf("新装即应是无 allowed_clients 的配置: %q", got)
+	}
+	if strings.Contains(log.text(), "allowed_clients = any") {
+		t.Fatalf("新装不该报修复日志: %q", log.text())
+	}
+}

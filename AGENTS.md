@@ -3903,6 +3903,12 @@ const (
 > **验真**：`npx vue-tsc --noEmit` EXIT=0 · 五项门禁全绿（i18n 两侧各 **864** 键、集合相等）· `gofmt -l .`／`go vet ./...`／`go build ./...`／`go test ./... -count=1` 全绿（语言是纯前端改动，Go 侧未被触碰，这批只是同轮回归）。`pnpm build` **未跑**（同上，避免弄脏 `frontend/dist/index.html` 占位产物）。
 > **仍欠的那一件**：**真宿主 GUI 未走查**——「全新装机（`localStorage` 里没有 `phpo-locale`）首屏确实是英文」「切成中文后重启应用仍是中文」这两件事要在原生窗口里点一次才算；本轮只有代码与产物级证据。**未 commit、未 push**（等指令）。
 >
+> **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 修复全站 502：php 池配置的 `listen.allowed_clients = any` 非法值（真机事故）**：
+> **现象与根因（用户真机取证）**：站点全 502、nginx 报 `upstream prematurely closed connection while reading response header`（upstream `fastcgi://172.18.0.2:9000`）。`docker logs phpo-php-8.0` 实锤两句话：`ERROR: Wrong IP address 'any' in listen.allowed_clients`（该值不是合法 IP，语法就不对）与 `ERROR: Connection disallowed: IP address '172.18.0.8' has been dropped`（172.18.0.8 正是 `phpo-nginx-1.25`，与 network inspect 逐位吻合）。机制：fpm 解析失败后把允许列表当成**空集**——容器照常运行、照常监听 0.0.0.0:9000，但 nginx 的每条 FastCGI 连接都在握手后被当场掐断、零响应头，于是是 prematurely closed 而非 refused。**出处**：phpo 模板 `php-fpm.conf.tmpl:6` 自 M3（T307）起就写了这行；「允许所有客户端」的正确写法是**整行不写**（缺省不限来源）。
+> **修复三件**：① 模板删行；② 新增 `healPhpAllowedClients`（照 `healPgLogging` 先例，`prepareService` 与 `AppService.Start` 两条路径都跑）——就地删除磁盘 conf 里值为 `any` 的 allowed_clients 行，**用户自设的 IP 白名单原样保留**，改写报一行 ok 点名路径与生效方式（重启/重建容器）；③ `scripts/check-templates.go` 的 golden 同步删行并在头注释登记为**第二处生产偏离**（第一处是 pgsql 日志改 stderr）。
+> **门禁**：render 回归 `TestPhpFpmConfHasNoAllowedClients`（渲染产物永远不含 allowed_clients）+ heal 三例（删 any 行且保其余内容 / 用户白名单不动 / 幂等与静默容忍）+ `TestPrepareService_FreshPhpHasNoAllowedClients`。**验真**：`go test ./internal/...` 16 包全绿 · 五门禁全绿（模板门禁以修正后 golden 通过）。
+> **用户侧立即恢复**（不等新版本）：删掉 `~/phpo/php/{版本}/conf/php-fpm.conf` 里的 `listen.allowed_clients = any` 行，重启对应 php 容器即愈。**同源同步**：CHANGELOG 未发布段。
+>
 > **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 新增三套主题：暖黄／青绿／钛灰（THEMES 6 → 9）**：
 > **这是干什么的**：应用主题从 6 套扩到 **9** 套——暖黄（amber，暖调浅色：米黄底 + 琥珀主色）、青绿（teal，深青底 + 青碧主色）、钛灰（titanium，中性石墨底 + 钢青主色）。落点：`frontend/src/styles/themes/{amber,teal,titanium}.css` 各配齐全套 21 个变量 + `index.css` 追加 import；`prefsStore.THEME_IDS` 白名单与 `constants/themes.ts` 的 `THEMES`（选择器色带）各加三项；文案键 +6。**为什么这样承载**：主题是纯前端 UI 偏好（§3.1 原则 5），只落 `localStorage` 的 `phpo-theme` 白名单——已有用户存档不受影响（只增不改）。**§0.3 数字权威表同步**：THEMES 数 6 → **9**（本条即出处；原型时代 6 套的冻结事实见历史折叠段，原型 SSOT 一字未改——本条是能力新增而非对原型的改写）。**用户看得见什么**：选择主题弹窗 9 张卡（3×3 紧凑密度），点卡即切。**验真**：`vue-tsc` EXIT=0 · i18n 门禁 **872** 对称 · 浏览器逐卡实测 `data-theme` 与背景色命中设计值。**同源同步**：`docs/{界面规格,用户手册}.md`、CHANGELOG 未发布段。
 >

@@ -14,9 +14,16 @@ import (
 )
 
 // golden 为原型 前端唯一界面来源.txt 中 DEFAULT_CONFIGS 各服务在代表版本下的渲染结果，逐字转录。
-// 唯一的生产偏离：pgsql 的 logging_collector/log_directory/log_filename 三行改为
-// log_destination='stderr' + logging_collector=off——原型那份要往宿主 bind 目录写日志文件，
-// 容器内 postgres uid 无写权限即 FATAL 崩溃循环，服务永远启不来。
+// 两处生产偏离：
+// ① pgsql 的 logging_collector/log_directory/log_filename 三行改为 log_destination='stderr' +
+//
+//	logging_collector=off——原型那份要往宿主 bind 目录写日志文件，容器内 postgres uid 无写权限
+//	即 FATAL 崩溃循环，服务永远启不来；
+//
+// ② php-fpm.conf 的 `listen.allowed_clients = any` 一行删除——`any` 不是合法 IP（fpm 启动即报
+//
+//	Wrong IP address 'any'，且允许列表变成空集，FastCGI 连接一律当场丢弃 → 站点全 502），
+//	「允许所有客户端」的正确写法是整行不写（缺省不限来源）。
 var golden = map[string]map[string]string{
 	"php|8.4": {
 		"php.ini": `; phpo · PHP 8.4 php.ini
@@ -46,7 +53,6 @@ session.save_path = "tcp://phpo-redis-8:6379"
 user = www-data
 group = www-data
 listen = 0.0.0.0:9000
-listen.allowed_clients = any
 
 pm = dynamic
 pm.max_children = 20
