@@ -10,28 +10,7 @@
 
 ## 1. What this thing is for
 
-You write PHP and have three or five projects in flight at once: one WordPress needs PHP 7.4, one Laravel needs PHP 8.3, an old client site still wants MySQL 5.7 while the new one runs 8.4. The traditional approach is to install one PHP, edit config, install another, edit it back — or hand-write docker-compose files.
-
-What phpo does: **it turns "install an environment" into a few button clicks**.
-
-- PHP, MySQL, PostgreSQL, Redis and Nginx versions are **installed side by side and running side by side**, without fighting each other. Each one is a container (named `phpo-{service}-{version}` throughout).
-- To switch a site to another PHP version, pick it in a dropdown — the nginx upstream immediately points at exactly `php-{version}-fpm:9000`.
-- Install to try, uninstall when done. Uninstalling keeps the data volume; reinstall and your data is still there.
-- Offline, intranet, company blocks Docker Hub — everything you installed is in the local cache and can be reinstalled with zero network.
-
 In one sentence: **it isn't yet another PHP bundle — it's a tool that hides the Docker layer for you, while keeping it liftable** (every step is written line by line in the log drawer; nothing is fudged).
-
-### How it differs from similar products
-
-| Others | phpo |
-|--------|------|
-| One PHP version, switched back and forth | Multiple versions genuinely coexisting, each with its own config, logs and extensions |
-| Downloads images for you, needs network every time | **Checks the local cache first**; if the cache misses it looks inside your local Docker; only then does it hit the network. Once installed, it lands in the cache |
-| Caches only images | Also caches the **extension package files themselves** (pecl `.tgz`, Alpine `.apk`) — so compiling extensions on another machine, offline, needs no network either |
-| Extensions either aren't there or you get a text box | Each PHP version gets a **full extension catalog (73 entries / 8 groups)**, the 11 common ones pre-checked, the compile streamed line by line, and failures name the exact extension |
-| On error it says "failed" | Errors carry the reason and the tail of the container log, and tell you how to get back |
-| Various "for your own good" restrictions | **Only 8 hard red lines**; everything else passes or downgrades to a warning. Password may be empty, versions are free-form, site roots may live outside WWW_ROOT, you can uninstall every PHP |
-| One unreadable file kills the whole backup | Unreadable entries are skipped with aggregated warnings; databases are additionally covered by logical dumps (`mysqldump` / `pg_dumpall` / redis rdb) |
 
 ---
 
