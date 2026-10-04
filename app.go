@@ -40,6 +40,7 @@ func (w wailsEmitter) Emit(event string, payload any) {
 
 type App struct {
 	wails          *application.App
+	window         *application.WebviewWindow // 主窗口句柄：单实例「再点一次」时前置召回（见 Activate）
 	container      *phpapp.Container
 	assembly       *phpapp.Assembly
 	tray           *ui.Tray // 原生托盘句柄；未 Attach 前为 nil，偏好下发据此拒绝
@@ -55,10 +56,21 @@ func NewApp() *App {
 // window 必须先创建——托盘图标点击与「关闭时最小化」都要绑定主窗口才有效果。
 func (a *App) Attach(app *application.App, window *application.WebviewWindow) {
 	a.wails = app
+	a.window = window
 	emitter := wailsEmitter{app: app}
 	a.container.Emitter = emitter
 	a.assembly.Emitter = emitter
 	a.tray = ui.InstallTray(app, emitter, window)
+}
+
+// Activate 单实例的「再点一次快捷方式」：首实例收到通知后把主窗口前置并聚焦。
+// 窗口收进托盘时同样生效（Show 召回）；Attach 未完成（第二实例在启动早段抢跑）时静默跳过。
+func (a *App) Activate() {
+	if a.window == nil {
+		return
+	}
+	a.window.Show()
+	a.window.Focus()
 }
 
 // SetTrayPrefs 把前端 prefsStore（localStorage 权威，§3.1 原则 5）的两项托盘偏好投影到原生外壳。

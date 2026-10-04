@@ -6,6 +6,13 @@
 
 ## [未发布 / M7 收尾]
 
+- **单实例模式：再点快捷方式不再开新窗，改为前置已有窗口（AGENTS.md 折叠段 · `main.go` / `app.go`）**：现象是用户直接给出的需求——**「每次点击快捷方式都会重复打开新的 phpo，我希望以单例模式打开，如果程序已经在运行就前置窗口」**。
+  - **落点**：`main.go` 启用 Wails v3 内置单实例（`SingleInstanceOptions{UniqueID: "io.github.xiaokentrl.phpo", ExitCode: 0}`；Linux 走 D-Bus + 文件锁，win/mac 各有原生实现）——第二实例在 `application.New` 阶段即被识别并干净退出，**不建窗、不装配对象图、不碰 Docker**；`app.go` 新增 `App.window` 句柄（`Attach` 时存入）与 `Activate()`（`window.Show() + window.Focus()`），首实例经 `OnSecondInstanceLaunch` 回调前置窗口，**从托盘召回走同一条路**。
+  - **现在用户看得见什么**：连点两次快捷方式，桌面上始终只有一个 phpo；第二次点击时已有窗口弹到最前（最小化/收进托盘都一样）。**怎么回来**：想开第二个实例？本产品定位是单实例管理器，没有这个入口——退出当前实例（托盘退出）后再点即可。
+  - **承载**：`UniqueID` 同时是 D-Bus 总线名 / 管道名（flatpak 沙箱下须以应用 ID 为前缀，取名时已按此约定）；事件/快照/门面零变化。
+  - **验真**：`go build`（含 CGO/GTK 全量编译）· `go vet` · 17 包测试全绿。**仍欠的那一件**：真宿主走查——「双击两次只出一个窗、第二次前置、托盘召回」是原生外壳行为，要在真实桌面点一次才算。
+  - **同源同步**：AGENTS.md 折叠段、本条。
+
 - **修复全站 502：php 池配置里 `listen.allowed_clients = any` 是非法值，fpm 把所有连接一律拒掉（AGENTS.md 折叠段 · `internal/template/templates/php/php-fpm.conf.tmpl` · `internal/service/workdir.go` / `app_service.go` · `scripts/check-templates.go`）**：现象是用户真机取证——nginx 502 `upstream prematurely closed`，`docker logs phpo-php-8.0` 里 fpm 报 `Wrong IP address 'any' in listen.allowed_clients` 与 `Connection disallowed: IP address '172.18.0.8' has been dropped`（172.18.0.8 = phpo-nginx，与 network inspect 逐位吻合）。
   - **根因**：phpo 模板自 M3 起写了 `listen.allowed_clients = any`；`any` 不是合法 IP，fpm 解析失败后允许列表变成空集——容器照常运行、照常监听，但 nginx 的每条 FastCGI 连接握手后被当场掐断、零响应头，故 nginx 报 prematurely closed 而非 refused。与「改 nginx 端口」无因果，模板在哪台机器上生成过配置，哪台机器的站点就走不通。
   - **修复**：① 模板删行（缺省＝允许所有客户端，正是原意图）；② 新增 `healPhpAllowedClients` 照 `healPgLogging` 先例挂在 `prepareService` 与 `AppService.Start` 两条路径——就地删除磁盘 conf 里值为 `any` 的行，**用户自设的 IP 白名单一字不动**，改写报一行 ok；③ `check-templates.go` golden 同步删行，头注释登记为第二处生产偏离（第一处：pgsql 日志改 stderr）。

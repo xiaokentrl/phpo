@@ -20,11 +20,21 @@ func main() {
 
 	app := application.New(application.Options{
 		Name:        "phpo",
-		Description: "面向 PHP 开发者的本地 Docker 化开发环境管理器",
+		Description: "面向 PHP 开发者的本地 Docker 化开发环境管理器（仅 GUI，不提供 CLI）",
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
 		Services: []application.Service{application.NewService(root)},
+		// 单实例（Wails 内置，Linux 走 D-Bus+文件锁，win/mac 各有原生实现）：
+		// 重复点快捷方式时第二实例在 New 阶段即以 ExitCode 0 退出——不建窗、不碰 Docker、不开双份后端；
+		// 首实例经 OnSecondInstanceLaunch 把已有窗口前置（含从托盘召回，见 App.Activate）。
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "io.github.xiaokentrl.phpo",
+			ExitCode: 0,
+			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
+				root.Activate()
+			},
+		},
 		Mac: application.MacOptions{
 			// 最后一个窗口关闭不代表退出：退出与否由托盘偏好裁决（见 InstallTray 的 WindowClosing 钩子）
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
