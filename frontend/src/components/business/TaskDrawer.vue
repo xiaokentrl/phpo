@@ -140,6 +140,12 @@ function onSelect(id: string): void {
 async function onWithdraw(id: string): Promise<void> {
   await store.withdraw(id)
 }
+
+// onClear：清空队列与队列日志。保留哪一颗任务是后端权威快照说了算（store.clearAll 里认 app.tasks.running），
+// 界面不自己判断「看起来该结束了」——那等于造状态（硬红线 4）。
+async function onClear(): Promise<void> {
+  await store.clearAll()
+}
 </script>
 
 <template>
@@ -195,6 +201,7 @@ async function onWithdraw(id: string): Promise<void> {
         <div class="dq-head">
           <span class="dq-title">{{ t('task.queue') }}</span>
           <span class="dq-count">{{ queue.length }}</span>
+          <button class="dq-clear" type="button" :title="t('task.clearTitle')" @click="onClear">{{ t('task.clear') }}</button>
         </div>
         <div class="dq-list">
           <div
@@ -240,5 +247,15 @@ async function onWithdraw(id: string): Promise<void> {
 
 .error-icon {
   flex-shrink: 0;
+}
+
+.dq-clear {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 6px;
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  background: transparent;
+  cursor: pointer;
 }
 </style>

@@ -564,6 +564,32 @@ export const useTaskStore = defineStore('task', () => {
     return ok
   }
 
+  // clearAll：清空队列与队列相关的抽屉日志，只保留正在执行的那一颗任务连同它的日志。
+  // 排队项先交后端撤回，前端不本地判定成败：撤回没命中的那一行（已开始或已不存在）会随下一次权威快照自己回来，
+  // 所以这里不得据返回值推断终态（硬红线 4）。
+  async function clearAll(): Promise<void> {
+    // 保留哪一颗：认后端权威的运行中任务；未接后端时回落到本地那一条正在回放的记录。
+    const keepId =
+      app.tasks.running?.id ??
+      records.value.find((r) => displayOf(r) === 'running')?.id ??
+      ''
+    const pending = (app.tasks.pending ?? []).filter((p) => p.id !== keepId)
+    await Promise.all(pending.map((p) => withdrawQueued(p.id).catch(() => false)))
+    for (const r of records.value) {
+      if (r.id === keepId || r.live) continue
+      r.cancelled = true
+      if (r.timer) {
+        clearTimeout(r.timer)
+        r.timer = null
+      }
+    }
+    records.value = records.value.filter((r) => r.id === keepId)
+    sysLines.value = []
+    activeId.value = keepId
+    followedId = keepId
+    toast(i18nT('task.cleared'), 'info', 1800)
+  }
+
   // loadHistory：从任务账本补齐跨重启的历史记录（含失败原因与日志原文），已在池中的按 ID 跳过。
   async function loadHistory(): Promise<void> {
     const rows = await listTaskHistory().catch(() => [] as Operation[])
@@ -673,6 +699,7 @@ export const useTaskStore = defineStore('task', () => {
     start,
     cancel,
     withdraw,
+    clearAll,
     loadHistory,
     toggle,
     setExpanded,

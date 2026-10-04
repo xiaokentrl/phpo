@@ -240,7 +240,6 @@ export function usePreflight() {
           const used = app.sites.filter((s) => s.php === version).map((s) => s.domain)
           if (used.length) warnings.push(`以下站点正在使用 PHP ${version}：${used.join(', ')} —— 卸载后这些站点的 vhost 上游失效`)
         }
-        if (kind === 'nginx' && app.sites.length) errors.push(`${PF.hasDependents}: ${app.sites.length} 个站点依赖 Nginx`)
         break
       }
       case 'service-stop': {

@@ -180,15 +180,15 @@ func TestUninstallLastPhpAllowed(t *testing.T) {
 	}
 }
 
-// TestUninstallNginxDependentSitesWarnNotBlocks 与 PHP 同口径：站点仍依赖 Nginx 也不阻止卸载。
-// 「卸空」是本产品允许的合法终局（§1.11）——拦下点击等于替程序员做决定，说清 502 后果即可（§0.2 规则 16）。
-func TestUninstallNginxDependentSitesWarnNotBlocks(t *testing.T) {
+// TestUninstallNginxSkipsSiteDependencyCheck 卸载 Nginx 不再检查依赖它的站点（§0.2 规则 42）。
+// 这里连告警都不产生：vhost 仍在盘上，重装 nginx 即恢复，多问一句等于替程序员做决定（§0.2 规则 15/16）。
+func TestUninstallNginxSkipsSiteDependencyCheck(t *testing.T) {
 	res := Run(ActUninstall, Ctx{Kind: "nginx", Version: "alpine"}, readyWorld())
 	if !res.Ok {
-		t.Fatalf("被站点依赖的 nginx 应告警放行，得 errors=%+v", res.Errors)
+		t.Fatalf("卸载 nginx 应照常放行，得 errors=%+v", res.Errors)
 	}
-	if len(res.Warnings) == 0 {
-		t.Fatal("应产生依赖告警")
+	if len(res.Warnings) != 0 {
+		t.Fatalf("卸载 nginx 不该再报站点依赖，得 warnings=%+v", res.Warnings)
 	}
 }
 

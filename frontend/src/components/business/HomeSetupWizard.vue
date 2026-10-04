@@ -226,12 +226,12 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
       <template v-else-if="step === 1">
         <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s1.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s1.desc') }}</div></div>
         <div class="field">
-          <label class="mono mono-sm">PHPO_HOME</label>
+          <!-- <label class="mono mono-sm">PHPO_HOME</label> -->
           <div class="input-with-action">
             <input v-model="homeVal" type="text" spellcheck="false" autocomplete="off" @input="homeDirty = true">
             <button v-if="canBrowse" class="input-action-btn" type="button" @click="browseDir('home')">{{ t('siteAdd.browse') }}</button>
           </div>
-          <div class="hint">💡 {{ t('wiz.s1.hint') }}</div>
+          <!-- <div class="hint">💡 {{ t('wiz.s1.hint') }}</div> -->
         </div>
         <div class="field"><label>{{ t('wiz.s1.tree') }}</label>
           <div class="dir-log"><div v-for="(ln, i) in homeTree" :key="i"><span v-for="(s, j) in ln" :key="j" :class="s.c">{{ s.x }}</span></div></div>
@@ -240,12 +240,12 @@ function finish(): void { emit('close') } // 用户确认成功后关闭向导�
       <template v-else-if="step === 2">
         <div class="wiz-hero"><div class="wiz-hero-title">{{ t('wiz.s2.title') }}</div><div class="wiz-hero-desc">{{ t('wiz.s2.desc') }}</div></div>
         <div class="field">
-          <label class="mono mono-sm">WWW_ROOT</label>
+          <!-- <label class="mono mono-sm">WWW_ROOT</label> -->
           <div class="input-with-action">
             <input v-model="wwwVal" type="text" spellcheck="false" autocomplete="off" @input="wwwDirty = true">
             <button v-if="canBrowse" class="input-action-btn" type="button" @click="browseDir('www')">{{ t('siteAdd.browse') }}</button>
           </div>
-          <div class="hint">💡 {{ t('wiz.s2.hint') }}</div>
+          <!-- <div class="hint">💡 {{ t('wiz.s2.hint') }}</div> -->
         </div>
         <div class="field"><label>{{ t('wiz.s2.tree') }}</label>
           <div class="dir-log"><div v-for="(ln, i) in wwwTree" :key="i"><span v-for="(s, j) in ln" :key="j" :class="s.c">{{ s.x }}</span></div></div>

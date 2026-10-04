@@ -62,10 +62,7 @@ func (r *run) uninstall() {
 			r.warnf("以下站点正在使用 PHP %s：%s —— 卸载后这些站点的 vhost 上游失效", c.Version, strings.Join(used, ", "))
 		}
 	}
-	if c.Kind == "nginx" && len(r.w.Snap.Sites) > 0 {
-		// 与 PHP 同口径降级为警告（§1.11）：vhost 仍在盘上，重装 nginx 即恢复，不是不可逆后果
-		r.warnf("%d 个站点依赖 Nginx，卸载后这些站点无法访问", len(r.w.Snap.Sites))
-	}
+	// nginx 卸载不检查依赖站点（§0.2 规则 42）：vhost 仍在盘上，重装 nginx 即恢复，无需多问一句
 }
 
 func (r *run) serviceStop() {
