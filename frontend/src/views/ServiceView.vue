@@ -227,12 +227,9 @@ async function browseDir(version: string): Promise<void> {
   if (abs) await commitDir(version, abs)
 }
 
-// 目录行折叠（需求）：mysql/pgsql/redis/nginx 的目录行默认收起、点击整组展开；php 保持铺开不变。
+// 目录行折叠（需求）：五个服务的目录行默认收起、点击整组展开（php 由追加需求并入）。
 // 展开态按版本记在组件本地（UI 偏好，不入库、不进快照，§3.1 原则 5），默认 undefined = 收起。
 const dirsOpen = ref<Record<string, boolean>>({})
-function dirCollapsible(): boolean {
-  return props.kind === 'mysql' || props.kind === 'pgsql' || props.kind === 'redis' || props.kind === 'nginx'
-}
 function toggleDirs(version: string): void {
   dirsOpen.value[version] = !dirsOpen.value[version]
 }
@@ -320,8 +317,8 @@ function toggleDirs(version: string): void {
             <PasswordField :kind="kind" :version="version" />
           </div>
 
-          <!-- nginx：站点源码与 vhost 目录是这张卡最高频的两行，向前移到端口/密码之后（需求） -->
-          <div v-if="kind === 'nginx' && !externalOnly(version)" class="kv">
+          <!-- php/nginx：站点源码（nginx 另有 vhost 目录）是这张卡最高频的行，向前移到端口/密码之后（需求） -->
+          <div v-if="(kind === 'php' || kind === 'nginx') && !externalOnly(version)" class="kv">
             <span class="k">{{ t('svc.wwwDir') }}</span>
             <span class="v" :title="`${state.env.WWW_ROOT} → /var/www`">{{ state.env.WWW_ROOT }}</span>
           </div>
@@ -330,9 +327,9 @@ function toggleDirs(version: string): void {
             <span class="v" :title="`${state.env.NGINX_SITES_ROOT} → /etc/nginx/sites`">{{ state.env.NGINX_SITES_ROOT }}</span>
           </div>
 
-          <!-- mysql/pgsql/redis/nginx：目录行默认折叠，点击整组展开（需求）；php 不折叠、照旧铺开 -->
+          <!-- 五个服务：目录行默认折叠，点击整组展开（需求，php 由追加需求并入） -->
           <div
-            v-if="dirCollapsible() && !externalOnly(version) && rowsWithDirs(version).length"
+            v-if="!externalOnly(version) && rowsWithDirs(version).length"
             class="kv dir-toggle"
             data-action="toggle-dirs"
             :data-kind="kind"
@@ -349,7 +346,7 @@ function toggleDirs(version: string): void {
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
             </span>
           </div>
-          <template v-if="!dirCollapsible() || !!dirsOpen[version]">
+          <template v-if="!!dirsOpen[version]">
             <div v-for="[sub, labelKey] in rowsWithDirs(version)" :key="sub" class="kv">
               <span class="k">{{ t(labelKey) }}</span>
               <template v-if="sub === 'data'">
@@ -388,11 +385,6 @@ function toggleDirs(version: string): void {
               <span v-else class="v" :title="dirPath(version, sub)">{{ dirPath(version, sub) }}</span>
             </div>
           </template>
-
-          <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
-            <span class="k">{{ t('svc.wwwDir') }}</span>
-            <span class="v" :title="`${state.env.WWW_ROOT} → /var/www`">{{ state.env.WWW_ROOT }}</span>
-          </div>
 
           <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
             <span class="k">{{ t('php.extensions') }}</span>
