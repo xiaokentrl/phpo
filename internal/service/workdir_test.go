@@ -216,9 +216,13 @@ func TestConfPerm0644_MysqlAndPgsql(t *testing.T) {
 		file string
 	}{{model.KindMySQL, "8.0", "my.cnf"}, {model.KindPgsql, "17", "postgresql.conf"}, {model.KindPgsql, "17", "pg_hba.conf"}} {
 		dir := filepath.Join(env.RootFor(string(tc.kind), tc.ver), "conf")
-		os.MkdirAll(dir, 0o755)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		p := filepath.Join(dir, tc.file)
-		os.WriteFile(p, []byte("[test]"), 0o777)
+		if err := os.WriteFile(p, []byte("[test]"), 0o777); err != nil {
+			t.Fatal(err)
+		}
 	}
 	log := &capLog{}
 	confPerm0644(env, model.KindMySQL, "8.0", log)
@@ -242,10 +246,16 @@ func TestConfPerm0644_MysqlAndPgsql(t *testing.T) {
 func TestConfPerm0644_NonDb(t *testing.T) {
 	env := config.DerivePaths(t.TempDir(), t.TempDir())
 	dir := filepath.Join(env.RootFor(string(model.KindPHP), "8.4"), "conf")
-	os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	p := filepath.Join(dir, "php.ini")
-	os.WriteFile(p, []byte("[PHP]"), 0o777)
-	os.Chmod(p, 0o777) // 显式设置绕过 umask
+	if err := os.WriteFile(p, []byte("[PHP]"), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o777); err != nil {
+		t.Fatal(err)
+	}
 	log := &capLog{}
 	confPerm0644(env, model.KindPHP, "8.4", log)
 	info, _ := os.Stat(p)
