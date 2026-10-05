@@ -79,7 +79,7 @@ func TestCheckFlattensRawError(t *testing.T) {
 	if n := len([]rune(got.Message)); n > errBriefMax+20 {
 		t.Errorf("Message 长度 %d 超过上限 %d：%q", n, errBriefMax+20, got.Message)
 	}
-	if !strings.HasPrefix(got.Message, "无法连接 Docker：") {
+	if !strings.HasPrefix(got.Message, "无法连接容器引擎：") {
 		t.Errorf("Message 应保留人话前缀：%q", got.Message)
 	}
 }
@@ -160,6 +160,20 @@ func TestHintsMatchPlatform(t *testing.T) {
 		perm := Check(context.Background(), fakeProbe{err: ErrDockerNoPermission})
 		if !strings.Contains(perm.Hint, "docker") {
 			t.Errorf("Linux 无权限应给出可执行的组/服务修复动作，got=%q", perm.Hint)
+		}
+	}
+	// v2.9.16（需求②）：未安装/未运行/无权限的引导必须覆盖双引擎——只提 Docker 不提 Podman
+	// 等于把 podman-only 用户晾在原地（§5.25）。
+	if !linuxOnly {
+		return
+	}
+	for _, b := range branches {
+		h := Check(context.Background(), b.probe)
+		if !strings.Contains(h.Hint, "Podman") && b.name != "无权限" {
+			t.Errorf("%s: Linux 引导应双引擎覆盖（含 Podman）：%q", b.name, h.Hint)
+		}
+		if b.name == "无权限" && !strings.Contains(h.Hint, "podman.socket") {
+			t.Errorf("无权限引导应含 Podman socket 修复命令：%q", h.Hint)
 		}
 	}
 }

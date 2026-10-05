@@ -105,6 +105,14 @@ func classifyEngineVersion(v types.Version) EngineKind {
 	return EngineDocker
 }
 
+// engineKind 已识别的引擎种类（DetectEngine 成功后缓存；未识别 = EngineUnknown）。
+// 供方言分岔使用（§5.25：podman 的 save/load 走 CLI，见 image.go）。
+func (c *Client) engineKind() EngineKind {
+	c.engMu.Lock()
+	defer c.engMu.Unlock()
+	return c.engine
+}
+
 // candidateSockets 按优先级给出候选端点：Docker 家族全部候选在前（Docker 优先仲裁，§5.25）→
 // Podman 家族（rootless 在前——phpo 以用户身份运行，rootless 是开发场景常态；rootful socket 通常
 // 需要组权限，排后面仅作 rootful-only 机器的兜底）。

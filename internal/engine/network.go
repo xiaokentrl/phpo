@@ -3,6 +3,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 
 	"phpo/pkg/dockerutil"
 
@@ -31,4 +32,19 @@ func (c *Client) EnsureNetwork(ctx context.Context) error {
 		Labels: OwnershipLabels("", ""),
 	})
 	return err
+}
+
+// NetworkGateway 返回网络的网关 IP（v2.9.16/S3：Podman 的 aardvark-dns 挂在网关上，
+// vhost 的 resolver 地址按引擎动态化时取它）。多子网时取第一个带 Gateway 的配置。
+func (c *Client) NetworkGateway(ctx context.Context, name string) (string, error) {
+	n, err := c.cli.NetworkInspect(ctx, name, network.InspectOptions{})
+	if err != nil {
+		return "", err
+	}
+	for _, cfg := range n.IPAM.Config {
+		if cfg.Gateway != "" {
+			return cfg.Gateway, nil
+		}
+	}
+	return "", errors.New("网络 " + name + " 未配置网关")
 }

@@ -1,14 +1,20 @@
 // 镜像 load / save / pull / remove 封装：基于 Docker SDK，进度流式上报
+// Podman 方言（v2.9.16 实测）：compat /images/load 只收 OCI 而 /images/get 产 docker-archive——
+// 兼容层 save→load 往返断裂，故 save/load 走 podman CLI（仅本地 unix 端点），缓存 tar 统一
+// docker-archive 格式、两引擎通用；Docker 分支走 SDK 逐字不变。
 package engine
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/image"
 
 	"phpo/internal/util"
@@ -16,6 +22,9 @@ import (
 
 // ImageLoad 从 tar 路径加载镜像（零网络）；resp.Body 必须读完再关，否则加载不完成
 func (c *Client) ImageLoad(ctx context.Context, tarPath string) error {
+	if c.engineKind() == EnginePodman {
+		return c.podmanLoad(ctx, tarPath)
+	}
 	f, err := os.Open(tarPath)
 	if err != nil {
 		return fmt.Errorf("打开镜像 tar 失败: %w", err)
@@ -36,6 +45,9 @@ func (c *Client) ImageLoad(ctx context.Context, tarPath string) error {
 
 // ImageSave 将镜像导出为 tar 到 outPath（先写临时再原子重命名，避免半截文件）
 func (c *Client) ImageSave(ctx context.Context, ref, outPath string) error {
+	if c.engineKind() == EnginePodman {
+		return c.podmanSave(ctx, ref, outPath)
+	}
 	rc, err := c.cli.ImageSave(ctx, []string{ref})
 	if err != nil {
 		return fmt.Errorf("docker save 失败: %w", err)
@@ -55,6 +67,41 @@ func (c *Client) ImageSave(ctx context.Context, ref, outPath string) error {
 	if err := f.Close(); err != nil {
 		os.Remove(tmp)
 		return err
+	}
+	return os.Rename(tmp, outPath)
+}
+
+// podmanLoad 走 podman CLI 加载缓存 tar（docker-archive）；仅本地 unix 端点——远端 tcp/ssh
+// 端点没有本地 CLI 可用，返回人话错误并给手动恢复命令
+func (c *Client) podmanLoad(ctx context.Context, tarPath string) error {
+	if !strings.HasPrefix(c.host, "unix://") {
+		return errors.New("podman 的镜像 load 仅支持本地 unix 端点（当前端点：" + c.host + "）；请手动执行 podman load -i " + tarPath)
+	}
+	podman, err := exec.LookPath("podman")
+	if err != nil {
+		return errors.New("未找到 podman CLI；请手动执行 podman load -i " + tarPath)
+	}
+	out, err := exec.CommandContext(ctx, podman, "load", "-i", tarPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("podman load 失败: %w：%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// podmanSave 走 podman CLI 导出缓存 tar（--format docker-archive，与 Docker 侧缓存格式通用）
+func (c *Client) podmanSave(ctx context.Context, ref, outPath string) error {
+	if !strings.HasPrefix(c.host, "unix://") {
+		return errors.New("podman 的镜像 save 仅支持本地 unix 端点（当前端点：" + c.host + "）")
+	}
+	podman, err := exec.LookPath("podman")
+	if err != nil {
+		return errors.New("未找到 podman CLI，无法导出镜像缓存")
+	}
+	tmp := outPath + ".tmp"
+	out, err := exec.CommandContext(ctx, podman, "save", "--format", "docker-archive", "-o", tmp, ref).CombinedOutput()
+	if err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("podman save 失败: %w：%s", err, strings.TrimSpace(string(out)))
 	}
 	return os.Rename(tmp, outPath)
 }
@@ -99,10 +146,15 @@ func (c *Client) ImageRemove(ctx context.Context, ref string) error {
 	return nil
 }
 
-// isNotFound 判断 SDK 错误是否为「资源不存在」
+// isNotFound 判断 SDK 错误是否为「资源不存在」（v2.9.16 C10 收口）：cerrdefs 按状态码驱动、
+// 引擎无关，是主判据；文本匹配兜底兼容端点不带 SDK 状态码包装的错误原文——两引擎下
+// 「删不存在的资源 = 成功」的幂等都必须成立（§5.13.4）。
 func isNotFound(err error) bool {
 	if err == nil {
 		return false
+	}
+	if cerrdefs.IsNotFound(err) {
+		return true
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such image") || strings.Contains(msg, "no such")

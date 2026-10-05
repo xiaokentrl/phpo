@@ -201,6 +201,7 @@
 | 配置生效步类别数 | **3**（php 重启容器 / nginx 平滑 reload / 数据服务说明行） | `config_service.go` 的 `effectSteps` |
 | 引擎识别判据 | `/version` 的 **Components[0].Name**（podman 自报 "Podman Engine"；`Platform.Name` 是宿主系统不可用——实测纠正） | `engine/client.go` 的 `classifyEngineVersion` |
 | 检测判据 | **真实拨号 + Ping**；CLI 存在 / socket 文件存在 / symlink 均不可信（垫片、权限、命名空间三类假象——本机实测枚举） | `engine/client.go` 的 `candidateSockets` + `health.go` 三态 |
+| vhost resolver 缺省 | **127.0.0.11**（Docker 内嵌 DNS）；Podman=网关地址动态现取（aardvark-dns 在网关，缺省兜底 10.89.0.1） | `vhost.conf.tmpl` + `vhost/manager.go` 的 `resolverValue` |
 | CMD_ITEMS 数 | **20** | `CMD_ITEMS` |
 | MESSAGES 键数 | **约 300+** | `MESSAGES['zh-CN']` |
 | UI_SCALE 档位数 | **7** | `UI_SCALE.snap` |
@@ -2519,7 +2520,7 @@ const (
 - **引擎不进 `rootsKey`**（改自定义根不会连引擎换掉）；**不代用户拉起引擎服务**（不写 daemon.json / containers.conf / 不重启任何引擎，与 §5.21 同纪律），只给可复制的修复命令。
 - 平台：Linux 全量；macOS 跟随（podman machine）；Windows podman 实验性。
 
-**实现落点**：`engine/client.go`（候选 + `DetectEngine` + `classifyEngineVersion`）、`health.go`（双列引导文案）、`model/store snapshot`（Engine 字段 + provider）、`di.go`（3s 拨号识别接线）、前端 `DockerGate`（双列引导 + 当前引擎显示）。**已实测**：compat 层容器全生命周期 / exec / archive / commit / 网络别名 DNS 解析全绿；`/images/load` 与 `/build/prune`、plugins/swarm 的方言适配（SaveLoadViaCLI、面板降级）归入下一阶段。
+**实现落点**：`engine/client.go`（候选 + `DetectEngine` + `classifyEngineVersion`）、`health.go`（双列引导文案）、`model/store snapshot`（Engine 字段 + provider）、`di.go`（3s 拨号识别接线）、前端 `DockerGate`（双列引导 + 当前引擎显示）；**resolver 按引擎动态化**（vhost 模板 `{{ .Resolver }}`：Docker=内嵌 DNS 127.0.0.11 缺省不变，Podman=`engine.NetworkGateway` 现取网关，失败退最后成功值再退 10.89.0.1）；**SaveLoadViaCLI**（`ImageSave/ImageLoad` 的 podman 方言：CLI save --format docker-archive / load -i，仅本地 unix 端点——缓存 tar 两引擎通用）；**not-found 收口**（`isNotFound` 主判据 cerrdefs + 文本兜底）。**已实测**：compat 层容器全生命周期 / exec / archive / commit / 网络别名 DNS 解析全绿；`/build/prune`、plugins/swarm 在 podman 下 404 → 清理面板走「—」+ 原因的既有通道（零代码，端点实测确认）；secrets 200 正常工作。**剩余**：SELinux `:z/:Z` 与 linger doctor 项（需 Fedora 实测与 doctor 数字修订）、doctor 标题方言化、live 双引擎验证。
 
 **验收**：Docker-only / Podman-only / 双引擎 / 双无 四种机器上启动 → 引擎结论与界面呈现分别正确；既有 Docker 用户的全部断言逐字绿。
 
@@ -4017,6 +4018,9 @@ const (
 >
 > **v2.9.14 追加（未发布版本内折叠，不另计版本号）· PHP 卡并入折叠组 + 站点源码前移（上一条的追加需求）**：
 > **这是干什么的**：用户看过上一条效果后点名 PHP 卡同样处理——「Site sources 向前移；Config dir／Log dir 做成默认折叠，点击展开」。落点：`dirCollapsible()` 条件删除（五个服务全部折叠），php 的「站点源码」行并入前移块（与 nginx 同一处渲染，条件恢复为 `php || nginx`），尾部旧行删除；扩展行仍在卡片末尾。**用户看得见什么**：php 卡收起时 = 站点源码 → 目录明细 (2) → 扩展；展开后配置/日志目录插在中间，三个版本各自独立记忆展开态（浏览器截图取证：8.4 展开、8.3/8.0 保持收起）。**承载**：文案键零新增（仍每侧 **866**）、事件/快照/门面未动。**验真**：`vue-tsc` EXIT=0 · i18n 门禁 · 浏览器走查 php 页 DOM 顺序与折叠行为。**同源同步**：CHANGELOG 未发布段。
+>
+> **v2.9.16 追加（未发布版本内折叠，不另计版本号）· resolver 按引擎动态化 + SaveLoadViaCLI + not-found 收口（§5.25 后续，P2/P3 主体）**：
+> **这是干什么的**：三件 Podman 适配主体落地。① **vhost resolver 动态化**——模板 `resolver 127.0.0.11` 写死在 podman 容器内无监听（实测 refused；aardvark-dns 在网关 10.89.0.1 应答），现改为 `{{ .Resolver }}`：Docker 分支缺省 127.0.0.11 逐字不变，Podman 分支由 di 注入网关查询闭包（`engine.NetworkGateway` 现取 → 失败退最后成功值 → 再退 10.89.0.1）；手改态只动 upstream 行、不触 resolver。② **SaveLoadViaCLI**——compat `/images/load` 只收 OCI 而 `/images/get` 产 docker-archive（实测 500，往返断裂），`ImageSave/ImageLoad` 的 podman 分支改走 CLI（仅本地 unix 端点；远端给人话错误 + 手动命令）；**缓存 tar 统一 docker-archive、两引擎通用**。③ **not-found 收口**——`image.go` 的 `isNotFound` 主判据改 cerrdefs（状态码驱动、引擎无关）+ 文本兜底，两引擎幂等成立。**验真**：16 包全绿（vhost resolver provider 三态用例；render/manager 既有用例零改动通过；check-templates golden 零 diff——缺省回落兜住）；面板 404 自然降级经端点实测确认无需代码。**剩余**：SELinux/linger（需 Fedora 实测与 doctor 数字修订）、doctor 标题方言化、live 双引擎验证（用户真会话）。
 >
 > **v2.9.16 追加（未发布版本内折叠，不另计版本号）· 容器引擎检测与选择：Docker 优先，Podman 兼容（新 §5.25）**：
 > **这是干什么的**：phpo 启动时拨号识别本机容器引擎——Docker 优先（双引擎并存零感知）、只有 Podman 用 Podman（兼容 API，同一套 engine 层）、双无给双列安装引导（需求②）。**实现落点**：`client.go` 候选加 Podman 三族（rootless 在前）+ `DetectEngine`（`/version` 的 `Components[0].Name` 识别，实测纠正 `Platform.Name` 不可用）+ `health.go` 双列引导文案；`Snapshot.Engine` 字段（model/store provider/di 3s 拨号接线）；前端 DockerGate 增「当前引擎」显示与双列引导块（i18n +4 键，现 876 对称）。**实测纪律四条**入 §5.25（CLI 垫片/socket 文件/拨号判据/识别字段——本机 podman-only+垫片环境逐条取证，详见《扩展Podman规划实施方案计划.md》）。**总纲同步**：硬红线 7 措辞改「容器引擎（Docker 或 Podman）未就绪则不能启动服务」、§2 技术栈表加 Podman 行、规则 3 加引擎方言边界、§5.7 表双引擎化。**P1 未含**（后续阶段）：SaveLoadViaCLI（compat load 500 的 CLI 旁路）、面板行降级（build/prune、plugins/swarm 404）、resolver 动态化、SELinux/linger、doctor 标题方言化。**验真**：`go build`（含 CGO/GTK）· `vue-tsc` · 17 包测试全绿（client_test 4 例新增：候选覆盖/排序/classify/双引擎仲裁）· i18n 876 对称。**真宿主走查欠账**：podman-only 机器看引导页、双引擎机器看 Docker 优先、换血联动。

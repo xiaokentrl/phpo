@@ -103,3 +103,20 @@ func TestManager_UnknownDomain(t *testing.T) {
 		t.Fatal("未知域名 ApplyPhp 应返回空")
 	}
 }
+
+// TestManager_ResolverProvider（v2.9.16/S3）：nginx 运行时 DNS 地址按引擎动态化——
+// 未注入回落 Docker 内嵌 DNS 127.0.0.11；注入 Podman 网关后 vhost 随之更新；空值回落缺省。
+func TestManager_ResolverProvider(t *testing.T) {
+	m := newMgr()
+	if got := m.Compute(model.Site{Domain: "demo.test", Port: 80, PHP: "8.4", Root: "~/www/demo.test"}); !strings.Contains(got, "resolver 127.0.0.11") {
+		t.Fatalf("缺省应为 Docker 内嵌 DNS：\n%s", got)
+	}
+	m.SetResolverProvider(func() string { return "10.89.0.1" })
+	if got := m.Compute(model.Site{Domain: "demo.test", Port: 80, PHP: "8.4", Root: "~/www/demo.test"}); !strings.Contains(got, "resolver 10.89.0.1") {
+		t.Fatalf("注入网关后 vhost 应随之更新：\n%s", got)
+	}
+	m.SetResolverProvider(func() string { return "   " })
+	if got := m.Compute(model.Site{Domain: "demo.test", Port: 80, PHP: "8.4", Root: "~/www/demo.test"}); !strings.Contains(got, "resolver 127.0.0.11") {
+		t.Fatalf("空值应回落 Docker 缺省：\n%s", got)
+	}
+}

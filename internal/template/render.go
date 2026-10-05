@@ -82,22 +82,31 @@ type VhostInput struct {
 	ContainerRoot string
 	Upstream      string
 	Rule          string // 已解析的伪静态规则原文（未缩进）
+	// Resolver nginx 运行时 DNS 地址（变量上游每请求现查用）；空串回落 Docker 内嵌 DNS
+	// 127.0.0.11（缺省语义），Podman 分支由装配层注入网关地址（§5.25/S3）
+	Resolver string
 }
 
 // RenderVhost 渲染 vhost.conf（defaultVhost 直译：规则整块按行缩进 4 空格）
 func RenderVhost(in VhostInput) (string, error) {
+	resolver := in.Resolver
+	if resolver == "" {
+		resolver = "127.0.0.11" // Docker 内嵌 DNS（缺省）；Podman 分支由装配层注入网关地址
+	}
 	d := struct {
 		Domain    string
 		Port      int
 		Root      string
 		Upstream  string
 		RuleBlock string
+		Resolver  string
 	}{
 		Domain:    in.Domain,
 		Port:      in.Port,
 		Root:      in.ContainerRoot,
 		Upstream:  in.Upstream,
 		RuleBlock: indentBlock(in.Rule),
+		Resolver:  resolver,
 	}
 	return render("vhost.conf.tmpl", d)
 }

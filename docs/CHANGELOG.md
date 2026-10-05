@@ -6,6 +6,14 @@
 
 ## [未发布 / M7 收尾]
 
+- **vhost resolver 按引擎动态化 + Podman 缓存走 CLI + not-found 收口（总纲 §5.25 后续，P2/P3 主体落地）**：
+  - **resolver 动态化（T-P3/S3）**：vhost 模板 `resolver` 地址变量化——Docker 分支缺省 `127.0.0.11`（内嵌 DNS）**逐字不变**；Podman 分支由 di 注入网关查询闭包（新增 `engine.NetworkGateway` 现取 phpo-network 网关，失败退最后成功值、再退 podman 默认首网网关 10.89.0.1——本机实测 aardvark-dns 在网关应答）。依据：podman 容器内 127.0.0.11 **无监听（实测 refused）**，写死会让全站 502。手改态（ReplacePhpUpstream）不触该行。
+  - **SaveLoadViaCLI（T-P2，适配点①）**：compat `/images/load` 只收 OCI 而 save 产 docker-archive → **往返断裂（实测 500）**；`ImageSave/ImageLoad` 按 podman 方言走 CLI（`podman save --format docker-archive -o` / `podman load -i`，仅本地 unix 端点，远端 tcp/ssh 给人话错误 + 手动命令）——**缓存 tar 统一 docker-archive 格式、两引擎通用**；Docker 分支 SDK 逐字不变。
+  - **not-found 收口（T-P2，C10）**：`image.go` 的 `isNotFound` 主判据改 cerrdefs（按状态码驱动、引擎无关）+ 文本兜底——两引擎下「删不存在资源 = 成功」幂等成立。
+  - **遗留（P2b）**：SELinux `:z/:Z`（挂载语法需 Fedora 实测，不盲发）、linger doctor 项（doctor 15 项数字冻结需随总纲修订）、面板 404 自然降级已由端点实测确认无需代码（「—」+ 原因走既有通道）。
+  - **验真**：`go build` · 16 包全绿（vhost 新增 resolver provider 三态用例；render/manager 既有用例以缺省回落零改动通过；**check-templates golden 零 diff**）；live 双引擎验证需真实会话（T-P4）。
+  - **同源同步**：AGENTS.md §5.25 实现落点更新、任务工单 T401/T302、本条。
+
 - **容器引擎检测与选择：Docker 优先，Podman 兼容（P1 落地；总纲 v2.9.16 新 §5.25，硬红线 7 措辞同步）**：需求原文——**「phpo 能够使用 podman 和 docker：① 绝不破坏原有功能；② 装好后检测用的是 podman 还是 docker，有一个就用一个，都没有就提示安装；③ 方案要和当前项目合理拼在一起」**。前置：总纲 v2.9.16 修订先行（硬红线 7 措辞改「容器引擎（Docker 或 Podman）未就绪」、§2 技术栈表加 Podman 行、规则 3 加引擎方言边界、新 §5.25 落四条实测纪律——CLI 垫片/socket 文件/拨号判据/Components 识别，依据为《扩展Podman规划实施方案计划.md》六段实测）。
   - **后端**：`engine/client.go` 候选加 Podman 三族（rootless 在前、rootful 兜底，Docker 家族仍全列在前=优先仲裁）+ `DetectEngine`（拨 `/version`，`Components[0].Name` 含 "Podman" 即 podman；成功缓存、失败返回未识别不缓存）；`health.go` 未安装/未运行/无权限三态文案与建议**双引擎化**（需求②的安装引导在后端出口即成立）；`model.Snapshot` 增 `Engine` 字段（kind/version/endpoint，派生态不落库，normalize 兜底空对象）；`di.go` 启动时 3s 超时拨号识别一次、经 `SetEngineProvider` 进快照。
   - **前端**：`types` 增 `EngineInfo`、`StateSnapshot.engine`；`appState` 随快照落地；`DockerGate` 弹窗增「当前引擎」显示与**双列安装引导块**（Docker/Podman 各带可复制命令，命令走 i18n 值）。

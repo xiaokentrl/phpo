@@ -254,6 +254,9 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 		return err
 	}
 	vh := vhost.New(env)
+	// resolver 按引擎动态化（§5.25/S3）：Docker=内嵌 DNS 127.0.0.11 不变；Podman=aardvark 网关
+	// （network inspect 现取，失败用最后成功值，再退 podman 默认首网网关 10.89.0.1——本机实测取证）
+	vh.SetResolverProvider(engineResolverFunc(cli, c.engineInfo.Kind))
 	hm := hosts.New()
 	c.SiteService = service.NewSiteService(
 		st,
@@ -386,6 +389,26 @@ func updaterSources(list []config.UpdateSource) []updater.Source {
 		out = append(out, updater.Source{Name: name, ManifestURL: s.ManifestURL})
 	}
 	return out
+}
+
+// engineResolverFunc 返回 nginx 运行时 DNS 地址的 provider（v2.9.16/S3）：Docker 分支恒为内嵌
+// DNS 127.0.0.11；Podman 分支现取 phpo-network 网关（aardvark-dns 挂在网关上），失败退最后成功值，
+// 再退 podman 默认首网网关 10.89.0.1（本机实测取证）。
+func engineResolverFunc(cli *engine.Client, kind string) func() string {
+	var last string
+	return func() string {
+		if kind != string(engine.EnginePodman) {
+			return "127.0.0.11"
+		}
+		if gw, err := cli.NetworkGateway(context.Background(), dockerutil.NetworkName); err == nil && gw != "" {
+			last = gw
+			return gw
+		}
+		if last != "" {
+			return last
+		}
+		return "10.89.0.1"
+	}
 }
 
 // loadUpdateSources 启动钩子用的发布源读取：与 residueEnv 同一口径（钩子内自行载入配置，读不到即回落默认源）

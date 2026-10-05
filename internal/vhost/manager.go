@@ -3,6 +3,8 @@
 package vhost
 
 import (
+	"strings"
+
 	"phpo/internal/config"
 	"phpo/internal/model"
 	"phpo/internal/template"
@@ -10,14 +12,30 @@ import (
 
 // Manager 维护 vhost 正文缓存与站点元数据；env 提供 host↔container 路径映射
 type Manager struct {
-	env    config.Env
-	sites  map[string]*model.Site // 按域名索引的运行态站点
-	vhosts map[string]string      // 域名 → 当前 vhost 正文（手改或计算）
+	env      config.Env
+	sites    map[string]*model.Site // 按域名索引的运行态站点
+	vhosts   map[string]string      // 域名 → 当前 vhost 正文（手改或计算）
+	resolver func() string          // nginx 运行时 DNS 地址（v2.9.16/S3）；nil 回落 Docker 缺省
 }
 
 // New 构造空管理器；站点缓存由 Sync 从权威快照灌入
 func New(env config.Env) *Manager {
 	return &Manager{env: env, sites: map[string]*model.Site{}, vhosts: map[string]string{}}
+}
+
+// SetResolverProvider 注入 nginx 运行时 DNS 地址（di 装配期调用；v2.9.16/S3：Docker=内嵌 DNS
+// 127.0.0.11 由缺省兜底，Podman=网络网关地址，由 di 注入引擎感知闭包）。nil 视为 Docker 缺省。
+func (m *Manager) SetResolverProvider(fn func() string) { m.resolver = fn }
+
+// resolverValue nginx 运行时 DNS 地址：provider 未注入或空值回落 Docker 内嵌 DNS 127.0.0.11
+// （Docker 分支语义；Podman 分支由 di 注入网关查询闭包，§5.25/S3）
+func (m *Manager) resolverValue() string {
+	if m.resolver != nil {
+		if v := strings.TrimSpace(m.resolver()); v != "" {
+			return v
+		}
+	}
+	return "127.0.0.11"
 }
 
 // Sync 用权威站点列表替换缓存（保留仍存在的域名的已改写正文与 customized 标记）
@@ -59,6 +77,7 @@ func (m *Manager) compute(site *model.Site) string {
 		ContainerRoot: m.env.HostToContainer(site.Root),
 		Upstream:      "php-" + site.PHP + "-fpm",
 		Rule:          rule,
+		Resolver:      m.resolverValue(),
 	})
 	if err != nil {
 		return ""
