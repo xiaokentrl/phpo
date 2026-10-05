@@ -256,7 +256,7 @@ const messages: Record<string, string> = {
   "settings.tray.minimize": "Minimize to tray on close",
   "settings.tray.pushFailed": "Tray preferences were saved in the app but could not be applied to the system tray. Toggle again to retry, or check tray support (Linux needs libappindicator).",
   "settings.tray.show": "Show tray icon",
-  "settings.docker": "Docker Registries",
+  "settings.docker": "Registry Mirrors",
   "settings.docker.hint": "Used only when pulling over the network",
   "settings.docker.noBackend": "Not connected to the backend; set registries inside the app.",
   "settings.docker.label": "Registry addresses (one per line)",

@@ -38,7 +38,9 @@ const needExt = computed(() => props.kind === 'php')
 const needDataDir = computed(() => (DIR_ROWS[props.kind as ServiceKind] || []).some(([sub]) => sub === 'data'))
 
 const version = ref(isSingle.value ? meta.value.suggested[0] : '')
-const port = ref(needPort.value ? String(suggestPortFor(props.kind, version.value || meta.value.suggested[0])) : '')
+// rootless 引擎无法绑定 <1024 特权端口（§5.25 P2b）——建议端口自动改 8080
+const rootlessAwarePort = (p: number): number => (app.engine?.rootless && p < 1024 ? 8080 : p)
+const port = ref(needPort.value ? String(rootlessAwarePort(suggestPortFor(props.kind, version.value || meta.value.suggested[0]))) : '')
 const password = ref(needPw.value ? DEFAULT_PASSWORD : '')
 const extensions = ref<string[]>(commonExts(isSingle.value ? meta.value.suggested[0] : ''))
 const catalogCount = computed(() => catalogFor(version.value.trim() || meta.value.suggested[0]).length)
@@ -46,7 +48,7 @@ const dataDir = ref('')
 const pwVisible = ref(true)
 
 function refreshPort(): void {
-  if (needPort.value) port.value = String(suggestPortFor(props.kind, version.value.trim() || meta.value.suggested[0]))
+  if (needPort.value) port.value = String(rootlessAwarePort(suggestPortFor(props.kind, version.value.trim() || meta.value.suggested[0])))
 }
 
 // browseDataDir 原生目录选择器：留空即用默认数据目录，自定义后该版本的数据只落在所选目录

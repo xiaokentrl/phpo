@@ -30,7 +30,7 @@ const rwOptions = computed(() => Object.entries(REWRITE_PRESETS).filter(([k]) =>
 const domain = ref('')
 const rootSub = ref('')
 let rootTouched = false
-const port = ref('80')
+const port = ref(app.engine?.rootless ? '8080' : '80')
 const php = ref(phpVers.value[0] || '')
 const rewrite = ref('none')
 
