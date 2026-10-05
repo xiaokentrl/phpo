@@ -22,7 +22,7 @@ const MOCK_SNAPSHOT: StateSnapshot = {
   // discovered 同样是从 Docker 当场数出来的派生态（§5.19）；演示通道查不到容器，给空集而不是编几颗
   discovered: [],
   // engine：演示通道无真实引擎，给未识别（kind 空）——引擎徽章/引导的空态由界面处理
-  engine: { kind: '', version: '', endpoint: '' },
+  engine: { kind: '', version: '', endpoint: '', rootless: false },
   tasks: { running: { id: 't-1', label: 'mock · php 8.5 安装', type: 'install', step: 2, total: 6, startedAt: '2026-09-21T10:00:00Z' }, pending: [] },
 }
 
