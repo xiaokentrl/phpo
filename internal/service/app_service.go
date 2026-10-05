@@ -200,6 +200,7 @@ func (s *AppService) Start(ctx context.Context, kind model.ServiceKind, version 
 		func(ctx context.Context, log task.StepLog) error {
 			healPgLogging(s.env, kind, version, log)
 			healPhpAllowedClients(s.env, kind, version, log)
+			confPerm0644(s.env, kind, version, log)
 			return s.lifecycle.Start(ctx, kind, version)
 		}, s.healStep(kind, opStart))
 }

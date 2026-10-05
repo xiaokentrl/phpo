@@ -203,3 +203,70 @@ func TestPrepareService_FreshPhpHasNoAllowedClients(t *testing.T) {
 		t.Fatalf("新装不该报修复日志: %q", log.text())
 	}
 }
+
+// —— mysql/pgsql conf 权限 0644（v2.9.16 P2b 真机取证）：mysql 拒绝加载 world-writable
+// 配置（客户端警告 "World-writable config file is ignored"），PG 的 initdb/pg_hba 对权限更严——
+// 0777 让配置静默失效；0644 是让配置实际生效的最低权限（对 §5.20 的登记偏离）。 ——
+
+func TestConfPerm0644_MysqlAndPgsql(t *testing.T) {
+	env := config.DerivePaths(t.TempDir(), t.TempDir())
+	for _, tc := range []struct {
+		kind model.ServiceKind
+		ver  string
+		file string
+	}{{model.KindMySQL, "8.0", "my.cnf"}, {model.KindPgsql, "17", "postgresql.conf"}, {model.KindPgsql, "17", "pg_hba.conf"}} {
+		dir := filepath.Join(env.RootFor(string(tc.kind), tc.ver), "conf")
+		os.MkdirAll(dir, 0o755)
+		p := filepath.Join(dir, tc.file)
+		os.WriteFile(p, []byte("[test]"), 0o777)
+	}
+	log := &capLog{}
+	confPerm0644(env, model.KindMySQL, "8.0", log)
+	confPerm0644(env, model.KindPgsql, "17", log)
+	for _, tc := range []struct {
+		kind model.ServiceKind
+		ver  string
+		file string
+	}{{model.KindMySQL, "8.0", "my.cnf"}, {model.KindPgsql, "17", "postgresql.conf"}, {model.KindPgsql, "17", "pg_hba.conf"}} {
+		p := filepath.Join(env.RootFor(string(tc.kind), tc.ver), "conf", tc.file)
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o644 {
+			t.Errorf("%s/%s: 权限应为 0644，得 %o", tc.kind, tc.ver, info.Mode().Perm())
+		}
+	}
+}
+
+func TestConfPerm0644_NonDb(t *testing.T) {
+	env := config.DerivePaths(t.TempDir(), t.TempDir())
+	dir := filepath.Join(env.RootFor(string(model.KindPHP), "8.4"), "conf")
+	os.MkdirAll(dir, 0o755)
+	p := filepath.Join(dir, "php.ini")
+	os.WriteFile(p, []byte("[PHP]"), 0o777)
+	os.Chmod(p, 0o777) // 显式设置绕过 umask
+	log := &capLog{}
+	confPerm0644(env, model.KindPHP, "8.4", log)
+	info, _ := os.Stat(p)
+	if info.Mode().Perm() == 0o644 {
+		t.Fatalf("php conf 不应被 0644 化，得 %o", info.Mode().Perm())
+	}
+}
+
+func TestConfPerm0644_FreshInstall(t *testing.T) {
+	home := t.TempDir()
+	env := config.DerivePaths(home, filepath.Join(home, "www"))
+	log := &capLog{}
+	if err := prepareService(env, model.KindMySQL, "8.0", log); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(env.RootFor("mysql", "8.0"), "conf", "my.cnf")
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("新装 mysql conf 应为 0644，得 %o", info.Mode().Perm())
+	}
+}

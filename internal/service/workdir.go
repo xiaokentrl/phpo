@@ -70,7 +70,35 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 	}
 	healPgLogging(env, kind, version, log)
 	healPhpAllowedClients(env, kind, version, log)
+	confPerm0644(env, kind, version, log)
 	return nil
+}
+
+// confPerm0644 mysql/pgsql 服务配置文件以 0644 落盘（v2.9.16 P2b 真机取证偏离 §5.20）：
+// mysql 拒绝加载 world-writable 配置（客户端警告 "World-writable config file is ignored"，
+// 服务端同样拒绝——配置形同虚设）；PostgreSQL 的 initdb/pg_hba 对权限更严。Docker 与 Podman
+// 都受影响，但 rootless uidmap 让问题在 podman 上必现。配置文件以只读挂载进容器，宿主侧
+// 0644 即可；对 §5.20 的偏离理由是「数据库安全检查使 0777 配置静默失效」。
+func confPerm0644(env config.Env, kind model.ServiceKind, version string, log task.StepLog) {
+	if kind != model.KindMySQL && kind != model.KindPgsql {
+		return
+	}
+	confDir := filepath.Join(env.RootFor(string(kind), version), "conf")
+	entries, err := os.ReadDir(confDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		p := filepath.Join(confDir, e.Name())
+		if info, err := os.Stat(p); err == nil && info.Mode().Perm() != 0o644 {
+			if err := os.Chmod(p, 0o644); err != nil {
+				logf(log, model.LogErr, fmt.Sprintf("修复 %s 权限失败: %v", p, err))
+			}
+		}
+	}
 }
 
 // 旧版默认 postgresql.conf 的日志三行：logging_collector 要往宿主 bind 挂进来的 ./pgsql/{ver}/logs

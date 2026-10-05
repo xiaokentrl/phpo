@@ -6,6 +6,11 @@
 
 ## [未发布 / M7 收尾]
 
+- **mysql/pgsql 配置文件 0644（P2b 真机取证；对 §5.20 的登记偏离）**：live 取证——MySQL 客户端警告 `World-writable config file '/etc/mysql/conf.d/zz-phpo.cnf' is ignored`，配置**静默失效**；PostgreSQL 的 initdb/pg_hba 对权限更严。§5.20 的 0777 触发数据库安全检查、使配置不生效。
+  - **修复**：`workdir.go` 新增 `confPerm0644`——mysql/pgsql 的 conf/ 目录内文件以 0644 落盘，挂 `prepareService`（装/重建）与 `AppService.Start`（启用）两条路径；php/nginx/redis 不动。
+  - **验真**：16 包全绿，新增 `TestConfPerm0644_MysqlAndPgsql`（三文件 0644）/ `TestConfPerm0644_NonDb`（php 不受影响）/ `TestConfPerm0644_FreshInstall`（新装即 0644）。
+  - **同源同步**：AGENTS.md §5.25 + 折叠段（§5.20 偏离登记）、本条。
+
 - **rootless 特权端口 preflight 警告 + rootless 判据（P2b 首项；真机 13 live × podman 取证落地）**：用户真会话跑 `PHPO_LIVE=1 go test ./test/integration/`（podman 5.7 rootless）——**Docker 逻辑零回归确认**：2 PASS（镜像源仲裁、零网络重建=SaveLoadViaCLI 链路实测走通）、5 SKIP（设计内：缺基座镜像/无运行容器/镜像源超时）、**9 FAIL 全部聚在四类 rootless 环境特性**（无一指向 phpo 代码缺陷）：① rootlessport 特权端口 ×4（M3/M4/WordPress/M6：`bind: permission denied`——正是裁决点⑤预测的 <1024 限制）；② rootless netns 清理权限 ×2（G4/T601：删容器时网络子进程 kill 被拒——podman 5.7 基础设施问题，待取证）；③ rootless uidmap × 0777 配置 ×3（MySQL **拒绝加载 world-writable 的 zz-phpo.cnf**、PGSQL data 目录空疑似 initdb 权限拒绝、测试清理 Permission denied——**§5.20 的 0777 与数据库配置安全检查冲突，新发现的适配需求**）；④ Redis 就绪超时 ×2（待容器日志定位）。
   - **本轮落地（A 类预防层）**：① `engine/client.go` 增 rootless 判据——端点在 `/run/user/<uid>` 下即 rootless（rootless Podman 与 rootless Docker 的用户级 socket 同址；`Client.Rootless()` + `Snapshot.Engine.Rootless` 字段）；② preflight 新增 `warnRootlessPrivilegedPort`（三处调用：siteAdd / sitePort 按最终生效端口 / install 服务端口）——rootless + 端口 <1024 → **只警告不阻止**（§0.2 规则 16），建议改 ≥1024 端口或 sysctl，不代改用户所填端口（§1.9）；③ 前端 `EngineInfo.rootless` 类型对齐。
   - **验真**：16 包全绿（client_test 新增 `TestRootlessDetection` 五端点判据；preflight 新增 rootless 特权端口警告/非特权无警告两例）；`vue-tsc`；五门禁。

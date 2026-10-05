@@ -641,7 +641,7 @@
 | 4 | 状态同步后端唯一权威 | 一致性刚需 |
 | 5 | 三段式写操作 | 事务性刚需 |
 | 6 | 升级包 SHA256 + 签名校验 | 供应链安全 |
-| 7 | 容器引擎（Docker 或 Podman）未就绪则不能启动服务 | 功能依赖 |
+| 7 | 容器引擎（Docker 或 Podman）未就绪则不能启动服务；**mysql/pgsql 配置文件以 0644 落盘**（对 §5.20 0777 的登记偏离：数据库安全检查使 0777 配置静默失效，真机取证 P2b） | 功能依赖 |
 | 8 | Docker 操作必须清洁 + 离线优先 + 临时目录必清 | 不污染环境；离线优先；防污染下次使用 |
 
 ### 3.4 Agent 编码行为准则（v2.7 新增）
@@ -4018,6 +4018,9 @@ const (
 >
 > **v2.9.14 追加（未发布版本内折叠，不另计版本号）· PHP 卡并入折叠组 + 站点源码前移（上一条的追加需求）**：
 > **这是干什么的**：用户看过上一条效果后点名 PHP 卡同样处理——「Site sources 向前移；Config dir／Log dir 做成默认折叠，点击展开」。落点：`dirCollapsible()` 条件删除（五个服务全部折叠），php 的「站点源码」行并入前移块（与 nginx 同一处渲染，条件恢复为 `php || nginx`），尾部旧行删除；扩展行仍在卡片末尾。**用户看得见什么**：php 卡收起时 = 站点源码 → 目录明细 (2) → 扩展；展开后配置/日志目录插在中间，三个版本各自独立记忆展开态（浏览器截图取证：8.4 展开、8.3/8.0 保持收起）。**承载**：文案键零新增（仍每侧 **866**）、事件/快照/门面未动。**验真**：`vue-tsc` EXIT=0 · i18n 门禁 · 浏览器走查 php 页 DOM 顺序与折叠行为。**同源同步**：CHANGELOG 未发布段。
+>
+> **v2.9.16 追加（未发布版本内折叠，不另计版本号）· mysql/pgsql 配置文件 0644（对 §5.20 的登记偏离，P2b 真机取证）**：
+> **这是干什么的**：mysql/pgsql 的服务配置文件（`my.cnf` / `postgresql.conf` / `pg_hba.conf`）以 **0644** 而非 0777 落盘——MySQL 拒绝加载 world-writable 配置（真机取证：客户端警告 `World-writable config file is ignored`，服务端同样拒绝），PostgreSQL 的 initdb/pg_hba 对权限更严。**0777 让配置静默失效**。**为什么是偏离**：§5.20 说 phpo 产出物一律 0777；但对这三种文件，0777 触发数据库的安全检查、使配置不生效——0644 是让配置实际生效的最低权限（容器内以只读挂载，宿主侧 0644 够用）。**落点**：`workdir.go` 新增 `confPerm0644`（prepareService + AppService.Start 两路径），chmod 仅限 mysql/pgsql 的 conf/ 目录内文件，php/nginx/redis 不动。**验真**：新增 `TestConfPerm0644_MysqlAndPgsql`（三文件 0644）、`TestConfPerm0644_NonDb`（php 不受影响）、`TestConfPerm0644_FreshInstall`（新装即 0644）。
 >
 > **v2.9.16 追加（未发布版本内折叠，不另计版本号）· resolver 按引擎动态化 + SaveLoadViaCLI + not-found 收口（§5.25 后续，P2/P3 主体）**：
 > **这是干什么的**：三件 Podman 适配主体落地。① **vhost resolver 动态化**——模板 `resolver 127.0.0.11` 写死在 podman 容器内无监听（实测 refused；aardvark-dns 在网关 10.89.0.1 应答），现改为 `{{ .Resolver }}`：Docker 分支缺省 127.0.0.11 逐字不变，Podman 分支由 di 注入网关查询闭包（`engine.NetworkGateway` 现取 → 失败退最后成功值 → 再退 10.89.0.1）；手改态只动 upstream 行、不触 resolver。② **SaveLoadViaCLI**——compat `/images/load` 只收 OCI 而 `/images/get` 产 docker-archive（实测 500，往返断裂），`ImageSave/ImageLoad` 的 podman 分支改走 CLI（仅本地 unix 端点；远端给人话错误 + 手动命令）；**缓存 tar 统一 docker-archive、两引擎通用**。③ **not-found 收口**——`image.go` 的 `isNotFound` 主判据改 cerrdefs（状态码驱动、引擎无关）+ 文本兜底，两引擎幂等成立。**验真**：16 包全绿（vhost resolver provider 三态用例；render/manager 既有用例零改动通过；check-templates golden 零 diff——缺省回落兜住）；面板 404 自然降级经端点实测确认无需代码。**剩余**：SELinux/linger（需 Fedora 实测与 doctor 数字修订）、doctor 标题方言化、live 双引擎验证（用户真会话）。
