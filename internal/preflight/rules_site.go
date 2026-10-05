@@ -28,6 +28,7 @@ func (r *run) siteAdd() {
 	}
 	// 站点端口冲突：保留用户所填端口，只告警并降级（vhost 暂不落盘、端口暂不发布），不顺延、不阻断建站（§5.8）
 	if c.Port != nil {
+		warnRootlessPrivilegedPort(r, c.Port)
 		pp := r.validatePort(asString(c.Port), nil, nil, conflictKeepWarn)
 		if !pp.Ok {
 			r.errf("%s", pp.Msg)
@@ -75,9 +76,13 @@ func (r *run) sitePort() {
 	pp := r.validatePort(asString(c.NewValue), []int{site.Port}, []string{c.Domain}, conflictAdvance)
 	if !pp.Ok {
 		r.errf("%s", pp.Msg)
-	} else if pp.Adjusted {
-		r.setAdjustedPort(pp.Value)
-		r.warnf("%s", advanceMsg(pp.Original, pp.Value))
+	} else {
+		// rootless 特权端口警告按「最终生效端口」判定：顺延结果也可能落在 <1024（占用表不知道 rootless 限制）
+		warnRootlessPrivilegedPort(r, pp.Value)
+		if pp.Adjusted {
+			r.setAdjustedPort(pp.Value)
+			r.warnf("%s", advanceMsg(pp.Original, pp.Value))
+		}
 	}
 }
 

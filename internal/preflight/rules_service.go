@@ -30,6 +30,7 @@ func (r *run) install() {
 	// FIX #2：无密码长度校验
 	if c.Port != nil {
 		if s := strings.TrimSpace(asString(c.Port)); s != "" {
+			warnRootlessPrivilegedPort(r, s)
 			if pp := r.validatePort(s, nil, nil, conflictBlock); !pp.Ok {
 				r.errf("%s", pp.Msg)
 			}

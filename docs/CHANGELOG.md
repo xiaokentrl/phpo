@@ -6,6 +6,12 @@
 
 ## [未发布 / M7 收尾]
 
+- **rootless 特权端口 preflight 警告 + rootless 判据（P2b 首项；真机 13 live × podman 取证落地）**：用户真会话跑 `PHPO_LIVE=1 go test ./test/integration/`（podman 5.7 rootless）——**Docker 逻辑零回归确认**：2 PASS（镜像源仲裁、零网络重建=SaveLoadViaCLI 链路实测走通）、5 SKIP（设计内：缺基座镜像/无运行容器/镜像源超时）、**9 FAIL 全部聚在四类 rootless 环境特性**（无一指向 phpo 代码缺陷）：① rootlessport 特权端口 ×4（M3/M4/WordPress/M6：`bind: permission denied`——正是裁决点⑤预测的 <1024 限制）；② rootless netns 清理权限 ×2（G4/T601：删容器时网络子进程 kill 被拒——podman 5.7 基础设施问题，待取证）；③ rootless uidmap × 0777 配置 ×3（MySQL **拒绝加载 world-writable 的 zz-phpo.cnf**、PGSQL data 目录空疑似 initdb 权限拒绝、测试清理 Permission denied——**§5.20 的 0777 与数据库配置安全检查冲突，新发现的适配需求**）；④ Redis 就绪超时 ×2（待容器日志定位）。
+  - **本轮落地（A 类预防层）**：① `engine/client.go` 增 rootless 判据——端点在 `/run/user/<uid>` 下即 rootless（rootless Podman 与 rootless Docker 的用户级 socket 同址；`Client.Rootless()` + `Snapshot.Engine.Rootless` 字段）；② preflight 新增 `warnRootlessPrivilegedPort`（三处调用：siteAdd / sitePort 按最终生效端口 / install 服务端口）——rootless + 端口 <1024 → **只警告不阻止**（§0.2 规则 16），建议改 ≥1024 端口或 sysctl，不代改用户所填端口（§1.9）；③ 前端 `EngineInfo.rootless` 类型对齐。
+  - **验真**：16 包全绿（client_test 新增 `TestRootlessDetection` 五端点判据；preflight 新增 rootless 特权端口警告/非特权无警告两例）；`vue-tsc`；五门禁。
+  - **登记（P2b 待办）**：① netns 清理权限（podman 5.7 基础设施，影响删容器/重建链路——需单独取证）；② 0777 × mysql/pgsql 配置安全检查（conf 文件 0644 方言化，偏离 §5.20 需登记）；③ Redis 就绪超时（需 `podman logs phpo-redis-7`）；④ 三个 SKIP 的解锁（`podman tag <php镜像> php:9.9-fpm`）。
+  - **同源同步**：AGENTS.md §5.25（rootless 项 + 实测纪律引证）、`model/snapshot.go`、任务工单、本条。
+
 - **vhost resolver 按引擎动态化 + Podman 缓存走 CLI + not-found 收口（总纲 §5.25 后续，P2/P3 主体落地）**：
   - **resolver 动态化（T-P3/S3）**：vhost 模板 `resolver` 地址变量化——Docker 分支缺省 `127.0.0.11`（内嵌 DNS）**逐字不变**；Podman 分支由 di 注入网关查询闭包（新增 `engine.NetworkGateway` 现取 phpo-network 网关，失败退最后成功值、再退 podman 默认首网网关 10.89.0.1——本机实测 aardvark-dns 在网关应答）。依据：podman 容器内 127.0.0.11 **无监听（实测 refused）**，写死会让全站 502。手改态（ReplacePhpUpstream）不触该行。
   - **SaveLoadViaCLI（T-P2，适配点①）**：compat `/images/load` 只收 OCI 而 save 产 docker-archive → **往返断裂（实测 500）**；`ImageSave/ImageLoad` 按 podman 方言走 CLI（`podman save --format docker-archive -o` / `podman load -i`，仅本地 unix 端点，远端 tcp/ssh 给人话错误 + 手动命令）——**缓存 tar 统一 docker-archive 格式、两引擎通用**；Docker 分支 SDK 逐字不变。

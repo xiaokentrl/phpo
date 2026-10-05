@@ -30,10 +30,11 @@ const (
 // Client 暴露本项目需要的最小 Docker 能力；便于上层持有与替换。
 // host 是本次实际拨号的端点：所有后续 SDK 调用都走这一份，探测与操作不会各说一套。
 type Client struct {
-	cli    *client.Client
-	host   string
-	engMu  sync.Mutex // 保护 engine 的识别写（读多写少，拨号成功才写一次）
-	engine EngineKind // 已识别的引擎种类；空串 = 尚未识别
+	cli      *client.Client
+	host     string
+	engMu    sync.Mutex // 保护 engine 的识别写（读多写少，拨号成功才写一次）
+	engine   EngineKind // 已识别的引擎种类；空串 = 尚未识别
+	rootless bool       // rootless 引擎（端点在 /run/user/<uid> 下）：无法绑定 <1024 特权端口（§5.25 P2b）
 }
 
 // New 构造客户端。DOCKER_HOST 已由用户显式设置时原样尊重（含 tcp/ssh 与 TLS 环境变量）；
@@ -54,8 +55,14 @@ func newAtEndpoint(host string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{cli: cli, host: cli.DaemonHost()}, nil
+	// rootless 判据：端点在 /run/user/<uid> 下（rootless Podman 与 rootless Docker 的用户级 socket
+	// 都长在这里；rootful 的 /run/podman、/var/run/docker.sock 不含该段）。rootless 无法绑定
+	// <1024 特权端口（§5.25 P2b 真机取证：rootlessport bind: permission denied）。
+	return &Client{cli: cli, host: cli.DaemonHost(), rootless: strings.Contains(cli.DaemonHost(), "/run/user/")}, nil
 }
+
+// Rootless 是否 rootless 引擎（端点在用户运行目录下）；rootless 无法绑定 <1024 特权端口。
+func (c *Client) Rootless() bool { return c.rootless }
 
 // DockerHost 返回实际使用的端点（供诊断文案与日志点名）
 func (c *Client) DockerHost() string { return c.host }

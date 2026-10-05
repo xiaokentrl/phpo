@@ -226,7 +226,7 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	dctx, dcancel := context.WithTimeout(ctx, 3*time.Second)
 	engKind, engVer := cli.DetectEngine(dctx)
 	dcancel()
-	c.engineInfo = model.EngineInfo{Kind: string(engKind), Version: engVer, Endpoint: cli.DockerHost()}
+	c.engineInfo = model.EngineInfo{Kind: string(engKind), Version: engVer, Endpoint: cli.DockerHost(), Rootless: cli.Rootless()}
 	st.SetEngineProvider(func() model.EngineInfo { return c.engineInfo })
 	tm := task.NewManager(c.Emitter)
 	// 任务实时反馈三接线（硬红线 4：状态唯一权威在后端）：

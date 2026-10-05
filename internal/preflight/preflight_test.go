@@ -26,6 +26,43 @@ func readyWorld() *World {
 		Offline: []model.CacheEntry{{Kind: "php", Version: "8.4"}}}
 }
 
+// —— rootless 特权端口：只警告不阻止（§5.25 P2b 真机取证：rootlessport bind: permission denied） ——
+
+// rootlessWorld readyWorld 的 rootless 变体（引擎结论 Rootless=true）
+func rootlessWorld() *World {
+	w := readyWorld()
+	if w.Snap.Engine == nil {
+		w.Snap.Engine = &model.EngineInfo{}
+	}
+	w.Snap.Engine.Rootless = true
+	return w
+}
+
+func TestSiteAddRootlessPrivilegedPortWarns(t *testing.T) {
+	res := Run(ActSiteAdd, Ctx{Domain: "new.test", Port: "80", PHP: "8.4", Root: "/www/new.test"}, rootlessWorld())
+	if !res.Ok {
+		t.Fatalf("rootless 特权端口只警告不阻止: %v", res.Errors)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "rootless") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("应有 rootless 特权端口警告: %v", res.Warnings)
+	}
+}
+
+func TestSiteAddRootlessUnprivilegedPortNoWarn(t *testing.T) {
+	res := Run(ActSiteAdd, Ctx{Domain: "new.test", Port: "8080", PHP: "8.4", Root: "/www/new.test"}, rootlessWorld())
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "rootless") {
+			t.Fatalf("非特权端口不应有 rootless 警告: %v", res.Warnings)
+		}
+	}
+}
+
 func firstErr(res *model.PreflightResult) string {
 	if len(res.Errors) == 0 {
 		return ""

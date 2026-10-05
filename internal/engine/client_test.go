@@ -161,6 +161,33 @@ func TestPickEndpointDockerWinsOverPodman(t *testing.T) {
 	}
 }
 
+// TestRootlessDetection rootless 判据（§5.25 P2b）：端点在 /run/user/<uid> 下即 rootless——
+// rootless Podman 与 rootless Docker 的用户级 socket 都长在这里；rootful 与 tcp 端点不算。
+// DOCKER_HOST 钉空（本机实测导出了 podman socket，FromEnv 会覆盖测试端点）。
+func TestRootlessDetection(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "")
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"unix:///run/user/1000/podman/podman.sock", true},
+		{"unix:///run/user/1000/docker.sock", true},
+		{"unix:///var/run/docker.sock", false},
+		{"unix:///run/podman/podman.sock", false},
+		{"tcp://127.0.0.1:9321", false},
+	}
+	for _, c := range cases {
+		cl, err := newAtEndpoint(c.host)
+		if err != nil {
+			t.Fatalf("%s: 构造客户端：%v", c.host, err)
+		}
+		cl.Close()
+		if cl.Rootless() != c.want {
+			t.Errorf("%s: Rootless()=%v 期望 %v", c.host, cl.Rootless(), c.want)
+		}
+	}
+}
+
 // TestDetectReportsEndpointOnClient 端点必须随 Client 落定：后续所有 SDK 调用都走这一份，
 // 否则「探测挑到 rootless socket、装服务仍去拨默认路径」是第二条同类缺陷。
 // DOCKER_HOST 必须钉空：FromEnv 会吃掉环境里的显式端点（本机实测导出了 podman socket），

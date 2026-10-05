@@ -252,6 +252,7 @@ export interface EngineInfo {
   kind: string
   version: string
   endpoint: string
+  rootless: boolean
 }
 
 // StateSnapshot 与后端 model.Snapshot（internal/model/snapshot.go）JSON 逐字对齐；

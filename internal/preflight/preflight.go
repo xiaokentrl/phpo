@@ -7,6 +7,7 @@ package preflight
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"phpo/internal/model"
 	"phpo/pkg/errs"
@@ -215,4 +216,19 @@ func asString(v any) string {
 		return strconv.Itoa(*x)
 	}
 	return ""
+}
+
+// warnRootlessPrivilegedPort rootless 引擎无法绑定 <1024 的特权端口（v2.9.16 P2b 真机取证：
+// rootlessport "bind: permission denied"）——只警告不阻止（§0.2 规则 16）：站点/服务照常创建，
+// 届时按既有降级口径处理；建议改用 ≥1024 端口或调整 sysctl，不代改用户所填端口（§1.9 口径）。
+func warnRootlessPrivilegedPort(r *run, portVal any) {
+	if r.w.Snap.Engine == nil || !r.w.Snap.Engine.Rootless {
+		return
+	}
+	p, err := strconv.Atoi(strings.TrimSpace(asString(portVal)))
+	if err != nil || p <= 0 || p >= 1024 {
+		return
+	}
+	r.warnf("rootless 模式无法绑定 <1024 的端口（%d）：将创建但无法对外监听；建议改用 ≥1024 的端口（如 8080），"+
+		"或设置 sysctl net.ipv4.ip_unprivileged_port_start=80", p)
 }

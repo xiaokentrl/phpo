@@ -8,6 +8,7 @@ type EngineInfo struct {
 	Kind     string `json:"kind"`     // docker / podman；空串 = 尚未识别
 	Version  string `json:"version"`  // 引擎自报版本（识别失败时为空）
 	Endpoint string `json:"endpoint"` // 实际使用的端点（socket 路径）
+	Rootless bool   `json:"rootless"` // rootless 引擎（socket 在 /run/user/<uid> 下）：无法绑定 <1024 特权端口（§5.25 P2b 真机取证）
 }
 
 // Snapshot 字段与原型全局 state 的可持久部分对齐
