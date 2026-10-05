@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 )
 
@@ -16,11 +18,22 @@ import (
 // 让报错点名规范位置而不是一个凭空的猜测路径。
 const defaultDockerHost = "unix:///var/run/docker.sock"
 
+// EngineKind 容器引擎种类（v2.9.16，§5.25）：同一套 Client 代码经「端点 + 方言」服务两种引擎。
+type EngineKind string
+
+const (
+	EngineDocker  EngineKind = "docker"
+	EnginePodman  EngineKind = "podman"
+	EngineUnknown EngineKind = "" // 尚未识别（DOCKER_HOST 显式端点且拨号未成功）
+)
+
 // Client 暴露本项目需要的最小 Docker 能力；便于上层持有与替换。
 // host 是本次实际拨号的端点：所有后续 SDK 调用都走这一份，探测与操作不会各说一套。
 type Client struct {
-	cli  *client.Client
-	host string
+	cli    *client.Client
+	host   string
+	engMu  sync.Mutex // 保护 engine 的识别写（读多写少，拨号成功才写一次）
+	engine EngineKind // 已识别的引擎种类；空串 = 尚未识别
 }
 
 // New 构造客户端。DOCKER_HOST 已由用户显式设置时原样尊重（含 tcp/ssh 与 TLS 环境变量）；
@@ -67,8 +80,34 @@ func (c *Client) Detect(ctx context.Context) (string, error) {
 	return v.Version, nil
 }
 
-// candidateSockets 按优先级给出 Docker unix socket 候选路径：系统默认 → systemd 运行目录 →
-// rootless（XDG_RUNTIME_DIR 与 /run/user/<uid>）→ Docker Desktop on Linux 的用户目录。
+// DetectEngine 拨一次 /version 识别引擎种类（实测判据：Components[0].Name 含 "Podman" 即 podman；
+// Platform.Name 是宿主系统，不能用作判据——§5.25 实测纪律）。成功结果缓存；拨号失败返回
+// EngineUnknown 且不缓存（下次调用重试），版本留空。
+func (c *Client) DetectEngine(ctx context.Context) (EngineKind, string) {
+	v, err := c.cli.ServerVersion(ctx)
+	if err != nil {
+		return EngineUnknown, ""
+	}
+	kind := classifyEngineVersion(v)
+	c.engMu.Lock()
+	c.engine = kind
+	c.engMu.Unlock()
+	return kind, v.Version
+}
+
+// classifyEngineVersion 按 /version 的 Components 名单识别引擎。纯逻辑可测。
+func classifyEngineVersion(v types.Version) EngineKind {
+	for _, comp := range v.Components {
+		if strings.Contains(comp.Name, "Podman") {
+			return EnginePodman
+		}
+	}
+	return EngineDocker
+}
+
+// candidateSockets 按优先级给出候选端点：Docker 家族全部候选在前（Docker 优先仲裁，§5.25）→
+// Podman 家族（rootless 在前——phpo 以用户身份运行，rootless 是开发场景常态；rootful socket 通常
+// 需要组权限，排后面仅作 rootful-only 机器的兜底）。
 // xdgRuntime/home 为空、uid < 0（Windows）时不产生对应候选。
 func candidateSockets(xdgRuntime string, uid int, home string) []string {
 	cands := []string{"/var/run/docker.sock", "/run/docker.sock"}
@@ -81,6 +120,14 @@ func candidateSockets(xdgRuntime string, uid int, home string) []string {
 	if home != "" {
 		cands = append(cands, filepath.Join(home, ".docker", "run", "docker.sock"))
 	}
+	// Podman 候选（v2.9.16）：rootless（XDG_RUNTIME_DIR 与 /run/user/<uid>）→ rootful
+	if xdgRuntime != "" {
+		cands = append(cands, filepath.Join(xdgRuntime, "podman", "podman.sock"))
+	}
+	if uid >= 0 {
+		cands = append(cands, filepath.Join("/run/user", strconv.Itoa(uid), "podman", "podman.sock"))
+	}
+	cands = append(cands, "/run/podman/podman.sock")
 	out := make([]string, 0, len(cands))
 	seen := map[string]bool{}
 	for _, p := range cands {

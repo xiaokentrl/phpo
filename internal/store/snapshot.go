@@ -26,6 +26,11 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	// 发现态同理：Docker 上此刻实际有什么容器（含已停止的、含 phpo 库里没记过的），
 	// 必须在建库之前就给出——首启还没建库时服务页也要看得见 Docker 的真实情况。
 	snap.Discovered = s.Discovered()
+	// 引擎结论（v2.9.16，§5.25）：装配层启动时拨号识别一次；provider 未注入（单测）或识别失败时给空对象
+	if s.eng != nil {
+		e := s.eng()
+		snap.Engine = &e
+	}
 	if !s.mayOpen() {
 		normalizeCollections(snap)
 		return snap, nil // 工作目录未设置：运行态定义为空，且不得建库（首启不在用户数据目录留文件）
@@ -89,6 +94,9 @@ func normalizeCollections(snap *model.Snapshot) {
 	}
 	if snap.Discovered == nil {
 		snap.Discovered = []model.DiscoveredService{}
+	}
+	if snap.Engine == nil {
+		snap.Engine = &model.EngineInfo{}
 	}
 }
 

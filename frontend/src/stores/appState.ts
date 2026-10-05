@@ -1,8 +1,8 @@
 // appState：状态仓，形状对齐原型 DEFAULT_STATE（1209–1250 行）与后端 model.Snapshot
 // 硬红线 4：本仓只由后端 state:changed / service:changed 事件落地（见 composables/useStateSync.ts），无本地乐观更新。
 import { defineStore } from 'pinia'
-import { computed, reactive } from 'vue'
-import type { Backup, DiscoveredService, DockerStatus, Env, OfflineTree, ServiceGap, ServiceKind, Site, StateSnapshot, TaskBoard } from '@/types'
+import { computed, reactive, ref } from 'vue'
+import type { Backup, DiscoveredService, DockerStatus, EngineInfo, Env, OfflineTree, ServiceGap, ServiceKind, Site, StateSnapshot, TaskBoard } from '@/types'
 import { derivePaths, DEFAULT_HOME, DEFAULT_WWW } from '@/utils/path'
 import { hasBackend } from '@/api/site'
 
@@ -100,6 +100,10 @@ export const useAppState = defineStore('appState', () => {
   // 由 useDockerPreflight 经 setDocker 落地；checked=false 表示尚未探测（不拦截）。
   const docker = reactive<DockerStatus & { checked: boolean }>({ status: 'unknown', canStart: false, warning: false, checked: false })
 
+  // engine：容器引擎检测结果（v2.9.16，§5.25）——装配层启动时拨号识别一次，随权威快照回流。
+  // kind 空 = 尚未识别（拨号失败/未装配）；派生态不落库（硬红线 4：只由快照落地）。
+  const engine = ref<EngineInfo | null>(null)
+
   // gaps：缺失态点名项（§5.19）——库里记着已安装、宿主上却被第三方工具删掉的容器/镜像/扩展固化镜像。
   // 只由权威快照落地（硬红线 4）：不落库、不自动改 installed，界面据它把服务卡片标成「已被外部删除」。
   const gaps = reactive<ServiceGap[]>([])
@@ -157,6 +161,7 @@ export const useAppState = defineStore('appState', () => {
     Object.assign(dirReady, s.dirReady)
     gaps.splice(0, gaps.length, ...(s.gaps ?? []))
     discovered.splice(0, discovered.length, ...(s.discovered ?? []))
+    engine.value = s.engine ?? null
     applyTaskBoard(s.tasks)
   }
 
@@ -195,5 +200,5 @@ export const useAppState = defineStore('appState', () => {
 
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, tasks, gaps, discovered, isServiceRunning, gapOf, discoveredOf, applySnapshot, applyTaskBoard, enterRealHost, setServiceRunning, setBackups, setDocker, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, engine, tasks, gaps, discovered, isServiceRunning, gapOf, discoveredOf, applySnapshot, applyTaskBoard, enterRealHost, setServiceRunning, setBackups, setDocker, phpVersions }
 })

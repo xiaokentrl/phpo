@@ -246,6 +246,14 @@ export interface DiscoveredService {
   phpoNamed: boolean
 }
 
+// EngineInfo 是容器引擎检测结果，与后端 model.EngineInfo（internal/model/snapshot.go）JSON 逐字对齐（v2.9.16）。
+// kind 为空 = 尚未识别（拨号失败/未装配）；派生态不落库，由装配层启动探测派生。
+export interface EngineInfo {
+  kind: string
+  version: string
+  endpoint: string
+}
+
 // StateSnapshot 与后端 model.Snapshot（internal/model/snapshot.go）JSON 逐字对齐；
 // 是 state:changed 事件载荷，前端只按其落地、绝不本地乐观更新（硬红线 4）。
 export interface StateSnapshot {
@@ -258,6 +266,7 @@ export interface StateSnapshot {
   tasks: TaskBoard
   gaps: ServiceGap[]
   discovered: DiscoveredService[]
+  engine: EngineInfo | null
 }
 
 // DockerStatus 与后端 model.DockerStatus（internal/model/dto.go）JSON 逐字对齐；

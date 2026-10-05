@@ -40,7 +40,20 @@ async function recheck(): Promise<void> {
     <div class="docker-gate-body">
       <div class="docker-gate-icon">🐳</div>
       <div class="docker-gate-msg">{{ app.docker.message || t('docker.' + app.docker.status) }}</div>
+      <div v-if="app.engine?.kind" class="docker-gate-engine">{{ t('engine.current') }}：<b>{{ app.engine.kind }}</b><template v-if="app.engine.version"> · {{ app.engine.version }}</template></div>
       <div v-if="app.docker.hint" class="docker-gate-hint">{{ app.docker.hint }}</div>
+      <!-- 需求②：两引擎都没装 → 双列安装引导（命令文案走 i18n；探测仍以后端 health 为权威） -->
+      <div v-if="app.docker.status === 'not_installed'" class="engine-guide">
+        <div class="engine-guide-title">{{ t('engine.installTitle') }}</div>
+        <div class="engine-col">
+          <div class="engine-col-head">🐳 Docker</div>
+          <code>{{ t('engine.installDockerCmd') }}</code>
+        </div>
+        <div class="engine-col">
+          <div class="engine-col-head">🐘 Podman</div>
+          <code>{{ t('engine.installPodmanCmd') }}</code>
+        </div>
+      </div>
     </div>
     <template #foot>
       <button class="btn" type="button" @click="dismissed = true">{{ t('docker.gotIt') }}</button>
@@ -76,6 +89,43 @@ async function recheck(): Promise<void> {
   color: var(--text-dim);
   font-size: 13px;
   word-break: break-all;
+}
+.docker-gate-engine {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+/* 需求②：两引擎都没装时的双列安装引导（仅弹窗内，横幅不带） */
+.engine-guide {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+  text-align: left;
+}
+.engine-guide-title {
+  grid-column: 1 / -1;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.engine-col {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px;
+  background: var(--bg);
+}
+.engine-col-head {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.engine-col code {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-line;
+  word-break: break-all;
+  color: var(--text-dim);
 }
 .docker-banner {
   display: flex;

@@ -35,6 +35,7 @@ type Store struct {
 	env   EnvProvider
 	hosts HostsProbe
 	board TaskBoardProvider
+	eng   EngineProvider
 
 	gapsMu sync.RWMutex       // 保护 gaps：同步状态在任务线写、快照在事件线读
 	gaps   []model.ServiceGap // 最近一次全量同步点名的缺失项（派生态，不落库）
@@ -62,6 +63,13 @@ type TaskBoardProvider func() model.TaskBoard
 
 // SetTaskBoard 注入任务面板 provider（装配期一次性调用，先于任何并发访问）
 func (s *Store) SetTaskBoard(p TaskBoardProvider) { s.board = p }
+
+// EngineProvider 提供容器引擎检测结果（v2.9.16，§5.25：装配层启动时拨号识别一次；派生态不落库）。
+// store 不得反向依赖 engine 包，故由装配层注入闭包。未注入时快照 engine 为空对象（kind 空 = 未识别）。
+type EngineProvider func() model.EngineInfo
+
+// SetEngineProvider 注入引擎 provider（装配期一次性调用）
+func (s *Store) SetEngineProvider(p EngineProvider) { s.eng = p }
 
 // SetGaps 记下最近一次全量同步点名的缺失项（§5.19）。
 // 它是派生态而非权威态：不落库（重启后由启动校准重新现取），也不改动 installed / running 任何一行。

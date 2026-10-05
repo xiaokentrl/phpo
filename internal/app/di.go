@@ -30,7 +30,8 @@ type Container struct {
 	Emitter        Emitter
 	Lifecycle      *Lifecycle
 	Env            config.Env
-	CurrentVersion string // 应用当前版本（升级比较基准）
+	CurrentVersion string           // 应用当前版本（升级比较基准）
+	engineInfo     model.EngineInfo // 容器引擎检测结果（§5.25：启动时拨号识别一次；快照唯一来源）
 
 	// M3 真实对象图：于启动钩子内构造（避免 Build 期产生文件/连接，保持单测纯净）
 	AppService  *service.AppService  // 前端绑定的写/读门面；启动后非 nil
@@ -220,6 +221,13 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 		_ = st.Close()
 		return err
 	}
+	// 引擎检测（§5.25，v2.9.16）：启动时拨一次 /version 识别引擎种类与版本（3s 超时容忍 daemon 冷启动），
+	// 结论进快照唯一来源；拨号失败回落 EngineUnknown（kind 空 = 未识别，版本留空），健康细节走 health 三态。
+	dctx, dcancel := context.WithTimeout(ctx, 3*time.Second)
+	engKind, engVer := cli.DetectEngine(dctx)
+	dcancel()
+	c.engineInfo = model.EngineInfo{Kind: string(engKind), Version: engVer, Endpoint: cli.DockerHost()}
+	st.SetEngineProvider(func() model.EngineInfo { return c.engineInfo })
 	tm := task.NewManager(c.Emitter)
 	// 任务实时反馈三接线（硬红线 4：状态唯一权威在后端）：
 	// 队列详情进快照（store 不反向依赖 task，注入 provider）；终态落账本；队列变化重发 state:changed。

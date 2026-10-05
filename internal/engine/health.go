@@ -102,62 +102,65 @@ type Probe interface {
 // 没有 Docker Desktop 这个程序；把用户指向本机不存在的产品等于没有建议（§8 跨平台矩阵）。
 var isLinuxRuntime = runtime.GOOS == "linux"
 
-// 各分支的人话建议，按平台分档
+// 各分支的人话建议，按平台与引擎分档（v2.9.16：未安装态给 Docker/Podman 双列引导——需求②
+// 「两个都没有就提示用户需要安装 podman 或者 docker」；未运行/无权限态给两引擎各自的修复命令）。
 func hintNotInstalled() string {
 	if isLinuxRuntime {
-		return "请安装 Docker 引擎：sudo apt install docker.io，或按 docs.docker.com 的官方文档安装 docker-ce。"
+		return "未检测到容器引擎，请任选其一安装：Docker（sudo apt install docker.io，或按 docs.docker.com 安装 docker-ce）" +
+			"或 Podman（sudo apt install podman，装后执行 systemctl --user enable --now podman.socket）。"
 	}
-	return fmt.Sprintf("请下载 Docker Desktop：%s", dockerDownloadURL)
+	return "未检测到容器引擎，请安装 Docker Desktop（" + dockerDownloadURL + "）或 Podman（podman.io）。"
 }
 
 func hintNotRunning() string {
 	if isLinuxRuntime {
-		return "请启动 Docker 服务：sudo systemctl start docker（可用 systemctl status docker 查看）。"
+		return "请启动容器引擎：Docker（sudo systemctl start docker）或 Podman（systemctl --user start podman.socket）。"
 	}
-	return "请启动 Docker Desktop。"
+	return "请启动 Docker Desktop 或 Podman machine（podman machine start）。"
 }
 
 func hintNoPermission() string {
 	if isLinuxRuntime {
-		return "当前用户无权访问 Docker socket。请把用户加入 docker 组：sudo usermod -aG docker $USER，" +
-			"然后重新登录使组生效。"
+		return "当前用户无权访问容器引擎 socket。Docker：请把用户加入 docker 组（sudo usermod -aG docker $USER 后重新登录）；" +
+			"Podman：请启用用户级 socket（systemctl --user enable --now podman.socket）。"
 	}
-	return "当前用户无权访问 Docker。请重新启动 Docker Desktop；仍不行时以管理员身份运行本应用。"
+	return "当前用户无权访问容器引擎。请重新启动 Docker Desktop / Podman machine；仍不行时以管理员身份运行本应用。"
 }
 
 func hintConnectFailed() string {
 	if isLinuxRuntime {
-		return "请确认 Docker 服务已启动（sudo systemctl start docker）且端点可达后重试。"
+		return "请确认容器引擎已就绪（Docker：sudo systemctl start docker；Podman：systemctl --user start podman.socket）且端点可达后重试。"
 	}
-	return "请确认 Docker Desktop 已启动后重试。"
+	return "请确认 Docker Desktop 或 Podman machine 已启动后重试。"
 }
 
-// Check 依探测结果给出结构化健康结论；不做任何 IO，纯逻辑可测
+// Check 依探测结果给出结构化健康结论；不做任何 IO，纯逻辑可测。
+// 文案对 Docker / Podman 双引擎通用（v2.9.16：未安装态即需求②的「请安装 Podman 或 Docker」引导）。
 func Check(ctx context.Context, p Probe) Health {
 	ver, err := p.Detect(ctx)
 	switch {
 	case errors.Is(err, ErrDockerNoPermission):
 		return Health{
 			Status:  StatusNoPermission,
-			Message: withReason("当前用户无权访问 Docker。", err),
+			Message: withReason("当前用户无权访问容器引擎。", err),
 			Hint:    hintNoPermission(),
 		}
 	case errors.Is(err, ErrDockerNotInstalled):
 		return Health{
 			Status:  StatusNotInstalled,
-			Message: withReason("Docker 未安装。", err),
+			Message: withReason("未检测到容器引擎（Docker 或 Podman）。", err),
 			Hint:    hintNotInstalled(),
 		}
 	case errors.Is(err, ErrDockerNotRunning):
 		return Health{
 			Status:  StatusNotRunning,
-			Message: withReason("Docker 未运行。", err),
+			Message: withReason("容器引擎未运行。", err),
 			Hint:    hintNotRunning(),
 		}
 	case err != nil:
 		return Health{
 			Status:  StatusNotRunning,
-			Message: fmt.Sprintf("无法连接 Docker：%s", errBrief(err)),
+			Message: fmt.Sprintf("无法连接容器引擎：%s", errBrief(err)),
 			Hint:    hintConnectFailed(),
 		}
 	}
@@ -170,7 +173,7 @@ func Check(ctx context.Context, p Probe) Health {
 			Version:  ver,
 			CanStart: true,
 			Warning:  true,
-			Message:  fmt.Sprintf("Docker 版本较旧（%s < 20.10），部分功能可能不可用。", ver),
+			Message:  fmt.Sprintf("容器引擎版本较旧（%s < 20.10），部分功能可能不可用。", ver),
 			Hint:     "是否继续？",
 		}
 	}

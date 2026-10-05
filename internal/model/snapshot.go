@@ -1,6 +1,15 @@
 // 状态快照：后端唯一权威的全量视图，state:changed 事件载荷与 store/snapshot 序列化格式
 package model
 
+// EngineInfo 容器引擎检测结果（v2.9.16 新增，§5.25）：快照唯一来源是装配层启动时的一次拨号识别
+// （判据 = /version 的 Components[0].Name，实测「Podman Engine」自报；Platform.Name 是宿主系统不可用）。
+// Kind 空串 = 尚未识别（拨号失败/未装配）；派生态不落库。
+type EngineInfo struct {
+	Kind     string `json:"kind"`     // docker / podman；空串 = 尚未识别
+	Version  string `json:"version"`  // 引擎自报版本（识别失败时为空）
+	Endpoint string `json:"endpoint"` // 实际使用的端点（socket 路径）
+}
+
 // Snapshot 字段与原型全局 state 的可持久部分对齐
 type Snapshot struct {
 	Installed     map[string][]string `json:"installed"` // kind → 已安装版本列表
@@ -12,6 +21,7 @@ type Snapshot struct {
 	Tasks         TaskBoard           `json:"tasks"`         // 任务队列详情（运行中 + 排队中，实时推送）
 	Gaps          []ServiceGap        `json:"gaps"`          // 已被外部删除的容器/镜像点名项（§5.19；不落库，由同步状态现取）
 	Discovered    []DiscoveredService `json:"discovered"`    // Docker 上此刻实际存在的服务容器（含已停止的；不落库，由同步状态现取）
+	Engine        *EngineInfo         `json:"engine"`        // 容器引擎检测结果（v2.9.16；不落库，由装配层启动探测派生）
 }
 
 func NewSnapshot() *Snapshot {
@@ -25,6 +35,7 @@ func NewSnapshot() *Snapshot {
 		Tasks:         TaskBoard{Pending: []TaskBrief{}},
 		Gaps:          []ServiceGap{},
 		Discovered:    []DiscoveredService{},
+		Engine:        &EngineInfo{},
 	}
 }
 

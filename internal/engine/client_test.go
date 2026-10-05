@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/docker/docker/api/types"
 )
 
 // SDK 在 unix 端点上的真实原文（本机实测三种形态），分类必须逐一对上号
@@ -101,7 +103,8 @@ func TestCandidateSocketsCoverage(t *testing.T) {
 		}
 		seen[p] = true
 	}
-	for _, want := range []string{"/var/run/docker.sock", "/run/docker.sock", "/run/user/1000/docker.sock", "/home/u/.docker/run/docker.sock"} {
+	for _, want := range []string{"/var/run/docker.sock", "/run/docker.sock", "/run/user/1000/docker.sock", "/home/u/.docker/run/docker.sock",
+		"/run/user/1000/podman/podman.sock", "/run/podman/podman.sock"} {
 		if !seen[want] {
 			t.Errorf("候选缺少 %q（got=%v）", want, cands)
 		}
@@ -112,11 +115,58 @@ func TestCandidateSocketsCoverage(t *testing.T) {
 			t.Errorf("uid 缺席时不应产生该候选：%q", p)
 		}
 	}
+	// Docker 家族全部候选排在 Podman 家族之前（Docker 优先仲裁，§5.25）
+	firstDocker, firstPodman := -1, -1
+	for i, p := range cands {
+		if firstDocker < 0 && strings.Contains(p, "docker.sock") {
+			firstDocker = i
+		}
+		if firstPodman < 0 && strings.Contains(p, "podman.sock") {
+			firstPodman = i
+		}
+	}
+	if firstDocker < 0 || firstPodman < 0 || firstDocker > firstPodman {
+		t.Fatalf("Docker 候选应排在 Podman 之前：docker@%d podman@%d", firstDocker, firstPodman)
+	}
+}
+
+// TestClassifyEngineVersion 引擎识别判据（§5.25 实测纪律）：/version 的 Components[0].Name 含
+// "Podman" 即 podman；Platform.Name 是宿主系统（实测值 "linux/amd64/ubuntu-26.04"），不能用作判据。
+func TestClassifyEngineVersion(t *testing.T) {
+	if got := classifyEngineVersion(types.Version{Components: []types.ComponentVersion{{Name: "Podman Engine", Version: "5.7.0"}}}); got != EnginePodman {
+		t.Errorf("Podman Engine 应识别为 podman，got=%q", got)
+	}
+	if got := classifyEngineVersion(types.Version{Components: []types.ComponentVersion{{Name: "Engine", Version: "27.3.1"}}}); got != EngineDocker {
+		t.Errorf("Docker Engine 应识别为 docker，got=%q", got)
+	}
+	if got := classifyEngineVersion(types.Version{}); got != EngineDocker {
+		t.Errorf("无 Components 默认按 docker 处理，got=%q", got)
+	}
+}
+
+// TestPickEndpointDockerWinsOverPodman Docker 与 Podman 候选同时存在 → Docker 优先（Docker 优先仲裁 §5.25）
+func TestPickEndpointDockerWinsOverPodman(t *testing.T) {
+	got := pickEndpoint("", "/run/user/1000", 1000, "/home/u", func(p string) bool {
+		return p == "/var/run/docker.sock" || p == "/run/user/1000/podman/podman.sock"
+	})
+	if got != "unix:///var/run/docker.sock" {
+		t.Errorf("两引擎并存应选 Docker，got=%q", got)
+	}
+	// 只有 Podman 可用 → 选 Podman（需求②：有一个就用一个）
+	got = pickEndpoint("", "/run/user/1000", 1000, "/home/u", func(p string) bool {
+		return p == "/run/user/1000/podman/podman.sock"
+	})
+	if got != "unix:///run/user/1000/podman/podman.sock" {
+		t.Errorf("podman-only 应选中 podman socket，got=%q", got)
+	}
 }
 
 // TestDetectReportsEndpointOnClient 端点必须随 Client 落定：后续所有 SDK 调用都走这一份，
 // 否则「探测挑到 rootless socket、装服务仍去拨默认路径」是第二条同类缺陷。
+// DOCKER_HOST 必须钉空：FromEnv 会吃掉环境里的显式端点（本机实测导出了 podman socket），
+// 让 WithHost 的测试端点失效——单测不得依赖宿主环境。
 func TestDetectReportsEndpointOnClient(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "")
 	c, err := newAtEndpoint("unix:///nonexistent-phpo-test.sock")
 	if err != nil {
 		t.Fatalf("构造客户端：%v", err)

@@ -1,7 +1,7 @@
 # phpo 项目总纲（MASTER PLAN）
 
 > **文档类型**：最高项目总纲
-> **文档版本**：v2.9.15
+> **文档版本**：v2.9.16
 > **生效状态**：FROZEN（冻结，禁止未走评审流程修改）
 > **效力等级**：★★★ 最高（本项目所有其他文档、代码、注释、测试必须与本文件一致）
 > **适用范围**：全体开发者 · CI/CD 流水线 · AI Agent
@@ -95,7 +95,7 @@
 
 1. **禁止修改本文件**：除非用户在当次会话中显式要求「更新总纲」。任何修改必须同步递增 `文档版本`。
 2. **禁止臆测数字**：本文件中的每项数字均已逐行核对原型源码。Agent 不得凭印象改写。
-3. **禁止技术栈漂移**：不得以「Tauri 更轻」「Node 迁移更容易」等理由替换技术栈。
+3. **禁止技术栈漂移**：不得以「Tauri 更轻」「Node 迁移更容易」等理由替换技术栈。**边界（v2.9.16）**：容器引擎方言支持（Docker / Podman 双兼容，§5.25）不属漂移——分岔收在 `internal/engine` 内部（端点 + 方言两个概念），上层与 UI 零感知。
 4. **禁止引入 CLI**：本项目仅提供 GUI 桌面应用。
 5. **禁止引入密码加密**：密码明文存储，默认 `123456`，允许为空，长度不校验。
 6. **禁止校验密码格式**：不允许校验密码长度、复杂度、非空。
@@ -199,6 +199,8 @@
 | THEMES 数 | **9**（原型 6 + 暖黄/青绿/钛灰） | `THEMES` |
 | 单实例 UniqueID | **io.github.xiaokentrl.phpo**（D-Bus 总线名 / 管道名同源） | `main.go` 的 `SingleInstanceOptions` |
 | 配置生效步类别数 | **3**（php 重启容器 / nginx 平滑 reload / 数据服务说明行） | `config_service.go` 的 `effectSteps` |
+| 引擎识别判据 | `/version` 的 **Components[0].Name**（podman 自报 "Podman Engine"；`Platform.Name` 是宿主系统不可用——实测纠正） | `engine/client.go` 的 `classifyEngineVersion` |
+| 检测判据 | **真实拨号 + Ping**；CLI 存在 / socket 文件存在 / symlink 均不可信（垫片、权限、命名空间三类假象——本机实测枚举） | `engine/client.go` 的 `candidateSockets` + `health.go` 三态 |
 | CMD_ITEMS 数 | **20** | `CMD_ITEMS` |
 | MESSAGES 键数 | **约 300+** | `MESSAGES['zh-CN']` |
 | UI_SCALE 档位数 | **7** | `UI_SCALE.snap` |
@@ -565,6 +567,7 @@
 | 缓存校验 | 标准库 `crypto/sha256` | — | 镜像/扩展包完整性校验 |
 | Docker 镜像导出 | Docker SDK `ImageSave` | — | 导出 tar 到离线缓存 |
 | Docker 镜像导入 | Docker SDK `ImageLoad` | — | 从离线缓存加载 |
+| 容器引擎兼容 | Podman Docker 兼容 API（`podman system service`） | 4.x+（实测 5.7.0） | 经兼容端点复用同一套 engine 层（端点 + 方言两个分岔，§5.25）；save/load 走 CLI 方言；镜像源（§5.21）天然引擎无关 |
 
 ### 2.1 明确排除的方案
 
@@ -637,7 +640,7 @@
 | 4 | 状态同步后端唯一权威 | 一致性刚需 |
 | 5 | 三段式写操作 | 事务性刚需 |
 | 6 | 升级包 SHA256 + 签名校验 | 供应链安全 |
-| 7 | Docker 未装则不能启动服务 | 功能依赖 |
+| 7 | 容器引擎（Docker 或 Podman）未就绪则不能启动服务 | 功能依赖 |
 | 8 | Docker 操作必须清洁 + 离线优先 + 临时目录必清 | 不污染环境；离线优先；防污染下次使用 |
 
 ### 3.4 Agent 编码行为准则（v2.7 新增）
@@ -1323,12 +1326,14 @@ phpo/
 
 ### 5.7 doctor 环境诊断
 
+> **适用范围（v2.9.16）**：本节检查项对 Docker / Podman 双引擎通用；探测三态的权威实现在 `internal/engine/health.go`（三哨兵 + 消息/建议分岔），doctor 的消息与建议直接取自其输出。
+
 | 检查项 | 失败时的建议 |
 |-------|-----------|
-| Docker 已安装 | 「Docker 未安装。（{原因}）」+ Linux：「请安装 Docker 引擎：`sudo apt install docker.io`，或按 docs.docker.com 的官方文档安装 docker-ce。」/ win·mac：「请下载 Docker Desktop：[链接]」 |
-| Docker 正在运行 | 「Docker 未运行。（{原因}）」+ Linux：「请启动 Docker 服务：`sudo systemctl start docker`（可用 `systemctl status docker` 查看）。」/ win·mac：「请启动 Docker Desktop。」 |
-| Docker 可访问（权限） | 「当前用户无权访问 Docker。（{原因}）」+ Linux：「请把用户加入 docker 组：`sudo usermod -aG docker $USER`，然后重新登录使组生效。」/ win·mac：「请重新启动 Docker Desktop；仍不行时以管理员身份运行本应用。」 |
-| Docker 版本 | 「版本较旧（< 20.10），部分功能可能不可用。是否继续？」（警告） |
+| 引擎已安装（Docker/Podman） | 「未检测到容器引擎（Docker 或 Podman）。（{原因}）」+ Linux：「请任选其一安装：Docker（`sudo apt install docker.io`，或按 docs.docker.com 安装 docker-ce）或 Podman（`sudo apt install podman`，装后 `systemctl --user enable --now podman.socket`）。」/ win·mac：「请安装 Docker Desktop 或 Podman（podman.io）。」 |
+| 引擎正在运行 | 「容器引擎未运行。（{原因}）」+ Linux：「Docker：`sudo systemctl start docker`；Podman：`systemctl --user start podman.socket`。」/ win·mac：「请启动 Docker Desktop 或 Podman machine。」 |
+| 引擎可访问（权限） | 「当前用户无权访问容器引擎。（{原因}）」+ Linux：「Docker：`sudo usermod -aG docker $USER` 后重新登录；Podman：`systemctl --user enable --now podman.socket`。」/ win·mac：「请重新启动 Docker Desktop / Podman machine；仍不行时以管理员身份运行本应用。」 |
+| 引擎版本 | 「版本较旧（< 20.10），部分功能可能不可用。是否继续？」（警告） |
 | 80 端口可用 | 「80 端口已被占用。新建站点会以降级态创建（暂不发布端口、暂不写 vhost），或改用其他端口。」 |
 | 磁盘空间 | 「磁盘剩余 < 10GB。容器可能无法启动。」（警告） |
 | PHPO_HOME 可写 | 「目录无写权限。请检查权限。」 |
@@ -2497,6 +2502,26 @@ const (
 | 修改配置文件 | nginx 文件→reload | php 文件→重启容器 | 混合改时 php 先 |
 
 **验收**：真宿主上改 `php.ini` 保存后抽屉出现「已重启…新配置已生效」；切到停着的版本看到自动启动行且切完即可用；各操作抽屉日志与实际生效情况一致。
+
+### 5.25 容器引擎检测与选择：Docker 优先，Podman 兼容（v2.9.16 新增）
+
+**这是干什么的**：phpo 启动时拨号识别本机的容器引擎——**Docker 优先**（两者都在时用 Docker，存量用户零感知）；只有 Podman 用 Podman（经 `podman system service` 的 Docker 兼容 API，**同一套 engine 层代码直接服务**）；两个都没有 → 应用照常启动、服务卡片照常显示，启动服务的动作被硬红线 7 拦下，界面给 **Docker / Podman 双列安装引导**（需求②）。
+
+**四条实测纪律**（检测器必须遵守；本机「podman-only + docker 垫片」环境逐条取证，详见根目录《扩展Podman规划实施方案计划.md》）：
+1. **CLI 存在 ≠ 引擎存在**：`/usr/bin/docker` 可能是 podman-docker 仿真垫片（shell 脚本）。
+2. **socket 文件存在 ≠ 可用**：symlink、权限、命名空间都会骗人（rootful socket 无权限 / 用户级 socket 因 socket 激活时有时无）。
+3. **唯一判据 = 真实拨号 + Ping + 引擎识别**：`/version` 的 `Components[0].Name` 含 "Podman" 即 Podman（自报 "Podman Engine"）；`Platform.Name` 是宿主系统，不可用作判据。
+4. **识别结论进权威快照**（`Snapshot.Engine`：kind/version/endpoint，派生态不落库），随 `state:changed` 回流；拨号失败 kind 留空 = 未识别，健康细节仍走三态。
+
+**仲裁与边界**：
+- 候选顺序：Docker 家族全部候选 → Podman 家族（rootless 在前、rootful 兜底）；`DOCKER_HOST` / `CONTAINER_HOST` 显式设置时原样尊重（引擎由拨号识别）。
+- 检测在启动时做**一次**（3s 超时容忍冷启动），运行中不热切；中途新装引擎 → 重启应用生效。
+- **引擎不进 `rootsKey`**（改自定义根不会连引擎换掉）；**不代用户拉起引擎服务**（不写 daemon.json / containers.conf / 不重启任何引擎，与 §5.21 同纪律），只给可复制的修复命令。
+- 平台：Linux 全量；macOS 跟随（podman machine）；Windows podman 实验性。
+
+**实现落点**：`engine/client.go`（候选 + `DetectEngine` + `classifyEngineVersion`）、`health.go`（双列引导文案）、`model/store snapshot`（Engine 字段 + provider）、`di.go`（3s 拨号识别接线）、前端 `DockerGate`（双列引导 + 当前引擎显示）。**已实测**：compat 层容器全生命周期 / exec / archive / commit / 网络别名 DNS 解析全绿；`/images/load` 与 `/build/prune`、plugins/swarm 的方言适配（SaveLoadViaCLI、面板降级）归入下一阶段。
+
+**验收**：Docker-only / Podman-only / 双引擎 / 双无 四种机器上启动 → 引擎结论与界面呈现分别正确；既有 Docker 用户的全部断言逐字绿。
 
 ---
 
@@ -3992,6 +4017,9 @@ const (
 >
 > **v2.9.14 追加（未发布版本内折叠，不另计版本号）· PHP 卡并入折叠组 + 站点源码前移（上一条的追加需求）**：
 > **这是干什么的**：用户看过上一条效果后点名 PHP 卡同样处理——「Site sources 向前移；Config dir／Log dir 做成默认折叠，点击展开」。落点：`dirCollapsible()` 条件删除（五个服务全部折叠），php 的「站点源码」行并入前移块（与 nginx 同一处渲染，条件恢复为 `php || nginx`），尾部旧行删除；扩展行仍在卡片末尾。**用户看得见什么**：php 卡收起时 = 站点源码 → 目录明细 (2) → 扩展；展开后配置/日志目录插在中间，三个版本各自独立记忆展开态（浏览器截图取证：8.4 展开、8.3/8.0 保持收起）。**承载**：文案键零新增（仍每侧 **866**）、事件/快照/门面未动。**验真**：`vue-tsc` EXIT=0 · i18n 门禁 · 浏览器走查 php 页 DOM 顺序与折叠行为。**同源同步**：CHANGELOG 未发布段。
+>
+> **v2.9.16 追加（未发布版本内折叠，不另计版本号）· 容器引擎检测与选择：Docker 优先，Podman 兼容（新 §5.25）**：
+> **这是干什么的**：phpo 启动时拨号识别本机容器引擎——Docker 优先（双引擎并存零感知）、只有 Podman 用 Podman（兼容 API，同一套 engine 层）、双无给双列安装引导（需求②）。**实现落点**：`client.go` 候选加 Podman 三族（rootless 在前）+ `DetectEngine`（`/version` 的 `Components[0].Name` 识别，实测纠正 `Platform.Name` 不可用）+ `health.go` 双列引导文案；`Snapshot.Engine` 字段（model/store provider/di 3s 拨号接线）；前端 DockerGate 增「当前引擎」显示与双列引导块（i18n +4 键，现 876 对称）。**实测纪律四条**入 §5.25（CLI 垫片/socket 文件/拨号判据/识别字段——本机 podman-only+垫片环境逐条取证，详见《扩展Podman规划实施方案计划.md》）。**总纲同步**：硬红线 7 措辞改「容器引擎（Docker 或 Podman）未就绪则不能启动服务」、§2 技术栈表加 Podman 行、规则 3 加引擎方言边界、§5.7 表双引擎化。**P1 未含**（后续阶段）：SaveLoadViaCLI（compat load 500 的 CLI 旁路）、面板行降级（build/prune、plugins/swarm 404）、resolver 动态化、SELinux/linger、doctor 标题方言化。**验真**：`go build`（含 CGO/GTK）· `vue-tsc` · 17 包测试全绿（client_test 4 例新增：候选覆盖/排序/classify/双引擎仲裁）· i18n 876 对称。**真宿主走查欠账**：podman-only 机器看引导页、双引擎机器看 Docker 优先、换血联动。
 >
 > **v2.9.14 追加（未发布版本内折叠，不另计版本号）· 服务卡片目录行默认折叠 + nginx 两行前移（§5.19.3a 卡片布局）**：
 > **这是干什么的**：服务版本卡片（`ServiceView.vue`，五服务共用）上的目录行按需求重排——**mysql／pgsql／redis／nginx** 的目录明细行（配置目录·数据目录·日志目录·初始化脚本，按 `DIR_ROWS[kind]`）默认收成一行「目录明细 (N)」，点击整组展开/再点收起，chevron 随态旋转；**nginx** 另把「站点源码」「vhost 目录」两行**向前移**到端口/密码之后、折叠组之前（它们是这张卡最高频的两行）；**php 保持铺开不变**（需求未点名）。展开态按版本记在组件本地（UI 偏好，不入库不进快照，§3.1 原则 5），默认收起。**为什么这么定**：目录路径是低频查看、占卡片近半高度的信息，收起后首屏一屏能看完所有版本卡片；数据目录行内编辑/浏览/自定义 chip 展开后照常可用，能力零变化。**用户看得见什么**：mysql/pgsql 卡折叠组计数 **4**（展开见配置/数据/日志/初始化脚本），redis **3**，nginx **2**（展开见配置/日志目录）；nginx 卡顺序变为 端口→密码→站点源码→vhost 目录→目录明细；php 卡与改动前逐行一致。**承载**：`DIR_ROWS`/`SVC_META`/挂载表一字未动、无事件/快照/门面变化，新增文案键 2（`svc.dirGroup`／`svc.dirGroupTip`），i18n 现每侧 **866** 键、集合相等；样式只写在 `ServiceView.vue` 自己的 `<style scoped>`（§5.6.4 同口径，不动 base.css 与原型 SSOT——卡片布局原型本就按位置描述，无逐字偏离）。**验真**：`npx vue-tsc --noEmit` EXIT=0 · i18n 门禁 866 对称 · 浏览器走查 demo（mysql 收起→点击展开 4 行含数据目录；nginx 顺序与前移到位、展开见配置/日志；php 无折叠开关、行序不变）。**同源同步**：CHANGELOG 未发布段（本条无既有规范文本需改写：总纲此前未逐行冻结卡片目录行）。
