@@ -402,9 +402,9 @@ func TestBackup_Delete(t *testing.T) {
 	if _, err := os.Stat(host); !os.IsNotExist(err) {
 		t.Fatalf("删除后归档不应存在")
 	}
-	// 缺失 → 任务执行期报错
-	if err := svc.Delete(context.Background(), file); err == nil {
-		t.Fatal("删除不存在的归档应报错")
+	// 缺失 → 幂等成功（§5.13.4：删不存在的资源 = 成功；Delete 的 FuncStep 对 os.IsNotExist 落 dim 并返回 nil）
+	if err := svc.Delete(context.Background(), file); err != nil {
+		t.Fatalf("删除不存在的归档应幂等成功（§5.13.4）: %v", err)
 	}
 	// 穿越 → 直接拒绝，不落任务
 	if err := svc.Delete(context.Background(), "../evil.tar.gz"); err == nil {
