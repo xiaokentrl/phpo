@@ -11,13 +11,15 @@ import (
 )
 
 type Task struct {
-	ID       string
-	Label    string
-	Meta     model.TaskMeta
-	Steps    []Step
-	PreClean func(ctx context.Context) error // Pre-Clean：清理同名/冲突资源
-	Verify   func(ctx context.Context) error // Post-Verify：结果核验
-	Apply    func() error                    // applyStateChange：落地并触发 state:changed
+	ID          string
+	Label       string
+	LabelCode   string            // i18n 消息码（v2.9.16 多语言）；前端优先 t(LabelCode, LabelParams)
+	LabelParams map[string]string // 消息码参数
+	Meta        model.TaskMeta
+	Steps       []Step
+	PreClean    func(ctx context.Context) error // Pre-Clean：清理同名/冲突资源
+	Verify      func(ctx context.Context) error // Post-Verify：结果核验
+	Apply       func() error                    // applyStateChange：落地并触发 state:changed
 }
 
 // Run 同步执行一个任务：空闲即执行，忙则 FIFO 排队（由 Manager 移交执行权），

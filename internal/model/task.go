@@ -35,15 +35,17 @@ type LogLine struct {
 // TaskBrief 面板上的一条任务摘要：所在分区（Running / Pending）即其排队态，
 // 不新增第 5 个任务状态（§0.3 任务状态冻结为 4 个）。
 type TaskBrief struct {
-	ID        string    `json:"id"`
-	Label     string    `json:"label"`
-	Type      string    `json:"type"`              // install / start / site-add / ...
-	Kind      string    `json:"kind,omitempty"`    // 服务类任务的目标种类：卡片据此亮「执行中…」
-	Version   string    `json:"version,omitempty"` // 服务类任务的目标版本
-	Domain    string    `json:"domain,omitempty"`  // 站点类任务的目标域名：站点列表行据此亮「执行中…」
-	Step      int       `json:"step"`              // 已完成步骤数
-	Total     int       `json:"total"`
-	StartedAt time.Time `json:"startedAt"`
+	ID          string            `json:"id"`
+	Label       string            `json:"label"`
+	LabelCode   string            `json:"labelCode,omitempty"`   // i18n 消息码（v2.9.16 多语言）；前端优先 t(labelCode, labelParams)
+	LabelParams map[string]string `json:"labelParams,omitempty"` // 消息码参数（如 {name: "phpo-mysql-8.4"}）
+	Type        string            `json:"type"`                  // install / start / site-add / ...
+	Kind        string            `json:"kind,omitempty"`        // 服务类任务的目标种类：卡片据此亮「执行中…」
+	Version     string            `json:"version,omitempty"`     // 服务类任务的目标版本
+	Domain      string            `json:"domain,omitempty"`      // 站点类任务的目标域名：站点列表行据此亮「执行中…」
+	Step        int               `json:"step"`                  // 已完成步骤数
+	Total       int               `json:"total"`
+	StartedAt   time.Time         `json:"startedAt"`
 }
 
 // TaskBoard 任务队列详情：当前运行任务 + 其后 FIFO 排队项

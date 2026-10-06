@@ -110,6 +110,8 @@ export type TaskStatus = 'running' | 'success' | 'failed' | 'cancelled'
 export interface TaskBrief {
   id: string
   label: string
+  labelCode?: string // i18n 消息码（v2.9.16 多语言）；前端优先 t(labelCode, labelParams)
+  labelParams?: Record<string, string> // 消息码参数
   type: string
   kind?: string // 服务类任务的目标种类：卡片据此亮「执行中…/等待中」
   version?: string // 服务类任务的目标版本
