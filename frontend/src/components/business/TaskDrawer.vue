@@ -115,6 +115,12 @@ function onSplitterDown(e: PointerEvent): void {
   window.addEventListener('pointerup', onUp)
 }
 
+// briefLabel：有 labelCode 时走 i18n 渲染（v2.9.16 多语言），否则回落原始 label
+function briefLabel(r: { label: string; labelCode?: string; labelParams?: Record<string, string> }): string {
+  if (r.labelCode) return t(r.labelCode, r.labelParams || {})
+  return r.label
+}
+
 // copyLog：复制当前可见日志正文；无任务时提示暂无日志
 async function copyLog(): Promise<void> {
   if (!task.value) {
@@ -188,7 +194,7 @@ async function onClear(): Promise<void> {
         <!-- 需求（v2.9.13）：把当前操作的直观名字摆在日志之上——用户点开抽屉第一眼即知「这是哪一件事」。
              文本唯一来源仍是权威快照的 TaskBrief.Label（硬红线 4）；无选中任务（系统日志通道）时不渲染。
              头部三区不动（§5.6.1 左区恒为「服务」二字），故标题落在日志栏内。 -->
-        <div v-if="task" class="drawer-task-title" :title="task.label">{{ task.label }}</div>
+        <div v-if="task" class="drawer-task-title" :title="task.label">{{ briefLabel(task) }}</div>
         <div v-if="progress" class="drawer-progress"><div class="drawer-progress-bar" :style="{ width: progress.percent + '%' }"></div></div>
         <div v-if="errorText" class="drawer-error">
           <svg class="error-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>
@@ -209,11 +215,11 @@ async function onClear(): Promise<void> {
             :key="q.id"
             class="dq-row"
             :class="{ active: q.active, waiting: q.withdrawable }"
-            :title="q.label + ' · ' + q.statusText"
+            :title="briefLabel(q) + ' · ' + q.statusText"
             @click="onSelect(q.id)"
           >
             <span class="dq-dot" :class="q.display"></span>
-            <span class="dq-text">{{ q.label }}</span>
+            <span class="dq-text">{{ briefLabel(q) }}</span>
             <span v-if="q.total && !q.withdrawable" class="dq-step">{{ q.step }}/{{ q.total }}</span>
             <span class="dq-status">{{ q.statusText }}</span>
             <button v-if="q.withdrawable" class="dq-withdraw" type="button" :title="t('task.withdraw')" @click.stop="onWithdraw(q.id)">

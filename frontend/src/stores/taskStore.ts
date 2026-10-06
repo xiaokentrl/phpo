@@ -45,6 +45,8 @@ export interface TaskRecord {
   id: string
   args: string[]
   label: string
+  labelCode?: string // i18n 消息码（v2.9.16 多语言）；TaskDrawer 优先 t(labelCode, labelParams)
+  labelParams?: Record<string, string> // 消息码参数
   meta: TaskMeta
   lines: TaskLine[]
   status: TaskStatus
@@ -441,16 +443,18 @@ export const useTaskStore = defineStore('task', () => {
 
   // ensureLive 取/建一条后端任务记录。task:log 可能先于快照到达（跨事件顺序不保证），
   // 此时以 ID 占位，待队列详情落地后补 label / 类型 / 等效命令。
-  function ensureLive(id: string, label = '', type = '', total = 0): TaskRecord {
+  function ensureLive(id: string, label = '', type = '', total = 0, labelCode?: string, labelParams?: Record<string, string>): TaskRecord {
     const cur = find(id)
     if (cur) {
       if (label) cur.label = label
+      if (labelCode) { cur.labelCode = labelCode; cur.labelParams = labelParams }
       if (type && !cur.meta.type) cur.meta = { ...cur.meta, type }
       if (total && !cur.total) cur.total = total
       if (label && !cur.args.length) cur.args = cmdByLabel.get(label) ?? []
       return cur
     }
     const r = newRecord(id, label, type, true)
+    if (labelCode) { r.labelCode = labelCode; r.labelParams = labelParams }
     if (total) r.total = total
     records.value.unshift(r)
     trim()
@@ -465,7 +469,7 @@ export const useTaskStore = defineStore('task', () => {
   function syncBoard(b?: TaskBoard | null): void {
     const cur = b?.running
     if (cur?.id) {
-      const r = ensureLive(cur.id, cur.label, cur.type, cur.total)
+      const r = ensureLive(cur.id, cur.label, cur.type, cur.total, cur.labelCode, cur.labelParams)
       r.step = cur.step || r.step
       if (cur.total) r.total = cur.total
       const started = Date.parse(cur.startedAt ?? '')
@@ -476,7 +480,7 @@ export const useTaskStore = defineStore('task', () => {
         expanded.value = true
       }
     }
-    for (const p of b?.pending ?? []) ensureLive(p.id, p.label, p.type, p.total)
+    for (const p of b?.pending ?? []) ensureLive(p.id, p.label, p.type, p.total, p.labelCode, p.labelParams)
     // 撤回不留幽灵选中：选中项已不在权威队列且从未有日志（= 被撤回的排队项）时，随同一快照回到运行中任务
     const sel = task.value
     if (sel && dequeued(sel)) activeId.value = cur?.id ?? ''
