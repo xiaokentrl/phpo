@@ -301,8 +301,14 @@ func (s *BackupService) Delete(ctx context.Context, file string) error {
 		Label: "删除备份 " + file,
 		Meta:  model.TaskMeta{Type: "backup-delete"},
 		Steps: []task.Step{
-			&task.FuncStep{StepName: "删除归档文件", Exec: func(context.Context, task.StepLog) error {
-				return os.Remove(host)
+			&task.FuncStep{StepName: "删除归档文件", Exec: func(_ context.Context, log task.StepLog) error {
+				if err := os.Remove(host); err != nil {
+					if !os.IsNotExist(err) {
+						return err
+					}
+					log.Log(string(model.LogDim), "归档已不在，无需删除: "+file)
+				}
+				return nil
 			}},
 		},
 	}
@@ -333,7 +339,7 @@ func (s *BackupService) dumpStep(dumpDir string) *task.FuncStep {
 				name := dockerutil.ContainerName(kk, v)
 				argv := dumpCmd(k, s.password(k, v))
 				file := kk + "-" + v + dumpExt(k)
-				log.Log(string(model.LogCmd), name+" $ "+strings.Join(argv, " "))
+				log.Log(string(model.LogCmd), name+" $ "+strings.Join(dumpCmdDisplay(k, argv), " "))
 				if err := s.dumpOne(ctx, name, argv, filepath.Join(dumpDir, file), log); err != nil {
 					log.Log(string(model.LogErr), fmt.Sprintf("%s %s 逻辑导出失败：%v —— 本次归档不含该库数据", k, v, err))
 					continue
@@ -382,6 +388,20 @@ func (s *BackupService) dumpOne(ctx context.Context, name string, argv []string,
 // dumpCmd 构造容器内转储命令。mysql 用 root 与明文密码（空密码即原生无密码，§1.5）；
 // pgsql 走 pg_hba 的 local trust，无需密码；redis 的 RDB 只能写进可 seek 的文件，需一段容器内脚本。
 // 口令一律作 argv 元素或位置参数传给容器内的 sh，不拼进命令行文本，特殊字符无需转义也不会被二次展开。
+// dumpCmdDisplay 返回用于日志显示的命令参数：mysql 的 --password=xxx 替换为 ***（§3.2 原则 3：
+// 错误信息是人话，密码不该出现在抽屉日志里）。其余参数原样保留。
+func dumpCmdDisplay(kind model.ServiceKind, argv []string) []string {
+	out := make([]string, len(argv))
+	copy(out, argv)
+	for i, a := range out {
+		if strings.HasPrefix(a, "--password=") {
+			out[i] = "--password=***"
+			break
+		}
+	}
+	return out
+}
+
 func dumpCmd(kind model.ServiceKind, password string) []string {
 	switch kind {
 	case model.KindMySQL:
