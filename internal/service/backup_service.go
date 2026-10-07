@@ -181,8 +181,8 @@ func (s *BackupService) Create(ctx context.Context) (model.BackupFile, error) {
 	var paused []engine.ContainerRef
 	t := &task.Task{
 		ID:    s.newID("backup"),
-		Label: "创建备份 " + name,
-		Meta:  model.TaskMeta{Type: "backup"},
+		Label: "创建备份 " + name, LabelCode: task.MsgTaskBackupCreate, LabelParams: map[string]string{"name": name},
+		Meta: model.TaskMeta{Type: "backup"},
 		Steps: []task.Step{
 			s.dumpStep(dumpDir),
 			s.pauseStep(&paused),
@@ -234,8 +234,8 @@ func (s *BackupService) Restore(ctx context.Context, file string) error {
 	meta := model.TaskMeta{Type: "restore"}
 	t := &task.Task{
 		ID:    s.newID("restore"),
-		Label: "恢复备份 " + file,
-		Meta:  meta,
+		Label: "恢复备份 " + file, LabelCode: task.MsgTaskBackupRestore, LabelParams: map[string]string{"file": file},
+		Meta: meta,
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "解包归档", Exec: func(_ context.Context, log task.StepLog) error {
 				n, err := archive.Extract(host, staging)
@@ -298,8 +298,8 @@ func (s *BackupService) Delete(ctx context.Context, file string) error {
 	}
 	t := &task.Task{
 		ID:    s.newID("backup-delete"),
-		Label: "删除备份 " + file,
-		Meta:  model.TaskMeta{Type: "backup-delete"},
+		Label: "删除备份 " + file, LabelCode: task.MsgTaskBackupDelete, LabelParams: map[string]string{"file": file},
+		Meta: model.TaskMeta{Type: "backup-delete"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "删除归档文件", Exec: func(_ context.Context, log task.StepLog) error {
 				if err := os.Remove(host); err != nil {

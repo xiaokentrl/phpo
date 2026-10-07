@@ -143,7 +143,7 @@ func (s *AppService) Install(ctx context.Context, kind model.ServiceKind, versio
 	name := dockerutil.ContainerName(string(kind), version)
 	t := &task.Task{
 		ID:    s.newID(opInstall),
-		Label: "安装 " + name,
+		Label: "安装 " + name, LabelCode: task.MsgTaskInstall, LabelParams: map[string]string{"name": name},
 		Meta:  serviceMeta(opInstall, kind, version),
 		Steps: s.serviceSteps(kind, version, s.lifecycle.Install),
 	}
@@ -161,7 +161,7 @@ func (s *AppService) Reinstall(ctx context.Context, kind model.ServiceKind, vers
 	name := dockerutil.ContainerName(string(kind), version)
 	t := &task.Task{
 		ID:    s.newID(opReinstall),
-		Label: "重建 " + name,
+		Label: "重建 " + name, LabelCode: task.MsgTaskReinstall, LabelParams: map[string]string{"name": name},
 		Meta:  serviceMeta(opReinstall, kind, version),
 		Steps: s.serviceSteps(kind, version, s.lifecycle.Reinstall),
 	}

@@ -20,10 +20,11 @@ import (
 
 // fakeSiteStore 实现 SiteStore（内存权威）
 type fakeSiteStore struct {
-	sites   []model.Site
-	trash   []store.TrashItem
-	snap    *model.Snapshot
-	upserts int
+	sites      []model.Site
+	trash      []store.TrashItem
+	snap       *model.Snapshot
+	upserts    int
+	portBlocks map[string]string // 降级表：站点域名 → 端口被谁占着的人话描述
 }
 
 func newFakeSiteStore() *fakeSiteStore {
@@ -64,6 +65,15 @@ func (f *fakeSiteStore) AddTrashItem(it store.TrashItem) (int64, error) {
 func (f *fakeSiteStore) BuildSnapshot() (*model.Snapshot, error) {
 	f.snap.Sites = append([]model.Site{}, f.sites...)
 	return f.snap, nil
+}
+
+// SetSitePortBlocks 写降级表（内存权威，不落库，与真库同口径）
+func (f *fakeSiteStore) SetSitePortBlocks(blocks map[string]string) {
+	// 与生产同口径：整表替换（腾出的端口即从降级表消失），传 nil 即清空
+	f.portBlocks = map[string]string{}
+	for d, w := range blocks {
+		f.portBlocks[d] = w
+	}
 }
 
 // errValidator 模拟 nginx -t 失败
@@ -387,19 +397,24 @@ func TestSiteService_Add_DegradesWithoutPhp(t *testing.T) {
 	}
 }
 
-// TestSiteService_Add_DegradesOnPortConflict #2：端口被占用时不擅改用户所填端口、站点照建（目录 + hosts + 落库），
-// 仅降级为「vhost 不落盘、端口不发布」；改用空闲端口后经 SetPort 自愈补写（总纲 §5.8 / v2.9.2）。
-func TestSiteService_Add_DegradesOnPortConflict(t *testing.T) {
+// TestSiteService_Add_SamePortReusesNginx #2：两个站点填同一个端口时，先判断占用者是不是自家 nginx——
+// 是（那个端口本来就是前一个站点的宿主发布口）即复用：vhost 照常落盘、端口照常发布、不提示占用，
+// 按 server_name 分流（总纲 §5.8 两档口径）。
+func TestSiteService_Add_SamePortReusesNginx(t *testing.T) {
 	ctx := context.Background()
 	svc, st, env, _ := newSiteSvc(t, nil)
-	// 既有站点占用 80（快照占用表由库派生）
+	// 既有站点占用 80：80 就是 nginx 自己在听的宿主端口
 	st.sites = []model.Site{{Domain: "old.test", Port: 80, PHP: "8.4", Root: filepath.Join(env.WWWRoot, "old.test")}}
 
 	if err := svc.Add(ctx, AddInput{Domain: "new.test", Port: 80, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "new.test.conf")); !os.IsNotExist(e) {
-		t.Fatal("端口占用时不得写 vhost")
+	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "new.test.conf"))
+	if e != nil {
+		t.Fatalf("自家 nginx 已在监听该端口时应复用并落盘 vhost: %v", e)
+	}
+	if !strings.Contains(string(b), "listen 80;") {
+		t.Fatalf("复用的 vhost 应照用户所填端口落盘:\n%s", b)
 	}
 	if _, e := os.Stat(filepath.Join(env.WWWRoot, "new.test")); e != nil {
 		t.Fatalf("站点目录仍应创建: %v", e)
@@ -407,17 +422,8 @@ func TestSiteService_Add_DegradesOnPortConflict(t *testing.T) {
 	if len(st.sites) != 2 || st.sites[1].Domain != "new.test" || st.sites[1].Port != 80 {
 		t.Fatalf("应保留用户所填端口并落库，实得 %+v", st.sites)
 	}
-
-	// 自愈：改到空闲端口 → vhost 补写、监听端口为新值
-	if err := svc.SetPort(ctx, "new.test", 8080); err != nil {
-		t.Fatal(err)
-	}
-	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "new.test.conf"))
-	if e != nil {
-		t.Fatalf("改端口后应补写 vhost: %v", e)
-	}
-	if !strings.Contains(string(b), "listen 8080;") {
-		t.Fatalf("补写的 vhost 端口错误:\n%s", b)
+	if msg, blocked := st.portBlocks["new.test"]; blocked {
+		t.Fatalf("自家 nginx 复用不该标记降级: %q", msg)
 	}
 }
 
@@ -444,10 +450,10 @@ func TestSiteService_SwitchPHP_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestSiteService_Add_DegradesWhenNginxNotReady 门禁在 preflight（未装 nginx 直接阻断建站）；服务层是兜底：
-// nginx 不就绪（未装 / 未运行）一律降级——照常建目录 + 写 hosts + 落库，仅暂不写 vhost、暂不发布端口
-// （否则 docker exec nginx -t 必失败，硬红线 2）；端口保留用户所填值。
-func TestSiteService_Add_DegradesWhenNginxNotReady(t *testing.T) {
+// TestSiteService_Add_DegradesWhenNginxNotInstalled 门禁在 preflight（未装 nginx 直接阻断建站）；服务层是兜底：
+// nginx 根本没装时连校验器都问不到，vhost 暂不落盘——照常建目录 + 写 hosts + 落库，端口保留用户所填值，
+// 装上 nginx 后由 ReconcileServe 补齐（否则 docker exec nginx -t 必失败，硬红线 2）。
+func TestSiteService_Add_DegradesWhenNginxNotInstalled(t *testing.T) {
 	ctx := context.Background()
 	svc, st, env, _ := newSiteSvc(t, nil)
 	st.snap.Installed["nginx"] = nil
@@ -457,7 +463,7 @@ func TestSiteService_Add_DegradesWhenNginxNotReady(t *testing.T) {
 		t.Fatalf("nginx 缺席应放行建站，实得 %v", err)
 	}
 	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "a.test.conf")); !os.IsNotExist(e) {
-		t.Fatal("nginx 未就绪时不得写 vhost")
+		t.Fatal("nginx 未安装时不得写 vhost")
 	}
 	if len(st.sites) != 1 || st.sites[0].Port != 8081 {
 		t.Fatalf("站点应落库并保留端口 8081，实得 %+v", st.sites)
@@ -465,55 +471,92 @@ func TestSiteService_Add_DegradesWhenNginxNotReady(t *testing.T) {
 	if _, e := os.Stat(filepath.Join(env.WWWRoot, "a.test")); e != nil {
 		t.Fatalf("站点目录仍应创建: %v", e)
 	}
+}
 
-	// 已装但未运行同样降级（docker exec 打不通）
+// TestSiteService_Add_LandsVhostUnvalidatedWhenNginxStopped nginx 装着但停着：这一轮校验器问不到，
+// 是硬红线 2 的登记例外——vhost 照常落盘（正文未校验），端口照常保留，站点不标降级
+// （没有端口被别的东西占着，只是这一次没法校验；nginx 启动后由 ReconcileServe 重新校验）。
+func TestSiteService_Add_LandsVhostUnvalidatedWhenNginxStopped(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
 	st.snap.Installed["nginx"] = []string{"alpine"}
 	st.snap.Running["nginx"] = nil
+
 	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8082, PHP: "8.4"}); err != nil {
 		t.Fatalf("nginx 未运行应放行建站，实得 %v", err)
 	}
-	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "b.test.conf")); !os.IsNotExist(e) {
-		t.Fatal("nginx 未运行时不得写 vhost")
+	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "b.test.conf"))
+	if e != nil {
+		t.Fatalf("nginx 未运行时 vhost 仍应落盘（落盘与端口发布解耦）: %v", e)
+	}
+	if !strings.Contains(string(b), "listen 8082;") {
+		t.Fatalf("落盘的 vhost 端口应精确:\n%s", b)
+	}
+	if msg, blocked := st.portBlocks["b.test"]; blocked {
+		t.Fatalf("只是没法校验不等于端口被占，不该标降级: %q", msg)
 	}
 }
 
-// TestSiteService_ReconcileServe_HealsAfterNginxReady 启动 nginx 后自动补齐降级站点：
-// 补写 vhost（上游与监听端口精确）、把端口发布给 nginx；幂等且不动仍降级的站点。
+// TestSiteService_ReconcileServe_HealsAfterNginxReady nginx 到位后自动补齐降级站点：
+// 缺 vhost 的那个补写（上游与监听端口精确）并把端口发布给 nginx；端口仍被占的那个不动——
+// 它的 conf 早就落盘了，要恢复的是宿主端口，这里只重算一次占用表，仍被占就继续保持降级标记。
 func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
 	ctx := context.Background()
 	svc, st, env, _ := newSiteSvc(t, nil)
-	// nginx 已装但停着（建站门禁已过，站点落为降级）
+	// nginx 根本没装：连 nginx -t 都问不到，这一轮 a.test 的 vhost 落不了盘（降级）
+	st.snap.Installed["nginx"] = nil
 	st.snap.Running["nginx"] = nil
 	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}
-	// c.test 的端口被 mysql 占用：nginx 就绪后仍应维持降级，不得抢绑
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "a.test.conf")); !os.IsNotExist(e) {
+		t.Fatal("前置条件：nginx 未装时不该有 a.test 的 vhost")
+	}
+	// c.test 的端口被 mysql 占着：nginx 已装在跑，vhost 照常落盘、只是这一个宿主端口不发布
+	st.snap.Installed["nginx"] = []string{"alpine"}
+	st.snap.Running["nginx"] = []string{"alpine"}
 	st.snap.Installed["mysql"] = []string{"8.4"}
 	st.snap.Env[config.EnvKeyPort("mysql", "8.4")] = "3306"
 	if err := svc.Add(ctx, AddInput{Domain: "c.test", Port: 3306, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}
+	confC := filepath.Join(env.NginxSitesRoot, "c.test.conf")
+	b, e := os.ReadFile(confC)
+	if e != nil {
+		t.Fatalf("端口被占的站点 vhost 也要落盘（落盘与端口发布解耦）: %v", e)
+	}
+	if !strings.Contains(string(b), "listen 3306;") {
+		t.Fatalf("落盘的 vhost 端口应精确:\n%s", b)
+	}
+	confCBefore := string(b) // 补齐之前那份 c.test 正文：它要的是端口，不是重刷正文
+	if msg := st.portBlocks["c.test"]; !strings.Contains(msg, "mysql") {
+		t.Fatalf("被 mysql 占着的端口要点名占用者，实得 %q", msg)
+	}
 
 	pub := &recordingPublisher{}
 	svc.SetNginxPublisher(pub)
-	st.snap.Installed["nginx"] = []string{"alpine"}
-	st.snap.Running["nginx"] = []string{"alpine"}
 
 	if err := svc.ReconcileServe(ctx); err != nil {
 		t.Fatal(err)
 	}
-	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "a.test.conf"))
+	b, e = os.ReadFile(filepath.Join(env.NginxSitesRoot, "a.test.conf"))
 	if e != nil {
 		t.Fatalf("nginx 就绪后应补写 a.test 的 vhost: %v", e)
 	}
 	if !strings.Contains(string(b), "listen 8081;") || !strings.Contains(string(b), "set $php_upstream php-8.4-fpm:9000;") {
 		t.Fatalf("补写的 vhost 端口/上游应精确:\n%s", b)
 	}
-	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "c.test.conf")); !os.IsNotExist(e) {
-		t.Fatal("端口仍被占用的站点应保持降级，不得写 vhost")
+	if b2, e2 := os.ReadFile(confC); e2 != nil || string(b2) != confCBefore {
+		t.Fatalf("c.test 的 conf 不该被本次补齐重刷（它要的是端口，不是正文）: %v", e2)
 	}
 	if len(pub.calls) != 1 || !containsInt(pub.calls[0], 8081) || containsInt(pub.calls[0], 3306) {
 		t.Fatalf("补齐后应发布 {8081}，实得 %v", pub.calls)
+	}
+	if st.portBlocks["a.test"] != "" {
+		t.Fatalf("a.test 已补齐，不该还挂着降级标记: %q", st.portBlocks["a.test"])
+	}
+	if msg := st.portBlocks["c.test"]; msg == "" {
+		t.Fatal("端口仍被 mysql 占着的站点应保持降级（不抢绑）")
 	}
 
 	// 幂等仍需校对端口：站点全都有 conf 时不写盘，但 nginx 容器实际绑的端口集可能已与站点不符
@@ -530,51 +573,140 @@ func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
 // TestSiteService_Remove_HealsSiteFreedByDeletedPort 删站让出的端口可能正卡着别的降级站点
 // （两个站点同填一个端口，后者无 conf）：删除落库后顺手补齐，否则用户删完冲突站点，
 // 界面上会留下一个「条件已满足却仍不服务、且健康列已说不出原因」的站点。
-func TestSiteService_Remove_HealsSiteFreedByDeletedPort(t *testing.T) {
+// fakeBinder 可编排的宿主端口探针：只回答「这些端口谁在用」，值必须是光秃秃的占用者名词短语
+// （人话整句由 portBlockedMsg 拼）。删掉 owners 里的一项即模拟「那个占用者让开了端口」。
+type fakeBinder struct {
+	owners map[int]string
+	calls  [][]int
+}
+
+func (f *fakeBinder) BlockedSitePorts(_ context.Context, ports []int) map[int]string {
+	cp := make([]int, len(ports))
+	copy(cp, ports)
+	f.calls = append(f.calls, cp)
+	out := map[int]string{}
+	for _, p := range ports {
+		if w, ok := f.owners[p]; ok {
+			out[p] = w
+		}
+	}
+	return out
+}
+
+// TestSiteService_Add_DegradesOnForeignPort 端口被「不能确认是自己站点」的东西占着（这里是外部
+// 进程，探针答出来的）：站点照常建、vhost 照常落盘，只是这一个宿主端口不发布，并降级 + 如实说出占用者。
+func TestSiteService_Add_DegradesOnForeignPort(t *testing.T) {
 	ctx := context.Background()
-	svc, _, env, _ := newSiteSvc(t, nil)
+	svc, st, env, _ := newSiteSvc(t, nil)
+	bd := &fakeBinder{owners: map[int]string{8081: "本地的 apache"}}
+	svc.SetPortBinder(bd)
 	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("端口被外部进程占着不该阻断建站: %v", err)
 	}
-	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8081, PHP: "8.4"}); err != nil {
-		t.Fatal(err)
-	}
-	confB := filepath.Join(env.NginxSitesRoot, "b.test.conf")
-	if _, e := os.Stat(confB); !os.IsNotExist(e) {
-		t.Fatal("端口被 a.test 占用时 b.test 应降级（不写 vhost）")
-	}
-	if err := svc.Remove(ctx, "a.test"); err != nil {
-		t.Fatal(err)
-	}
-	b, e := os.ReadFile(confB)
+	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "a.test.conf"))
 	if e != nil {
-		t.Fatalf("删掉冲突站点后应补齐 b.test 的 vhost: %v", e)
+		t.Fatalf("外部占用的站点 vhost 也要落盘（落盘与端口发布解耦）: %v", e)
 	}
 	if !strings.Contains(string(b), "listen 8081;") {
-		t.Fatalf("补齐的 vhost 端口应精确:\n%s", b)
+		t.Fatalf("落盘的 vhost 端口应保留用户所填值:\n%s", b)
+	}
+	msg := st.portBlocks["a.test"]
+	if !strings.Contains(msg, "8081") || !strings.Contains(msg, "本地的 apache") {
+		t.Fatalf("降级说明要点名端口与占用者，实得 %q", msg)
+	}
+	// 占用者让开之后，任一次站点写操作重算占用表即摘掉降级标记
+	delete(bd.owners, 8081)
+	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8082, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if st.portBlocks["a.test"] != "" {
+		t.Fatalf("端口已腾出，不该还挂着降级标记: %q", st.portBlocks["a.test"])
 	}
 }
 
-// TestSiteService_SetPort_HealsSiteFreedByNewPort 改端口同样会腾出端口：a.test 从 8081 让开后，
-// 卡在 8081 上的 b.test 应在本次写操作末尾补齐（与删站同一判据，落库之后才看得见新占用表）。
-func TestSiteService_SetPort_HealsSiteFreedByNewPort(t *testing.T) {
+// TestSiteService_Add_KeepsPrivilegedPortAsDegraded 非 root 探不动 80 这类低位端口时，探针只能回
+// 「判不了」——按两档口径归入「不能确认」：站点照常建、vhost 照常落盘、端口保留，只给一句提示，
+// 绝不把探测能力不足变成阻断。
+func TestSiteService_Add_KeepsPrivilegedPortAsDegraded(t *testing.T) {
 	ctx := context.Background()
-	svc, _, env, _ := newSiteSvc(t, nil)
-	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
+	svc, st, env, _ := newSiteSvc(t, nil)
+	bd := &fakeBinder{owners: map[int]string{80: "权限不足，探不到"}}
+	svc.SetPortBinder(bd)
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatalf("探针判不了不该拦住建站: %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "a.test.conf")); e != nil {
+		t.Fatalf("vhost 仍应落盘: %v", e)
+	}
+	if st.sites[0].Port != 80 {
+		t.Fatalf("端口要保留用户所填值，实得 %d", st.sites[0].Port)
+	}
+	if st.portBlocks["a.test"] == "" {
+		t.Fatal("判不准的占用要如实标记降级，而不是当作已发布")
+	}
+}
+
+// TestSiteService_Remove_HealsSiteFreedByDeletedPort 一次站点写操作重算占用表时，此前被外部占用
+// 而卡住的降级站点要跟着恢复（否则用户清掉冲突源之后，界面上会留着一颗「条件已满足却仍带降级标记」
+// 的站点）。恢复的判据是降级表被重算清空，不是重刷已落盘的 conf——healFreed 不校对宿主端口，
+// 因此这里不断言重发布。
+func TestSiteService_Remove_HealsSiteFreedByDeletedPort(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	bd := &fakeBinder{owners: map[int]string{8081: "本地的 apache"}}
+	svc.SetPortBinder(bd)
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8080, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8081, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}
+	if st.portBlocks["b.test"] == "" {
+		t.Fatal("端口被外部进程占着时 b.test 应标记降级")
+	}
+	confB := filepath.Join(env.NginxSitesRoot, "b.test.conf")
+	before, e := os.ReadFile(confB)
+	if e != nil {
+		t.Fatalf("被占端口的站点 vhost 也应已落盘: %v", e)
+	}
+	delete(bd.owners, 8081) // 占用者让开
+	if err := svc.Remove(ctx, "a.test"); err != nil {
+		t.Fatal(err)
+	}
+	if st.portBlocks["b.test"] != "" {
+		t.Fatalf("删站末尾应重算占用表并摘掉 b.test 的降级标记: %q", st.portBlocks["b.test"])
+	}
+	after, e := os.ReadFile(confB)
+	if e != nil || string(after) != string(before) {
+		t.Fatalf("b.test 的 conf 已落盘，补齐不该重刷正文: %v", e)
+	}
+}
+
+// TestSiteService_SetPort_HealsSiteFreedByNewPort 改端口同样会触发一次占用表重算：外部占用者让开
+// 之后，卡在 8081 上的降级站点应在本次写操作末尾恢复健康标记（与删站同一判据，落库之后才看得见新占用表）。
+func TestSiteService_SetPort_HealsSiteFreedByNewPort(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	bd := &fakeBinder{owners: map[int]string{8081: "本地的 apache"}}
+	svc.SetPortBinder(bd)
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8080, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Add(ctx, AddInput{Domain: "b.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if st.portBlocks["b.test"] == "" {
+		t.Fatal("端口被外部进程占着时 b.test 应标记降级")
+	}
+	delete(bd.owners, 8081) // 占用者让开
 	if err := svc.SetPort(ctx, "a.test", 8082); err != nil {
 		t.Fatal(err)
 	}
-	b, e := os.ReadFile(filepath.Join(env.NginxSitesRoot, "b.test.conf"))
-	if e != nil {
-		t.Fatalf("a.test 让开 8081 后应补写 b.test 的 vhost: %v", e)
+	if st.portBlocks["b.test"] != "" {
+		t.Fatalf("a.test 改端口后应重算占用表并摘掉 b.test 的降级标记: %q", st.portBlocks["b.test"])
 	}
-	if !strings.Contains(string(b), "listen 8081;") {
-		t.Fatalf("补齐的 vhost 端口应精确:\n%s", b)
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "b.test.conf")); e != nil {
+		t.Fatalf("b.test 的 vhost 应仍在那儿: %v", e)
 	}
 }
 
@@ -663,34 +795,43 @@ func TestSiteService_Remove_HostsWarningKeepsGoing(t *testing.T) {
 	}
 }
 
-// failingPublisher 模拟建站最后一步（发布端口到 nginx）失败，用于验证整体回滚
+// failingPublisher 模拟建站最后一步（发布端口到 nginx）失败。发布是加速项不是建站前提：
+// 端口没发布只落一行 err，站点照常建成（§0.2 规则 16「能警告的不要阻止」）。
 type failingPublisher struct{ err error }
 
 func (f failingPublisher) RepublishNginx(context.Context, []int) error { return f.err }
 
-// TestSiteService_Add_RollsBackHostsWhenLaterStepFails 建站末步失败必须连 hosts 一起回滚：
-// 站点没建成却在 /etc/hosts 留下解析行 = 脏状态（§0.2-19 失败必须回滚、§5.13.13 不留无名资源）
-func TestSiteService_Add_RollsBackHostsWhenLaterStepFails(t *testing.T) {
+// TestSiteService_Add_PublisherFailureDoesNotBlockSite 端口发布失败不得判死建站：站点目录、hosts、
+// vhost、落库都已做对，只有那一个宿主端口没发布——界面要看得见一行 err 点名原因，而不是整单回滚
+// （§5.16.3 同口径：已做对的工作不撤回）。vhost 校验失败那一类「前置步骤没过」的回滚由
+// TestSiteService_Add_BlockedByNginxT 锁死。
+func TestSiteService_Add_PublisherFailureDoesNotBlockSite(t *testing.T) {
 	ctx := context.Background()
-	svc, st, env, _ := newSiteSvc(t, nil)
+	svc, st, env, em := newSiteSvc(t, nil)
 	hostsPath := filepath.Join(filepath.Dir(env.PHPOHome), "hosts")
 	svc.SetNginxPublisher(failingPublisher{err: errors.New("nginx 容器重建失败")})
 
-	if err := svc.Add(ctx, AddInput{Domain: "demo.test", Port: 8090, PHP: "8.4"}); err == nil {
-		t.Fatal("发布端口失败应让建站失败")
+	if err := svc.Add(ctx, AddInput{Domain: "demo.test", Port: 8090, PHP: "8.4"}); err != nil {
+		t.Fatalf("端口发布失败不该让建站失败: %v", err)
 	}
-	b, e := os.ReadFile(hostsPath)
-	if e != nil {
-		t.Fatal(e)
+	if len(st.sites) != 1 || st.sites[0].Port != 8090 {
+		t.Fatalf("站点应照常落库并保留用户所填端口: %+v", st.sites)
 	}
-	if hosts.Has(string(b), "127.0.0.1", "demo.test") {
-		t.Fatalf("建站失败后 hosts 仍留着该域名（孤儿条目）:\n%s", b)
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "demo.test.conf")); e != nil {
+		t.Fatalf("vhost 应照常落盘: %v", e)
 	}
-	if !hosts.Has(string(b), "127.0.0.1", "localhost") {
-		t.Fatalf("回滚不得动无关条目:\n%s", b)
+	b, _ := os.ReadFile(hostsPath)
+	if !hosts.Has(string(b), "127.0.0.1", "demo.test") {
+		t.Fatalf("hosts 应已写入该域名:\n%s", b)
 	}
-	if len(st.sites) != 0 {
-		t.Fatalf("任务失败不应执行 Apply 段落库: %+v", st.sites)
+	want := false
+	for i, l := range em.logs {
+		if strings.Contains(l, "站点端口未发布到 Nginx") && em.levels[i] == string(model.LogErr) {
+			want = true
+		}
+	}
+	if !want {
+		t.Fatalf("要有一行 err 点名端口发布失败，实得 %+v / %+v", em.logs, em.levels)
 	}
 }
 

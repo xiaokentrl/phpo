@@ -6,6 +6,8 @@ package service
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -294,13 +296,42 @@ func TestSiteService_PublishesUnionOnPortChange(t *testing.T) {
 	}
 }
 
-// TestSiteService_AddPortConflictSkipsPublish 端口冲突降级：既不写 vhost 也不把该端口发布给 nginx
-// （发布会让容器重建去绑一个已被占用的端口）；改用空闲端口后经 SetPort 一次性补发。
-func TestSiteService_AddPortConflictSkipsPublish(t *testing.T) {
+// TestSiteService_AddSamePortReusesPublish 两个站点填同一个端口时，占用者就是自家 nginx 正在监听
+// 的那一口（前一个站点的宿主发布口）：按两档口径属「能确认是自己站点」——复用、照常落盘、照常发布
+// 那一个端口（发布集不翻倍），不提示占用，由 server_name 分流。
+func TestSiteService_AddSamePortReusesPublish(t *testing.T) {
 	ctx := context.Background()
-	s, _, _, _ := newSiteSvc(t, nil)
+	s, st, env, _ := newSiteSvc(t, nil)
 	pub := &recordingPublisher{}
 	s.SetNginxPublisher(pub)
+	if err := s.Add(ctx, AddInput{Domain: "old.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	pub.calls = nil // 只看复用建站这一次
+
+	if err := s.Add(ctx, AddInput{Domain: "new.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.calls) != 1 || !containsInt(pub.calls[0], 80) {
+		t.Fatalf("复用应照常发布 80，实得 %v", pub.calls)
+	}
+	if st.portBlocks["new.test"] != "" {
+		t.Fatalf("自家 nginx 复用不该标记降级: %q", st.portBlocks["new.test"])
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "new.test.conf")); e != nil {
+		t.Fatalf("复用的站点 vhost 也要落盘: %v", e)
+	}
+}
+
+// TestSiteService_AddPortConflictSkipsPublish 端口被「不能确认是自己站点」的外部进程占着：vhost
+// 照常落盘（落盘与端口发布解耦），只是这一个宿主端口不发布——发布它等于让容器去绑一个已被占的
+// 端口而起不来；改用空闲端口后经 SetPort 一次性补发。
+func TestSiteService_AddPortConflictSkipsPublish(t *testing.T) {
+	ctx := context.Background()
+	s, _, env, _ := newSiteSvc(t, nil)
+	pub := &recordingPublisher{}
+	s.SetNginxPublisher(pub)
+	s.SetPortBinder(&fakeBinder{owners: map[int]string{80: "本地的 apache"}})
 	if err := s.Add(ctx, AddInput{Domain: "old.test", Port: 80, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}
@@ -309,14 +340,19 @@ func TestSiteService_AddPortConflictSkipsPublish(t *testing.T) {
 	if err := s.Add(ctx, AddInput{Domain: "new.test", Port: 80, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(pub.calls) != 0 {
-		t.Fatalf("降级站点不得发布端口，实得 %v", pub.calls)
+	for _, c := range pub.calls {
+		if containsInt(c, 80) {
+			t.Fatalf("被外部占着的端口不得发布，实得 %v", pub.calls)
+		}
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "new.test.conf")); e != nil {
+		t.Fatalf("降级站点的 vhost 仍应落盘: %v", e)
 	}
 
 	if err := s.SetPort(ctx, "new.test", 8090); err != nil {
 		t.Fatal(err)
 	}
-	if len(pub.calls) != 1 || !containsInt(pub.calls[0], 8090) {
+	if len(pub.calls) == 0 || !containsInt(pub.calls[len(pub.calls)-1], 8090) {
 		t.Fatalf("改到空闲端口后应发布 8090，实得 %v", pub.calls)
 	}
 }
@@ -335,7 +371,7 @@ func TestSiteService_DegradedSitePortNeverPublished(t *testing.T) {
 	if err := s.Add(ctx, AddInput{Domain: "a.test", Port: 80, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}
-	// b.test 选 3306：被 mysql 占用 → 降级（不写 vhost、不发布端口）
+	// b.test 选 3306：被 mysql 占用 → 降级（vhost 照常落盘，只是这一个端口不发布）
 	if err := s.Add(ctx, AddInput{Domain: "b.test", Port: 3306, PHP: "8.4"}); err != nil {
 		t.Fatal(err)
 	}

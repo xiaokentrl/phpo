@@ -30,7 +30,7 @@ func (s Site) URL() string {
 // 站点健康度三态（与前端 types.Health、locales sites.health.* 逐字对齐）
 const (
 	HealthUp   = "up"   // 正常：已对外服务
-	HealthWarn = "warn" // 降级：暂不对外服务（vhost 未落盘 / nginx 未运行），站点照常存在
+	HealthWarn = "warn" // 降级：站点照常存在，但暂时访问不到（vhost 未落盘 / nginx 未运行 / 站点端口被本机别的进程占着）
 	HealthDown = "down" // 未响应：配置在位但上游或根目录缺失，访问必失败
 )
 
@@ -40,12 +40,14 @@ type SiteRuntime struct {
 	VHostOnDisk  bool // 站点 conf 已落盘
 	PHPRunning   bool // 站点所选 PHP 版本正在运行
 	RootExists   bool // 站点根目录存在
+	PortBlocked  bool // 站点端口此刻绑不到宿主（被本机别的进程占着）：conf 已在盘上，只是这个端口暂不发布
 }
 
-// Health 派生展示健康度：nginx 未运行或 vhost 未落盘即降级（§5.8 降级态——暂不对外服务，非故障）；
-// 二者就绪但上游 PHP 未运行或站点目录已不在，即为未响应（nginx 会回 502/404）。
+// Health 派生展示健康度：nginx 未运行、vhost 未落盘、或站点端口绑不上，都算降级
+// （§5.8 降级态——暂不对外服务，非故障；站点本身照常存在，配置一个没少）。
+// 三者就绪但上游 PHP 未运行或站点目录已不在，即为未响应（nginx 会回 502/404）。
 func (r SiteRuntime) Health() string {
-	if !r.NginxRunning || !r.VHostOnDisk {
+	if !r.NginxRunning || !r.VHostOnDisk || r.PortBlocked {
 		return HealthWarn
 	}
 	if !r.PHPRunning || !r.RootExists {

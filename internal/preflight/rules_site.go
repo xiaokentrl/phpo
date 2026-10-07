@@ -26,14 +26,15 @@ func (r *run) siteAdd() {
 	if r.findSite(dd.Value) != nil {
 		r.errf("%s: %s", errs.DomainExists, dd.Value)
 	}
-	// 站点端口冲突：保留用户所填端口，只告警并降级（vhost 暂不落盘、端口暂不发布），不顺延、不阻断建站（§5.8）
+	// 站点端口冲突：保留用户所填端口、站点照常创建、配置照常落盘，只把这一个端口暂不发布（站点降级），
+	// 不顺延、不阻断建站（§5.8）。被自己的 Nginx 发布过的端口不算占用，按 server_name 分流复用、连告警都不给。
 	if c.Port != nil {
 		warnRootlessPrivilegedPort(r, c.Port)
 		pp := r.validatePort(asString(c.Port), nil, nil, conflictKeepWarn)
 		if !pp.Ok {
 			r.errf("%s", pp.Msg)
 		} else if pp.Occupied {
-			r.warnf("%s（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）", pp.Msg)
+			r.warnf("%s（站点仍会创建，站点配置照常落盘，只是这个端口暂不发布；腾出该端口或改用空闲端口后自动补齐）", pp.Msg)
 		}
 	}
 	// 无可用 PHP：站点仍建，但 vhost 暂不落盘（上游容器不存在则 nginx -t 必失败，硬红线 2）
@@ -69,7 +70,7 @@ func (r *run) sitePort() {
 		r.errf("%s: %s", errs.SiteMissing, c.Domain)
 		return
 	}
-	if !r.nginxServing() {
+	if !r.nginxServingWarn() {
 		return
 	}
 	// FIX #5：改已有站点的端口仍支持自动顺延（排除自身域名与当前端口）
@@ -109,7 +110,7 @@ func (r *run) phpSwitch() {
 		r.errf("%s: %s", errs.SiteMissing, c.Domain)
 		return
 	}
-	if !r.nginxServing() {
+	if !r.nginxServingWarn() {
 		return
 	}
 	if !contains(r.w.Snap.Installed["php"], c.NewPhp) {
@@ -128,7 +129,7 @@ func (r *run) rewrite() {
 		r.errf("%s: %s", errs.SiteMissing, c.Domain)
 		return
 	}
-	if !r.nginxServing() {
+	if !r.nginxServingWarn() {
 		return
 	}
 }
@@ -158,9 +159,10 @@ type siteView struct {
 	Root   string
 }
 
-// nginxServing vhost 写操作（改端口 / 手改正文 / 切 PHP / 伪静态）的服务门禁：nginx 必须已装且运行。
-// 与建站不同——建站没有旧 conf 会失配，未运行只降级；编辑站点必须把新正文写盘，而写盘前的 nginx -t
-// （硬红线 2）只能在运行中的容器里执行，容器停了这条链必然失败。故此处拦截并给出可恢复的下一步。
+// nginxServing 手改正文（site-vhost）的服务门禁：nginx 必须已装且运行。
+// 这一条只管「用户自己写的那份配置」——它没有模板兜底，写坏了 nginx 就起不来，所以必须先过运行中容器的
+// nginx -t（硬红线 2），容器停了这条链必然失败，故拦截并给出可恢复的下一步。
+// 模板生成的那三处（改端口 / 切 PHP / 伪静态）不走这里，改走 nginxServingWarn：没在跑只告警、照常落盘。
 // 返回 false 表示已记错误，调用方应直接 return。
 func (r *run) nginxServing() bool {
 	if len(r.w.Snap.Installed["nginx"]) == 0 {
@@ -174,9 +176,29 @@ func (r *run) nginxServing() bool {
 	return true
 }
 
+// nginxServingWarn 模板生成型改动（改端口 / 切 PHP / 伪静态）的服务门禁：Nginx 没在跑只告警、不拦。
+// 这三处写的都是模板生成的配置，Nginx 没起来时先落盘、等它启动后重新校验再发布端口（硬红线 2 的登记例外，见 §3.3）；
+// 手动改正文（site-vhost）不在此列——那是用户自己写的配置，必须先过运行中的 Nginx 校验。
+// 返回 false 表示已记错误（Nginx 没装），调用方应直接 return。
+func (r *run) nginxServingWarn() bool {
+	if len(r.w.Snap.Installed["nginx"]) == 0 {
+		r.errf("%s", errs.NginxNeeded)
+		return false
+	}
+	if len(r.w.Snap.Running["nginx"]) == 0 {
+		r.warnf("%s", nginxNotServingWarn())
+	}
+	return true
+}
+
 // nginxNotRunningWarn nginx 已装但未运行的建站降级告警；文案与前端 usePreflight.ts 逐字对齐
 func nginxNotRunningWarn() string {
-	return errs.NotRunning + ": Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；启动 Nginx 后自动补齐）"
+	return errs.NotRunning + ": Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布）"
+}
+
+// nginxNotServingWarn 模板生成型改动（改端口 / 切 PHP / 伪静态）在 Nginx 未运行时的告警；文案与前端 usePreflight.ts 逐字对齐
+func nginxNotServingWarn() string {
+	return errs.NotRunning + ": Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐）"
 }
 
 // nginxNotServingErr nginx 未运行时的编辑站点拦截文案；文案与前端 usePreflight.ts 逐字对齐

@@ -6,6 +6,14 @@
 
 ## [未发布 / M7 收尾]
 
+- **站点端口占用改两档：自家 Nginx 复用，其余照常落盘只降级**：用户现象是两个站点都填 8080 时后建的那个被无故降级、配置还不落盘——而 Nginx 早就在听 8080，加一个 `server_name` 块就能分流。
+  - **这一档怎么判**：站点的宿主端口本来就是 Nginx 那颗容器发布出来的，所以「别的站点占着这个端口」≡「自家 Nginx 正在听这一口」。判定收在一处——占用表（`store.CollectUsedPorts`）里 owner 以 `site ` 开头的即跳过：`site_service.go` 的 `publishPlan`（服务层发布集）与 `preflight/validators.go` 的 `conflictKeepWarn` 那一路（裁决层本地抄件，共用占用表一字不动，服务端口占用报错那条还靠它）。**复用这一档照常落盘、照常发布、不提示、不降级**。
+  - **不能确认那一档**（数据服务端口 / 宿主探针答出的其他进程 / 探针判不准如非 root 碰 80）：**vhost 照常落盘**、只有这一个端口不进发布集、给一行「端口 8080 已被 X 占用：站点配置已落盘，只是这个端口暂不发布（腾出后自动补齐）」，站点照常创建、端口原样保留、任务不判失败。落盘与端口发布因此彻底解耦：`siteLandReady` 只管「Nginx 已装 + 所选 PHP 已装」，端口那一档由 `publishPlan` 单独判。
+  - **Nginx 没在跑**：模板生成的三处（改端口 / 切 PHP / 伪静态）从阻断改为**一行告警 + 照常落盘**（`nginxServingWarn`）——这是硬红线 2 的**登记例外**，已在 AGENTS.md §3.3 与 §5.10 就地注明；用户手改正文（`site-vhost`）仍过 `nginxServing()` 保持阻断（那份没有模板兜底，写坏了 Nginx 就起不来）。Nginx 启动后由 `ReconcileServe` 重新校验、通过才发布并恢复健康。
+  - **恢复靠重算，不靠重刷**：`reconcileServe` 对端口那一档只重算占用表、摘降级标记（已落盘的正文不动）；`healFreed` 沿用 `checkPorts=false`。端口发布失败（容器重建失败）**不再判死建站**——`republishStep` 落一行 `err` 后 `return nil`，已做对的目录 / hosts / vhost / 落库不撤回。
+  - **验真**：`gofmt -l .` 无输出 · `go vet` · `go build` · `go test ./... -count=1` 全绿 · 五项门禁全过 · `vue-tsc --noEmit` EXIT=0。新增/改写用例：`TestSiteService_Add_SamePortReusesNginx`、`TestSiteService_Add_DegradesOnForeignPort`、`TestSiteService_Add_KeepsPrivilegedPortAsDegraded`、`TestSiteService_Add_DegradesWhenNginxNotInstalled` 与 `TestSiteService_Add_LandsVhostUnvalidatedWhenNginxStopped`（两档分开）、`TestSiteService_ReconcileServe_HealsAfterNginxReady`（补齐不重刷已落盘正文）、`TestSiteService_Add_PublisherFailureDoesNotBlockSite`（原「末步失败连 hosts 一起回滚」按新口径改写）、`TestSiteService_AddSamePortReusesNginx` 与改写后的 `TestSiteService_AddPortConflictSkipsPublish`、`TestSiteAddSamePortReusesNginx` 与改写后的 `TestSiteAddOccupiedPortDegrades`、`TestEditVhostRequiresServingNginx`（三条模板链只告警、手改正文仍拦）、`TestGateSiteEditWarnsWhenNginxStopped`。**假件收口一处**：`fakeSiteStore.SetSitePortBlocks` 原为「合并不清」，与生产（整表替换、`nil` 即清空）不符，会让「端口腾出即摘标记」永远断言不到，已改为同口径。
+  - **同源同步**：AGENTS.md §5.8（两档表 + 怎么回来 + 登记例外段）/ §1.9 / §0.3（三行）/ §0.2 规则 17 / §3.3 硬红线 2 / §5.10 / §1.1 结论表 / 底部端口行 + 折叠段；`docs/{端口策略,项目概述,最小限制原则,用户手册,领域模型}.md`；`任务工单.md` T207 与 T404（2026-09-22 那条已就地标注被本轮推翻、原文保留）；本条。**真宿主 GUI 未走查**：两档界面观感需在装有 Docker 的机器上点一次才算。
+
 - **mysql/pgsql 配置文件 0644（P2b 真机取证；对 §5.20 的登记偏离）**：live 取证——MySQL 客户端警告 `World-writable config file '/etc/mysql/conf.d/zz-phpo.cnf' is ignored`，配置**静默失效**；PostgreSQL 的 initdb/pg_hba 对权限更严。§5.20 的 0777 触发数据库安全检查、使配置不生效。
   - **修复**：`workdir.go` 新增 `confPerm0644`——mysql/pgsql 的 conf/ 目录内文件以 0644 落盘，挂 `prepareService`（装/重建）与 `AppService.Start`（启用）两条路径；php/nginx/redis 不动。
   - **验真**：16 包全绿，新增 `TestConfPerm0644_MysqlAndPgsql`（三文件 0644）/ `TestConfPerm0644_NonDb`（php 不受影响）/ `TestConfPerm0644_FreshInstall`（新装即 0644）。

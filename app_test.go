@@ -191,20 +191,26 @@ func TestGateSitePortAdvanceNotBlocked(t *testing.T) {
 	}
 }
 
-// TestGateSiteEditBlockedWhenNginxStopped 改端口 / 切 PHP / 伪静态 / 手改正文都要把 vhost 写盘，
-// 写盘前的 nginx -t（硬红线 2）只能在运行中的容器里跑：nginx 停着时必须在裁决层拦住并给出人话下一步，
-// 而不是放进任务里跑到一半抛 docker 原始错误。
-func TestGateSiteEditBlockedWhenNginxStopped(t *testing.T) {
+// TestGateSiteEditWarnsWhenNginxStopped 改端口 / 切 PHP / 伪静态写的是模板生成的 vhost：
+// Nginx 停着时不再拦——配置照常落盘（正文未经校验，是硬红线 2 的登记例外）、端口暂不发布，
+// 启动 Nginx 后由补齐重新校验并发布；只有手改正文那条仍要求在运行中的容器里先过 nginx -t。
+func TestGateSiteEditWarnsWhenNginxStopped(t *testing.T) {
 	snap := pfReady(map[string][]string{"nginx": {"alpine"}, "php": {"8.4"}},
 		model.Site{Domain: "a.test", Port: 80, PHP: "8.4"})
 	src := pfSrc{snap: snap} // pfReady：已装未运行
-	c := preflight.Ctx{Domain: "a.test", NewValue: 8080}
-	if err := runGuard(src, preflight.ActSitePort, c); err == nil || !strings.Contains(err.Error(), errs.NotRunning) {
-		t.Fatalf("nginx 未运行时改站点端口应被拦截，实际：%v", err)
+	content := "server {\n  listen 80;\n}"
+	if err := runGuard(src, preflight.ActSitePort, preflight.Ctx{Domain: "a.test", NewValue: 8080}); err != nil {
+		t.Fatalf("nginx 停着时改站点端口不该被拦（配置照常落盘，启动后补齐），实际：%v", err)
+	}
+	if err := runGuard(src, preflight.ActSiteVhost, preflight.Ctx{Domain: "a.test", Content: &content}); err == nil || !strings.Contains(err.Error(), errs.NotRunning) {
+		t.Fatalf("nginx 未运行时手改 vhost 应被拦截，实际：%v", err)
 	}
 	snap.Running["nginx"] = []string{"alpine"}
-	if err := runGuard(src, preflight.ActSitePort, c); err != nil {
+	if err := runGuard(src, preflight.ActSitePort, preflight.Ctx{Domain: "a.test", NewValue: 8080}); err != nil {
 		t.Fatalf("nginx 运行后应放行，实际：%v", err)
+	}
+	if err := runGuard(src, preflight.ActSiteVhost, preflight.Ctx{Domain: "a.test", Content: &content}); err != nil {
+		t.Fatalf("nginx 运行后手改正文应放行，实际：%v", err)
 	}
 }
 

@@ -61,7 +61,13 @@ function phpPendingWarn(php?: string): string {
 
 // Nginx 已装但未运行的降级告警：与后端 rules_site.go#nginxNotRunningWarn 文案逐字对齐
 function nginxNotRunningWarn(): string {
-  return `${PF.notRunning}: Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；启动 Nginx 后自动补齐）`
+  return `${PF.notRunning}: Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布）`
+}
+
+// 编辑站点的降级告警：与后端 rules_site.go#nginxNotServingWarn 文案逐字对齐
+// 模板生成的那三处（改端口 / 切 PHP / 伪静态）走这里——没在跑只告警、照常落盘。
+function nginxNotServingWarn(): string {
+  return `${PF.notRunning}: Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐）`
 }
 
 // 编辑站点的拦截文案：与后端 rules_site.go#nginxNotServingErr 文案逐字对齐
@@ -69,9 +75,10 @@ function nginxNotServingErr(): string {
   return `${PF.notRunning}: Nginx（vhost 改动须经运行中的 Nginx 校验后才能落盘，请先启动 Nginx 再重试）`
 }
 
-// 端口占用的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐（§5.8：不改用户所填端口，仅暂不发布端口、暂不落盘 vhost）
+// 端口占用的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐
+// §5.8：不改用户所填端口；配置照常落盘，只有这一个端口暂不发布（站点降级），腾出即自动补齐。
 function portDegradeWarn(msg: string): string {
-  return `${msg}（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）`
+  return `${msg}（站点仍会创建，站点配置照常落盘，只是这个端口暂不发布；腾出该端口或改用空闲端口后自动补齐）`
 }
 
 function hasTraversal(p: string): boolean {
@@ -158,7 +165,14 @@ export function usePreflight() {
     const used = collectUsedPorts(opts.excludeDomains || [])
     if (!used.has(n)) return { ok: true, value: n }
     // 新建站点端口占用（§5.8）：端口原样保留，只回传占用信息交上层弹框告警 + 降级建站
-    if (opts.keepOnConflict) return { ok: true, value: n, occupied: true, msg: `${PF.portInUse}: ${n} (${used.get(n)})` }
+    if (opts.keepOnConflict) {
+      // 别的站点已经把这个端口交给自己的 Nginx 发布了，同一颗 Nginx 按 server_name 分流即可复用，
+      // 所以「站点占用」不算占用——只剔本地这一份抄件，共用占用表一字不动（与后端 validators.go 同口径）。
+      // 数据服务占用的端口、以及本机其它进程占用的端口仍然照报。
+      for (const [p, owner] of used) if (owner.startsWith('site ')) used.delete(p)
+      if (!used.has(n)) return { ok: true, value: n }
+      return { ok: true, value: n, occupied: true, msg: `${PF.portInUse}: ${n} (${used.get(n)})` }
+    }
     if (opts.autoAdvance) {
       const next = findNextAvailablePort(n, 65535, 1, used)
       if (next != null) return { ok: true, value: next, adjusted: true, original: n }
@@ -197,9 +211,11 @@ export function usePreflight() {
 
     const installed = (k: string) => (app.installed as Record<string, string[]>)[k] || []
 
-    // vhost 写链（改端口 / 手改正文 / 切 PHP / 伪静态）的服务门禁：Nginx 必须已装且在运行。
-    // 与建站不同——建站没有旧 conf 会失配，未运行只降级；编辑必须写盘，而写盘前的 nginx -t
-    // （硬红线 2）只能在运行中的容器里执行。与后端 rules_site.go#nginxServing 同口径。
+    // vhost 写链分两档门禁（与后端 rules_site.go 同口径）：
+    // 手改正文（site-vhost）必须已装且运行——改的是用户自己写的东西，没有运行中的 Nginx 校验就落盘，
+    // 等于把一份没人验过的正文塞进去（硬红线 2）。
+    // 模板生成的那三处（改端口 / 切 PHP / 伪静态）只要求已装：没在跑就只告警、照常落盘，
+    // 端口暂不发布、站点标降级，启动 Nginx 后自动重新校验并补齐。
     const nginxServing = (): boolean => {
       const vs = installed('nginx')
       if (!vs.length) {
@@ -209,6 +225,19 @@ export function usePreflight() {
       if (!vs.some((v) => app.isServiceRunning('nginx', v))) {
         errors.push(nginxNotServingErr())
         return false
+      }
+      return true
+    }
+
+    // 模板生成那三处的门禁：nginx 未装仍然阻断（没有 nginx 就无所谓校验与发布），未运行只降级告警。
+    const nginxServingWarn = (): boolean => {
+      const vs = installed('nginx')
+      if (!vs.length) {
+        errors.push(PF.nginxNeeded)
+        return false
+      }
+      if (!vs.some((v) => app.isServiceRunning('nginx', v))) {
+        warnings.push(nginxNotServingWarn())
       }
       return true
     }
@@ -309,7 +338,7 @@ export function usePreflight() {
       case 'site-port': {
         const site = app.sites.find((s) => s.domain === c.domain)
         if (!site) { errors.push(`${PF.siteMissing}: ${c.domain}`); break }
-        if (!nginxServing()) break
+        if (!nginxServingWarn()) break
         const pp = validatePort(c.newValue, { exclude: site.port, excludeDomains: [c.domain], autoAdvance: true })
         if (!pp.ok) errors.push(pp.msg!)
         else if (pp.adjusted) {
@@ -331,14 +360,14 @@ export function usePreflight() {
         const { domain, newPhp } = c
         const site = app.sites.find((s) => s.domain === domain)
         if (!site) { errors.push(`${PF.siteMissing}: ${domain}`); break }
-        if (!nginxServing()) break
+        if (!nginxServingWarn()) break
         if (!installed('php').includes(newPhp)) errors.push(`${PF.notInstalled}: PHP ${newPhp}`)
         break
       }
       case 'rewrite': {
         const site = app.sites.find((s) => s.domain === c.domain)
         if (!site) { errors.push(`${PF.siteMissing}: ${c.domain}`); break }
-        if (!nginxServing()) break
+        if (!nginxServingWarn()) break
         break
       }
       case 'extensions': {

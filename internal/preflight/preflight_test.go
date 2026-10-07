@@ -323,17 +323,37 @@ func TestUpdateConfigNginxPortReadsVersionedKey(t *testing.T) {
 
 // —— site-add（端口占用只告警降级，不顺延）——
 
-// TestSiteAddOccupiedPortDegrades 新建站点端口被占用：保留用户所填端口、不阻断，只给降级告警（总纲 §5.8 / v2.9.2）
+// TestSiteAddOccupiedPortDegrades 新建站点端口被「不是自家站点」的东西占着（这里是 mysql 的服务端口）：
+// 保留用户所填端口、站点照常创建、配置照常落盘，只给一句降级告警说明端口暂不发布（总纲 §5.8 两档口径）
 func TestSiteAddOccupiedPortDegrades(t *testing.T) {
-	res := Run(ActSiteAdd, Ctx{Domain: "new.test", Port: "80", PHP: "8.4", Root: "/www/new.test"}, readyWorld())
+	w := readyWorld()
+	w.Snap.Env[config.EnvKeyPort("mysql", "8.4")] = "3306"
+	res := Run(ActSiteAdd, Ctx{Domain: "new.test", Port: "3306", PHP: "8.4", Root: "/www/new.test"}, w)
 	if !res.Ok {
 		t.Fatalf("端口占用应放行建站，实得错误 %+v", res.Errors)
 	}
 	if _, adjusted := res.Adjusted["port"]; adjusted {
 		t.Fatalf("新建站点不得擅改用户所填端口，实得 %v", res.Adjusted)
 	}
-	if !contains(res.Warnings, portDegradeWarn(errs.PortInUse+": 80 (site demo.test)")) {
+	if !contains(res.Warnings, portDegradeWarn(errs.PortInUse+": 3306 (mysql 8.4)")) {
 		t.Fatalf("应含端口占用降级告警，实得 %+v", res.Warnings)
+	}
+}
+
+// TestSiteAddSamePortReusesNginx 别的站点已经把 80 交给自家 Nginx 发布：这一档属「能确认是自己站点」，
+// 按 server_name 分流复用——不改端口、不报占用、连告警都不给。
+func TestSiteAddSamePortReusesNginx(t *testing.T) {
+	res := Run(ActSiteAdd, Ctx{Domain: "new.test", Port: "80", PHP: "8.4", Root: "/www/new.test"}, readyWorld())
+	if !res.Ok {
+		t.Fatalf("复用自家 Nginx 的端口应放行建站，实得错误 %+v", res.Errors)
+	}
+	if _, adjusted := res.Adjusted["port"]; adjusted {
+		t.Fatalf("不得擅改用户所填端口，实得 %v", res.Adjusted)
+	}
+	for _, warn := range res.Warnings {
+		if strings.Contains(warn, errs.PortInUse) {
+			t.Fatalf("自家 Nginx 复用不该报端口占用，实得 %+v", res.Warnings)
+		}
 	}
 }
 
@@ -432,12 +452,12 @@ func phpPendingWarn(php string) string {
 
 // portDegradeWarn 端口占用降级告警文案（与 rules_site.go#siteAdd 逐字对齐，前后端同口径）
 func portDegradeWarn(msg string) string {
-	return msg + "（站点仍会创建，但端口暂不发布、vhost 暂不落盘；腾出该端口或改用空闲端口后生效）"
+	return msg + "（站点仍会创建，站点配置照常落盘，只是这个端口暂不发布；腾出该端口或改用空闲端口后自动补齐）"
 }
 
 // wantNginxNotRunningWarn 测试侧锁死 nginx 已装未运行的降级告警文案（与 rules_site.go#nginxNotRunningWarn、前端 usePreflight.ts 逐字对齐）
 func wantNginxNotRunningWarn() string {
-	return errs.NotRunning + ": Nginx（站点仍会创建，vhost 暂不落盘、端口暂不发布；启动 Nginx 后自动补齐）"
+	return errs.NotRunning + ": Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布）"
 }
 
 // —— site-port（排除自身域名与当前端口）——
@@ -486,15 +506,21 @@ func TestRewriteOK(t *testing.T) {
 	}
 }
 
-// wantNginxNotServingErr 锁死 vhost 写操作的 nginx 未运行拦截文案（与 rules_site.go#nginxNotServingErr、前端 usePreflight.ts 逐字对齐）
+// wantNginxNotServingErr 锁死手改正文（site-vhost）在 nginx 未运行时的拦截文案（与 rules_site.go#nginxNotServingErr、前端 usePreflight.ts 逐字对齐）
 func wantNginxNotServingErr() string {
 	return errs.NotRunning + ": Nginx（vhost 改动须经运行中的 Nginx 校验后才能落盘，请先启动 Nginx 再重试）"
 }
 
-// TestEditVhostRequiresServingNginx 改端口 / 手改正文 / 切 PHP / 伪静态四条编辑链都要把 vhost 写盘，
-// 而写盘前 nginx -t（硬红线 2）只能在运行中的容器里跑。Nginx 未装或未跑时这条链必然失败，
-// 且旧 conf 会与库里配置长期不一致（补齐只处理「conf 缺失」，不会覆盖过期正文）——
-// 故在裁决层直接拒绝并给出可恢复的下一步，而不是让任务跑到一半抛 docker 原始错误。
+// wantNginxNotServingWarn 锁死模板生成型改动（改端口 / 切 PHP / 伪静态）在 nginx 未运行时的告警文案
+// （与 rules_site.go#nginxNotServingWarn、前端 usePreflight.ts 逐字对齐）
+func wantNginxNotServingWarn() string {
+	return errs.NotRunning + ": Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐）"
+}
+
+// TestEditVhostRequiresServingNginx 四条编辑链在 Nginx 缺席/停着时的两档处置：
+// 模板生成的那三处（改端口 / 切 PHP / 伪静态）没在跑也照常落盘、只给一句告警，等 Nginx 起来重新校验并补齐
+// （硬红线 2 的登记例外）；手改正文那一处没有模板兜底，写坏了 nginx 就起不来，未装报 nginxNeeded、
+// 停着则必须在裁决层拦住并给人话下一步。
 func TestEditVhostRequiresServingNginx(t *testing.T) {
 	content := "server {\n  listen 80;\n}"
 	cases := []struct {
@@ -526,13 +552,22 @@ func TestEditVhostRequiresServingNginx(t *testing.T) {
 		}
 	}
 
-	// 已装但停着：报 nginxNotServingErr，且不得只降级为告警
+	// 已装但停着：模板生成的那三处只告警、照常放行；手改正文仍拦
 	stopped := readyWorld()
 	stopped.Snap.Running["nginx"] = nil
 	for _, tc := range cases {
 		res := Run(tc.act, tc.c, stopped)
-		if res.Ok || !contains(res.Errors, wantNginxNotServingErr()) {
-			t.Errorf("%s nginx 未运行应拦截并给人话提示，得 %+v / %+v", tc.name, res.Errors, res.Warnings)
+		if tc.act == ActSiteVhost {
+			if res.Ok || !contains(res.Errors, wantNginxNotServingErr()) {
+				t.Errorf("%s nginx 未运行应拦截并给人话提示，得 %+v / %+v", tc.name, res.Errors, res.Warnings)
+			}
+			continue
+		}
+		if !res.Ok {
+			t.Errorf("%s nginx 停着时模板生成的改动不该被拦，得 %+v", tc.name, res.Errors)
+		}
+		if !contains(res.Warnings, wantNginxNotServingWarn()) {
+			t.Errorf("%s 应含 nginx 未运行的告警，实得 %+v", tc.name, res.Warnings)
 		}
 	}
 }

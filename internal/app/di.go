@@ -23,7 +23,56 @@ import (
 	"phpo/internal/vhost"
 	"phpo/internal/vhost/hosts"
 	"phpo/pkg/dockerutil"
+	"phpo/pkg/port"
 )
+
+// sitePortBinder 问一次「这些宿主端口此刻绑不绑得上」，替站点认出端口被谁占了。
+// 自家 nginx 已经发布的那些端口不问：Docker 本来就占着它，再问就是把自己当成别人。
+// nginx 没装或快照读不到时一律不实测——空结果的语义是「不降级」，探测能力不足不得变成阻断。
+type sitePortBinder struct {
+	cli    *engine.Client
+	nameOf vhost.ContainerFunc
+}
+
+func (b sitePortBinder) BlockedSitePorts(ctx context.Context, ports []int) map[int]string {
+	blocked := map[int]string{}
+	name, err := b.nameOf()
+	if err != nil {
+		return blocked
+	}
+	own, err := b.cli.PublishedPorts(ctx, name)
+	if err != nil {
+		return blocked
+	}
+	for _, p := range ports {
+		if hasPort(own, p) {
+			continue // 自家 nginx 已发布：同端口按 server_name 分流，不算占用
+		}
+		err := port.Probe(p)
+		if err == nil {
+			continue
+		}
+		if port.InUse(err) {
+			blocked[p] = "其他程序"
+			continue
+		}
+		// 非 root 绑 1024 以下的端口本来就问不出结果，这只算「认不出占用者」，不算端口不可用
+		if errors.Is(err, os.ErrPermission) {
+			blocked[p] = "其他程序（该端口需管理员权限绑定，无法确认占用者）"
+		}
+	}
+	return blocked
+}
+
+// hasPort 看端口在不在自家 nginx 已发布的那一份里。
+func hasPort(xs []int, x int) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
 
 // Container 汇集已构造的底层组件；M2 逐层扩充（Store/Config/Cache/TaskManager/Preflight）
 type Container struct {
@@ -269,6 +318,9 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	)
 	// 站点端口并集发布到 nginx（增删改站点端口后重建 nginx 容器以重绑宿主端口）
 	c.SiteService.SetNginxPublisher(lc)
+	// 站点端口实测：问一次宿主上绑不绑得上，认不出占用者的那些端口如实降级并说明，不拦建站
+	// （探测能力不足不等于端口不可用；nginx 没装时不实测，站点照常落盘）
+	c.SiteService.SetPortBinder(sitePortBinder{cli: cli, nameOf: nginxContainer})
 	// 切换 PHP 版本前备好上游：目标容器没起就先启动（走 lifecycle 既有启动路径：StartContainer 幂等、
 	// 稳定 running 验证、状态落库广播），随后站点链路才 reload nginx——先备上游再切流量，避免 502 窗口。
 	c.SiteService.SetPHPStarter(func(ctx context.Context, version string, log task.StepLog) error {

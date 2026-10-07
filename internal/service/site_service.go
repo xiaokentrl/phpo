@@ -1,6 +1,8 @@
 // SiteService：站点新增/删除（T403）——严格三段式（preflight 由上层裁决 → task 执行 → Apply 落地并广播 state:changed）
 // 建站：建目录 → 校验并写 vhost（硬红线 2）→ 加 hosts（不可写仅警告）→ 落库。删站：根目录入回收站（7 天）→ 删 vhost → 落库删除。
-// 降级：PHP 未就绪或端口被占用时站点照建（目录/hosts/落库、端口原样保留），仅跳过 vhost 落盘与端口发布，后续写操作自愈（§5.8）。
+// 降级分两种（§5.8）：① PHP 未装或 nginx 未装——上游解析不了、连校验都问不到，vhost 暂不落盘（目录/hosts/落库照常、端口原样保留）；
+// ② 端口被「不能确认是自己站点」的东西占着——vhost 照常落盘，只是这一个宿主端口暂不发布，站点标为降级并提示占用者。
+// 两种都会在后续任一站点写操作、或 Nginx 启动后的补齐里自愈。
 // 域名零限制、根路径允许 WWW_ROOT 外（preflight 已降级为警告），建站幂等（重复建站不产生脏状态）。
 package service
 
@@ -28,6 +30,7 @@ type SiteStore interface {
 	DeleteSite(domain string) error
 	AddTrashItem(store.TrashItem) (int64, error)
 	BuildSnapshot() (*model.Snapshot, error)
+	SetSitePortBlocks(map[string]string)
 }
 
 // SiteService 组合 vhost/hosts/回收站/任务引擎，落地站点生命周期
@@ -43,6 +46,8 @@ type SiteService struct {
 	env        config.Env
 	publisher  NginxPublisher
 	phpStarter PHPStarter
+	portBinder PortBinder
+	portBlocks map[string]string
 	seq        atomic.Uint64
 }
 
@@ -63,6 +68,15 @@ func NewSiteService(st SiteStore, vh *vhost.Manager, hosts steps.HostsOps, trash
 
 // SetNginxPublisher 注入端口重发布器（di 装配期调用）；未注入则站点写链路不触 nginx 重建。
 func (s *SiteService) SetNginxPublisher(p NginxPublisher) { s.publisher = p }
+
+// PortBinder 问一次「这些宿主端口此刻绑不绑得上」，返回 端口 → 占用者的人话描述。
+// 已由自家 nginx 发布的那些不在询问范围——Docker 本来就占着它，再探必自我误判。
+type PortBinder interface {
+	BlockedSitePorts(ctx context.Context, ports []int) map[int]string
+}
+
+// SetPortBinder 注入宿主端口实测绑定器（di 装配期调用）；未注入则只做逻辑档位，不实测。
+func (s *SiteService) SetPortBinder(b PortBinder) { s.portBinder = b }
 
 // PHPStarter 确保 php/{version} 容器在跑（真实实现走 LifecycleService.Start：StartContainer 幂等、
 // 稳定 running 验证、状态落库广播）；nil 表示无法启动（单测 / 未注入），切换链路仅跳过该步。
@@ -102,16 +116,17 @@ func (s *SiteService) Add(ctx context.Context, in AddInput) error {
 
 	domain := site.Domain
 	stepsList := []task.Step{steps.NewPrepareSiteDir("创建站点目录", s.env, site.Root)}
-	// 降级态：所选 PHP 未装（上游 php-{ver}-fpm:9000 无法解析，nginx -t 必失败，硬红线 2）
-	// 或所选端口已被占用（发布即让 nginx 绑不上）。两者都只跳过「写 vhost + 发布端口」，
-	// 站点目录/hosts/落库照常、端口原样保留；经 SwitchPHP / SetPort / SetRewrite 的 writeVHost 链路自愈。
-	ready := s.serveReady(site)
-	if ready {
-		stepsList = append(stepsList, steps.NewWriteVHost("生成 vhost", s.vhosts, s.validate, domain, content))
+	// 两种降级分开处理（§5.8）：① PHP 未装或 nginx 未装——连 nginx -t 都问不到，vhost 暂不落盘（目录/hosts/落库照常、端口原样保留）；
+	// ② 端口被「不能确认是自己站点」的东西占着——vhost 照常落盘，只是这一个宿主端口暂不发布，
+	// 站点标为降级并在日志里如实说出占用者（不阻断、不改用户所填端口）。两种都经后续任一站点写操作或 Nginx 启动后的补齐自愈。
+	snap, landReady := s.landReady(site)
+	if landReady {
+		stepsList = append(stepsList, steps.NewWriteVHost("生成 vhost", s.vhosts, s.validatorFor(snap, false), domain, content))
 	}
 	stepsList = append(stepsList, steps.NewAddHosts("写入 hosts", s.hosts, domain))
-	if ready {
-		if rp := s.republishStep(s.publishPorts(mustSites(s.store), domain, site.Port)); rp != nil {
+	if landReady {
+		ports, blocked := s.publishPlan(ctx, mustSites(s.store), domain, site.Port)
+		if rp := s.republishStep(ports, blocked[domain]); rp != nil {
 			stepsList = append(stepsList, rp)
 		}
 	}
@@ -120,7 +135,7 @@ func (s *SiteService) Add(ctx context.Context, in AddInput) error {
 		Label: "创建站点 " + domain,
 		Meta:  model.TaskMeta{Type: "site-add", Domain: domain},
 		Steps: stepsList,
-		Apply: func() error { return s.commitUpsert(site) },
+		Apply: func() error { return s.commitUpsert(ctx, site) },
 	}
 	_, err := s.tasks.Run(ctx, t)
 	return err
@@ -141,7 +156,10 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 		steps.NewDeleteVHostFile("移除 vhost", s.vhosts, domain, prevContent),
 		steps.NewRemoveHosts("回收 hosts", s.hosts, domain),
 	}
-	if rp := s.republishStep(s.publishPorts(mustSites(s.store), domain, 0)); rp != nil {
+	// 删站点这一单里，被删的那颗域名既不在发布集（exceptDomain=domain）也不新增端口（addPort=0），
+	// 所以 blocked[domain] 必然是空——降级提示只属于「创建/改端口」那两路，这里传空串。
+	ports, _ := s.publishPlan(ctx, mustSites(s.store), domain, 0)
+	if rp := s.republishStep(ports, ""); rp != nil {
 		stepsList = append(stepsList, rp)
 	}
 	id := s.newID("site-remove")
@@ -152,7 +170,7 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 		Steps: stepsList,
 		Apply: func() error {
 			trashPath = trashStep.TrashPath()
-			if err := s.commitRemove(domain, site.Root, trashPath); err != nil {
+			if err := s.commitRemove(ctx, domain, site.Root, trashPath); err != nil {
 				return err
 			}
 			s.healFreed(id, ctx)
@@ -165,14 +183,18 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 
 // ReconcileServe 就绪入口（nginx 安装/启动、PHP 装重建、数据服务卸载后）：补齐降级站点，
 // 并额外用权威发布集校对一次宿主端口——停机期间的站点写操作可能没发布成功，容器绑的端口已与站点不符。
+// 端口被占而降级的站点也在这里恢复：重新核一次占用表，腾出来的端口随本次重发布回到宿主。
 func (s *SiteService) ReconcileServe(ctx context.Context) error {
 	return s.reconcileServe(ctx, true)
 }
 
 // reconcileServe 补齐降级站点：把「本应对外服务但 conf 缺失」的站点正文写盘、重载 nginx，再按需在发布集
-// 变化后重绑宿主端口。幂等：已落盘或仍不就绪（PHP 缺失 / 端口被占）的站点跳过补写。
+// 变化后重绑宿主端口。幂等：已落盘或仍不就绪（PHP／nginx 缺失）的站点跳过补写。
 // checkPorts=true 时即使没有站点待补 vhost 也校对一次宿主端口（容器绑的集可能已与站点不符）；
 // false 只在补写过 vhost 后才发布——站点写链路自身已在步骤里发布过一份并集，避免同一次操作重复重建 nginx。
+// 补写盘走的是「校验器已就绪」那一条：nginx 在跑就照常 nginx -t，nginx 没跑则跳过校验（§5.8 的硬红线 2 例外）。
+// 端口被占的站点不在这条路上补写——它的 conf 早就落盘了，要恢复的是宿主端口：这里重算一次 blocked 集，
+// 把腾出来的端口经重发布带回宿主，并把降级标记的变化随快照回流（不重刷一遍已落盘的 conf）。
 // 单站写失败不阻断其余站点，失败域名聚合为一个错误交由调用方记日志——站点维持降级，后续任一站点写操作仍可自愈。
 // 由 nginx 安装/启动任务内联调用，故自身不再产出 task（task.Manager 单飞，嵌套运行会 ErrBusy）。
 func (s *SiteService) reconcileServe(ctx context.Context, checkPorts bool) error {
@@ -188,7 +210,7 @@ func (s *SiteService) reconcileServe(ctx context.Context, checkPorts bool) error
 
 	var healed, failed []string
 	for _, st := range sites {
-		if !siteServeReady(snap, st) {
+		if !siteLandReady(snap, st) {
 			continue
 		}
 		if _, e := os.Stat(s.vhosts.Path(st.Domain)); e == nil {
@@ -198,7 +220,7 @@ func (s *SiteService) reconcileServe(ctx context.Context, checkPorts bool) error
 		if content == "" {
 			continue
 		}
-		if e := s.vhosts.Save(ctx, s.validate, st.Domain, content); e != nil {
+		if e := s.vhosts.Save(ctx, s.validatorFor(snap, false), st.Domain, content); e != nil {
 			failed = append(failed, st.Domain)
 			continue
 		}
@@ -212,11 +234,14 @@ func (s *SiteService) reconcileServe(ctx context.Context, checkPorts bool) error
 	// 端口校对与补写盘解耦：就绪入口即使没有站点待补 vhost，在跑容器的宿主端口集也可能已与站点不符
 	// （停机期间删过站、重发布当时被跳过）。是否真重建由 RepublishNginx 按发布集判等决定。
 	if s.publisher != nil && (checkPorts || len(healed) > 0) {
-		if err := s.publisher.RepublishNginx(ctx, s.publishPorts(sites, "", 0)); err != nil {
+		ports, _ := s.publishPlan(ctx, sites, "", 0)
+		if err := s.publisher.RepublishNginx(ctx, ports); err != nil {
 			return err
 		}
 	}
-	if len(healed) == 0 {
+	// 端口腾出来了即不再降级，这份标记变化也要随快照回流——不能只在补写过 vhost 那一档才回流。
+	blocksChanged := s.refreshPortBlocks(ctx)
+	if len(healed) == 0 && !blocksChanged {
 		if len(failed) > 0 {
 			return fmt.Errorf("部分站点 vhost 补齐失败: %s", strings.Join(failed, ", "))
 		}
@@ -267,27 +292,24 @@ func (s *SiteService) vhostContent(site model.Site) string {
 	return s.vhosts.Get(site.Domain)
 }
 
-// serveReady 判定站点能否立即对外服务：nginx 已装且在运行、所选 PHP 已安装（否则 nginx -t 必失败，
-// 硬红线 2）、所选端口未被占用（占用判据与 preflight 同源——store.CollectUsedPorts，排除自身域名）。
-// 权威快照不可读按未就绪处理（宁可降级也不写出跑不通的 vhost）。
-func (s *SiteService) serveReady(site model.Site) bool {
-	snap, err := s.store.BuildSnapshot()
-	if err != nil {
+// siteLandReady 能不能把 vhost 落盘：nginx 已装（才有 nginx -t 可问）且所选 PHP 已装（上游 php-{ver}-fpm:9000 解析得了）。
+// 端口被占不再拦落盘——配置照常写、只是那一个宿主端口暂不发布（降级）；nginx 没在跑也不再拦落盘，
+// 只是这一轮的正文未经校验（见 validatorFor 与硬红线 2 的登记例外），启动 Nginx 后由 ReconcileServe 重新校验补齐。
+func siteLandReady(snap *model.Snapshot, site model.Site) bool {
+	if len(snap.Installed["nginx"]) == 0 {
 		return false
 	}
-	return siteServeReady(snap, site)
+	return snap.HasVersion("php", site.PHP)
 }
 
-// siteServeReady 就绪判定的纯函数版：复用同一份快照，供建站与补齐共用
-func siteServeReady(snap *model.Snapshot, site model.Site) bool {
-	if len(snap.Installed["nginx"]) == 0 || len(snap.Running["nginx"]) == 0 {
-		return false
+// landReady 读一次权威快照再判落盘就绪，并把那份快照交给调用方（校验档位与端口档位共用同一份，不重复问库）。
+// 权威快照不可读按不就绪处理（宁可降级也不写出跑不通的 vhost）。
+func (s *SiteService) landReady(site model.Site) (*model.Snapshot, bool) {
+	snap, err := s.store.BuildSnapshot()
+	if err != nil {
+		return nil, false
 	}
-	if !snap.HasVersion("php", site.PHP) {
-		return false
-	}
-	_, occupied := store.CollectUsedPorts(snap, []string{site.Domain})[site.Port]
-	return !occupied
+	return snap, siteLandReady(snap, site)
 }
 
 // find 从权威库取站点
@@ -308,7 +330,7 @@ func (s *SiteService) find(domain string) (model.Site, bool) {
 func (s *SiteService) SetPort(ctx context.Context, domain string, port int) error {
 	return s.writeVHost(ctx, "site-port", "改端口 "+domain, func(m *vhost.Manager) string {
 		return m.ApplyPort(domain, port)
-	}, domain)
+	}, domain, false)
 }
 
 // SwitchPHP 切换 PHP（T405，硬红线 1 精确上游）。前置「备好上游」步：目标容器没起就先启动——
@@ -316,21 +338,21 @@ func (s *SiteService) SetPort(ctx context.Context, domain string, port int) erro
 func (s *SiteService) SwitchPHP(ctx context.Context, domain, php string) error {
 	return s.writeVHost(ctx, "php-switch", "切换 PHP "+php+" · "+domain, func(m *vhost.Manager) string {
 		return m.ApplyPhp(domain, php)
-	}, domain, s.ensurePHPRunningStep(php))
+	}, domain, false, s.ensurePHPRunningStep(php))
 }
 
 // SetRewrite 改伪静态（T406）
 func (s *SiteService) SetRewrite(ctx context.Context, domain, preset, rule string) error {
 	return s.writeVHost(ctx, "rewrite", "伪静态 "+preset+" · "+domain, func(m *vhost.Manager) string {
 		return m.ApplyRewrite(domain, preset, rule)
-	}, domain)
+	}, domain, false)
 }
 
 // SetVhostContent 手改 vhost 正文（T406）；写前 nginx -t 必过（硬红线 2）
 func (s *SiteService) SetVhostContent(ctx context.Context, domain, content string) error {
 	return s.writeVHost(ctx, "site-vhost", "编辑 vhost · "+domain, func(m *vhost.Manager) string {
 		return m.SetContent(domain, content)
-	}, domain)
+	}, domain, true)
 }
 
 // AddHosts 手动补写系统 hosts（站点列表「加 hosts」按钮）：建站时提权被拒的站点靠此自愈。
@@ -385,7 +407,9 @@ func (s *SiteService) AddHosts(ctx context.Context, domain string) (string, erro
 
 // writeVHost 通用编排：把权威站点灌入管理器→mutate 得新正文→写盘(校验)+reload→落库+广播。
 // pre 为可变前置步（SwitchPHP 的「备好上游」用），排在写盘之前执行。
-func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate func(*vhost.Manager) string, domain string, pre ...task.Step) error {
+// strict 为真时一律要 nginx -t 才落盘（用户手改 vhost 正文走这条）；为假时 nginx 没在跑就跳过校验先落盘，
+// 等 nginx 起来后由 ReconcileServe 重新校验补齐（§5.8 的硬红线 2 例外）。
+func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate func(*vhost.Manager) string, domain string, strict bool, pre ...task.Step) error {
 	sites, _ := s.store.ListSites()
 	s.vhosts.Sync(sites)
 	content := mutate(s.vhosts)
@@ -396,9 +420,13 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 	if !ok {
 		return fmt.Errorf("站点状态缺失: %s", domain)
 	}
+	snap, snapErr := s.store.BuildSnapshot()
+	if snapErr != nil {
+		snap = nil
+	}
 	stepList := append([]task.Step{}, pre...)
 	stepList = append(stepList,
-		steps.NewWriteVHost("写入 vhost", s.vhosts, s.validate, domain, content),
+		steps.NewWriteVHost("写入 vhost", s.vhosts, s.validatorFor(snap, strict), domain, content),
 		&task.FuncStep{StepName: "重载 Nginx", Exec: func(ctx context.Context, _ task.StepLog) error {
 			if s.reload == nil {
 				return nil
@@ -406,7 +434,8 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 			return s.reload.Reload(ctx)
 		}},
 	)
-	if rp := s.republishStep(s.publishPorts(sites, domain, updated.Port)); rp != nil {
+	ports, blocked := s.publishPlan(ctx, sites, domain, updated.Port)
+	if rp := s.republishStep(ports, blocked[domain]); rp != nil {
 		stepList = append(stepList, rp)
 	}
 	id := s.newID(op)
@@ -419,6 +448,7 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 			if err := s.store.UpsertSite(updated); err != nil {
 				return err
 			}
+			s.refreshPortBlocks(ctx)
 			if err := s.emit(); err != nil {
 				return err
 			}
@@ -440,18 +470,20 @@ func (s *SiteService) healFreed(taskID string, ctx context.Context) {
 	}
 }
 
-// commitUpsert applyStateChange：写库 + 校准缓存 + 广播新快照
-func (s *SiteService) commitUpsert(site model.Site) error {
+// commitUpsert applyStateChange：写库 + 校准缓存 + 重算端口降级 + 广播新快照
+// 降级集必须在 emit 之前落：快照的 site.Health 里那颗降级标记就是从这份表派生的（硬红线 4：界面只认快照）。
+func (s *SiteService) commitUpsert(ctx context.Context, site model.Site) error {
 	if err := s.store.UpsertSite(site); err != nil {
 		return err
 	}
 	s.vhosts.Sync(append(mustSites(s.store), site))
 	s.vhosts.Regenerate(site.Domain)
+	s.refreshPortBlocks(ctx)
 	return s.emit()
 }
 
-// commitRemove applyStateChange：登记回收站条目 + 删库 + 清 vhost 缓存 + 广播
-func (s *SiteService) commitRemove(domain, origRoot, trashPath string) error {
+// commitRemove applyStateChange：登记回收站条目 + 删库 + 清 vhost 缓存 + 重算端口降级 + 广播
+func (s *SiteService) commitRemove(ctx context.Context, domain, origRoot, trashPath string) error {
 	if trashPath != "" {
 		if _, err := s.store.AddTrashItem(store.TrashItem{Kind: "site", OrigPath: origRoot, TrashPath: trashPath}); err != nil {
 			return err
@@ -462,6 +494,7 @@ func (s *SiteService) commitRemove(domain, origRoot, trashPath string) error {
 	}
 	s.vhosts.Remove(domain)
 	s.vhosts.Sync(mustSites(s.store))
+	s.refreshPortBlocks(ctx)
 	return s.emit()
 }
 
@@ -489,23 +522,37 @@ func (s *SiteService) newID(op string) string {
 
 // PublishPorts 当前应发布给 nginx 的权威站点端口集（实现 NginxPortSource）。
 // 装/重建 nginx 与站点写链路走同一判据，避免「nginx 按另一套端口起来、站点绑不上」。
+// 判据复用 publishPlan：端口被外面占着而降级的站点不在这份清单里，nginx 不去抢绑它。
 func (s *SiteService) PublishPorts() []int {
-	return s.publishPorts(mustSites(s.store), "", 0)
+	ports, _ := s.publishPlan(context.Background(), mustSites(s.store), "", 0)
+	return ports
 }
 
-// republishStep 产出「重发布站点端口到 nginx」步骤；publisher 为 nil 时返回 nil（调用方据此不加入任务）。
-func (s *SiteService) republishStep(ports []int) task.Step {
-	if s.publisher == nil {
+// republishStep 发布站点端口到 nginx。conflict 非空即本次有站点的端口被「不能确认是自己站点」的东西占着：
+// 先如实说那一句（meta 级——不是 err，任务本身是成功的，§5.6 的失败原因取最后一条 err 行），再照常发布其余端口。
+// 发布失败只落一行 err 后 return nil——vhost 已经落盘、站点已经建好，把 nginx 侧的端口问题判死整单，
+// 等于撤回已经做对的那部分（§0.2 规则 16 / §5.16.3 同口径）。腾出端口后由 ReconcileServe 补齐。
+func (s *SiteService) republishStep(ports []int, conflict string) task.Step {
+	if s.publisher == nil && conflict == "" {
 		return nil
 	}
-	return &task.FuncStep{StepName: "发布站点端口到 Nginx", Exec: func(ctx context.Context, _ task.StepLog) error {
-		return s.publisher.RepublishNginx(ctx, ports)
+	return &task.FuncStep{StepName: "发布站点端口到 Nginx", Exec: func(ctx context.Context, log task.StepLog) error {
+		if conflict != "" {
+			log.Log(string(model.LogMeta), conflict)
+		}
+		if s.publisher == nil {
+			return nil
+		}
+		if err := s.publisher.RepublishNginx(ctx, ports); err != nil {
+			log.Log(string(model.LogErr), "站点端口未发布到 Nginx: "+err.Error())
+		}
+		return nil
 	}}
 }
 
-// publishPorts 汇总应发布给 nginx 的宿主端口：只计入 vhost 已落盘的站点，并剔除数据服务占用的端口。
-// 降级站点（PHP 未就绪 / 端口被占）库里仍记着端口，但没有 conf——发布出去只会让 nginx 容器去抢绑
-// 一个没人服务、甚至已被 mysql 等占用的宿主端口，绑不上即全站瘫痪（§5.8）。
+// publishPorts 是读不到权威快照时退回的保守口径：只取 vhost 已落盘站点的端口并集，并剔除数据服务占用的端口。
+// 占用者是自家 nginx（可复用）还是外面的进程（要降级），判据全在快照那张占用表里；快照读不到就不猜，
+// 降级表给空、照常发布。正常路径走 publishPlan，这里只保底。
 func (s *SiteService) publishPorts(sites []model.Site, exceptDomain string, addPort int) []int {
 	out := make([]model.Site, 0, len(sites))
 	for _, st := range sites {
@@ -545,4 +592,116 @@ func sitePorts(sites []model.Site, exceptDomain string, addPort int) []int {
 		out = append(out, addPort)
 	}
 	return out
+}
+
+// publishPlan = 该发布给 nginx 的宿主端口集 + 哪些站点因端口绑不上而降级（域名 → 人话原因）。
+// 占用只分两档：占用者是别的站点（= 自家 nginx 在监听，按 server_name 分流即可复用，不提示、不降级）；
+// 其余一律「不能确认」——数据服务占的、别的进程占的、探测说绑不上的，配置照常落盘、只不发布这一个端口。
+// 快照读不到时不猜：退回旧的「按落盘站点取端口并集」口径，blocked 给空。
+func (s *SiteService) publishPlan(ctx context.Context, sites []model.Site, exceptDomain string, addPort int) ([]int, map[string]string) {
+	snap, err := s.store.BuildSnapshot()
+	if err != nil {
+		return s.publishPorts(sites, exceptDomain, addPort), map[string]string{}
+	}
+	hard := map[int]string{}
+	for p, owner := range store.CollectUsedPorts(snap, []string{exceptDomain}) {
+		if strings.HasPrefix(owner, "site ") {
+			continue // 自家 nginx 正在监听，复用即可
+		}
+		hard[p] = owner
+	}
+	cand := make([]int, 0, len(sites)+1)
+	seen := map[int]bool{}
+	for _, st := range sites {
+		if st.Domain == exceptDomain || st.Port <= 0 || hard[st.Port] != "" || seen[st.Port] {
+			continue
+		}
+		seen[st.Port] = true
+		cand = append(cand, st.Port)
+	}
+	if addPort > 0 && !seen[addPort] && hard[addPort] == "" {
+		cand = append(cand, addPort)
+	}
+	probed := map[int]string{}
+	if s.portBinder != nil && len(cand) > 0 {
+		probed = s.portBinder.BlockedSitePorts(ctx, cand)
+	}
+	blocked := map[string]string{}
+	keep := make([]model.Site, 0, len(sites))
+	for _, st := range sites {
+		if st.Domain == exceptDomain || st.Port <= 0 {
+			continue
+		}
+		if _, e := os.Stat(s.vhosts.Path(st.Domain)); e != nil {
+			continue // 没落盘就没有可发布的端口
+		}
+		why := hard[st.Port]
+		if why == "" {
+			why = probed[st.Port]
+		}
+		if why != "" {
+			blocked[st.Domain] = portBlockedMsg(st.Port, why)
+			continue
+		}
+		keep = append(keep, st)
+	}
+	ports := sitePorts(keep, "", 0)
+	if addPort > 0 {
+		why := hard[addPort]
+		if why == "" {
+			why = probed[addPort]
+		}
+		if why != "" {
+			blocked[exceptDomain] = portBlockedMsg(addPort, why)
+		} else if !containsPort(ports, addPort) {
+			ports = append(ports, addPort)
+		}
+	}
+	return ports, blocked
+}
+
+// portBlockedMsg 给人话一句：这个端口此刻归谁、这次只做了哪一半、怎么回来。
+func portBlockedMsg(port int, owner string) string {
+	return fmt.Sprintf("端口 %d 已被 %s 占用：站点配置已落盘，只是这个端口暂不发布（腾出后自动补齐）", port, owner)
+}
+
+// validatorFor 这一轮的 nginx -t 该不该做：手改正文（strict）必须过；nginx 在跑才有 -t 可问；
+// 快照读不到时照旧校验（不放松）。没在跑就跳过——这是给硬红线 2 登记的一处例外，
+// 只用于 phpo 自己按模板渲染出的配置，且启动 Nginx 后由 ReconcileServe 重新校验补齐。
+func (s *SiteService) validatorFor(snap *model.Snapshot, strict bool) vhost.Validator {
+	if snap == nil || strict || len(snap.Running["nginx"]) > 0 {
+		return s.validate
+	}
+	return nil
+}
+
+// refreshPortBlocks 落库之后重算一次降级表（域名 → 原因），写回存储并同步本服务缓存；返回「跟上次比是否变了」。
+// 只能在写库之后调：步骤阶段库里仍是旧占用表（healFreed 同一原因）。
+func (s *SiteService) refreshPortBlocks(ctx context.Context) bool {
+	_, blocked := s.publishPlan(ctx, mustSites(s.store), "", 0)
+	changed := !sameBlocks(s.portBlocks, blocked)
+	s.portBlocks = blocked
+	s.store.SetSitePortBlocks(blocked)
+	return changed
+}
+
+func sameBlocks(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func containsPort(ports []int, p int) bool {
+	for _, v := range ports {
+		if v == p {
+			return true
+		}
+	}
+	return false
 }

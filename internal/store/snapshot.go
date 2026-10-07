@@ -120,6 +120,7 @@ func (s *Store) enrichSites(snap *model.Snapshot) {
 			VHostOnDisk:  sitesRoot != "" && pathExists(filepath.Join(sitesRoot, st.Domain+".conf")),
 			PHPRunning:   st.PHP != "" && contains(phpUp, st.PHP),
 			RootExists:   st.Root != "" && pathExists(st.Root),
+			PortBlocked:  s.portBlockedOf(st.Domain),
 		}.Health()
 	}
 }

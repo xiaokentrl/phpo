@@ -42,6 +42,9 @@ type Store struct {
 
 	discMu sync.RWMutex              // 保护 disc：与 gaps 同理，写读分处两条线
 	disc   []model.DiscoveredService // 最近一次全量同步在 Docker 上数出来的服务容器（派生态，不落库）
+
+	portBlocksMu sync.RWMutex      // 保护 portBlocks：与 gaps/disc 同理，写读分处两条线
+	portBlocks   map[string]string // 站点域名 → 占着它那个端口的本机进程（人话描述，派生态，不落库）
 }
 
 // New 返回延迟打开的运行态存储：不建目录、不建库、不迁移。装配期用它注入各服务门面。
@@ -102,6 +105,30 @@ func (s *Store) Discovered() []model.DiscoveredService {
 	s.discMu.RLock()
 	defer s.discMu.RUnlock()
 	return s.disc
+}
+
+// SetSitePortBlocks 记下哪些站点的端口此刻绑不到宿主——被本机别的进程占着。
+// 这是干什么的：站点配置照常落盘、这个端口暂时不发布出去，界面上要把「为什么打不开」说清楚。
+// 同样不落库（重启后由就绪路径重新现算），也不改动 sites 任何一行：
+// 端口腾出来即自动恢复，不需要用户手工做什么。传 nil 即清空。
+func (s *Store) SetSitePortBlocks(blocks map[string]string) {
+	s.portBlocksMu.Lock()
+	defer s.portBlocksMu.Unlock()
+	s.portBlocks = blocks
+}
+
+// SitePortBlocks 读回 域名 → 占着它那个端口的进程（人话描述），降级日志与提示的唯一来源。
+func (s *Store) SitePortBlocks() map[string]string {
+	s.portBlocksMu.RLock()
+	defer s.portBlocksMu.RUnlock()
+	return s.portBlocks
+}
+
+// portBlockedOf 问某个站点的端口现在绑不绑得上（快照派生健康度用；没记过即视为没被占）。
+func (s *Store) portBlockedOf(domain string) bool {
+	s.portBlocksMu.RLock()
+	defer s.portBlocksMu.RUnlock()
+	return s.portBlocks[domain] != ""
 }
 
 func (s *Store) Close() error {
