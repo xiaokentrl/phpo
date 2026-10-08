@@ -50,6 +50,7 @@ var stepNames = map[string]string{
 	"移除 vhost":             "step.removeVhost",
 	"回收 hosts":             "step.reclaimHosts",
 	"发布站点端口到 Nginx":        "step.publishSitePorts",
+	"写入 index.php":         "step.writeSiteIndex",
 	"校验":                   "step.verify",
 }
 

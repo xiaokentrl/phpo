@@ -118,6 +118,9 @@ func (s *SiteService) Add(ctx context.Context, in AddInput) error {
 
 	domain := site.Domain
 	stepsList := []task.Step{steps.NewPrepareSiteDir("创建站点目录", s.env, site.Root)}
+	// 建站即在站点根目录放一份示例 index.php：站点没有自己的源码时，访问者看到的是这份而不是 nginx 的默认页。
+	// 已存在（用户自己的源码）一律不覆盖——这一步无条件下发，降级态也有站点目录，照样该有入口页。
+	stepsList = append(stepsList, steps.NewWriteSiteIndex("写入 index.php", site.Root))
 	// 两种降级分开处理（§5.8）：① PHP 未装或 nginx 未装——连 nginx -t 都问不到，vhost 暂不落盘（目录/hosts/落库照常、端口原样保留）；
 	// ② 端口被「不能确认是自己站点」的东西占着——vhost 照常落盘，只是这一个宿主端口暂不发布，
 	// 站点标为降级并在日志里如实说出占用者（不阻断、不改用户所填端口）。两种都经后续任一站点写操作或 Nginx 启动后的补齐自愈。
@@ -219,12 +222,24 @@ func (s *SiteService) reconcileServe(ctx context.Context, checkPorts bool) error
 		if !siteLandReady(snap, st) {
 			continue
 		}
-		if _, e := os.Stat(s.vhosts.Path(st.Domain)); e == nil {
-			continue // 已落盘，无需补齐
-		}
 		content := s.vhosts.Get(st.Domain) // 取缓存正文（保留手改），无缓存则按站点重算
 		if content == "" {
 			continue
+		}
+		if _, e := os.Stat(s.vhosts.Path(st.Domain)); e == nil {
+			// 已落盘 ≠ 已经对：模板生成的那一份可能是**上一个容器引擎**时期写的（v2.9.16 前 nginx 运行时
+			// DNS 写死 127.0.0.11，换到 Podman 后那一口没人应答，nginx 解析不到 php-{ver}-fpm，站点常年 502，
+			// 而用户什么都没做错）。这里现算一次，与磁盘上那份不一致就重刷——手改正文不动（那是用户的意图，
+			// 自愈不得替他改）。
+			if s.vhosts.Customized(st.Domain) {
+				continue
+			}
+			have, e := os.ReadFile(s.vhosts.Path(st.Domain))
+			want := s.vhosts.Regenerate(st.Domain)
+			if e != nil || want == "" || string(have) == want {
+				continue // 读不动 / 渲染不出东西 / 本来就是这一份：什么都不动
+			}
+			content = want
 		}
 		if e := s.vhosts.Save(ctx, s.validatorFor(snap, false), st.Domain, content); e != nil {
 			failed = append(failed, st.Domain)

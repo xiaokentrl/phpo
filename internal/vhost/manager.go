@@ -103,6 +103,13 @@ func (m *Manager) Get(domain string) string {
 	return m.compute(site)
 }
 
+// Customized 这份正文是不是用户手改的（判据取权威站点表的持久标记；域名不存在返回 false）。
+// 自愈只动模板生成的那一份——手改正文属用户意图，程序不替他改（§5.25）。
+func (m *Manager) Customized(domain string) bool {
+	site := m.sites[domain]
+	return site != nil && site.VhostCustomized
+}
+
 // Regenerate 丢弃手改、按站点重算正文（VHosts.regenerate）
 func (m *Manager) Regenerate(domain string) string {
 	site := m.sites[domain]

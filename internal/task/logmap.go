@@ -205,6 +205,8 @@ var logLines = map[string]string{
 	"镜像就绪: ":                 "log.imageReady",
 	"站点目录已存在，跳过创建: ":         "log.siteDirExists",
 	"已创建站点目录: ":              "log.siteDirCreated",
+	"站点已有 index.php，不覆盖: ":   "log.siteIndexExists",
+	"已写入 index.php: ":        "log.siteIndexWritten",
 	"已写入 vhost: ":            "log.vhostWritten",
 	"hosts 写入失败（站点仍创建成功）: ":  "log.hostsWriteFail",
 	"hosts 写入失败: ":           "log.hostsAddFail",

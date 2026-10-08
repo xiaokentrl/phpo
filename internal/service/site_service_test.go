@@ -428,6 +428,32 @@ func TestSiteService_Add_SamePortReusesNginx(t *testing.T) {
 	}
 }
 
+// TestSiteService_Add_WritesSiteIndexWhenDegraded 降级态（PHP 未就绪 → 这一轮不写 vhost、不发布端口）
+// 只影响「站点能不能被打开」，不影响站点根目录——目录照样建，入口页也照样该有。
+// 错的时候会怎样：用户按提示去站点目录检查，看到的却是一个空文件夹，分不清是「建站没做完」还是
+// 「建站做完了、只是这一轮没发布」。怎么回来：腾出 PHP 版本或改一次端口，vhost 与端口自动补齐，
+// 而 index.php 从建站那一步起就在盘上，不需要重做任何东西。
+func TestSiteService_Add_WritesSiteIndexWhenDegraded(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	if err := svc.Add(ctx, AddInput{Domain: "c.test", Port: 8083, PHP: ""}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(env.NginxSitesRoot, "c.test.conf")); !os.IsNotExist(err) {
+		t.Fatalf("PHP 未就绪时不得写 c.test 的 vhost: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(env.WWWRoot, "c.test", "index.php"))
+	if err != nil {
+		t.Fatalf("降级态仍应有站点入口页（站点目录是照常建的）: %v", err)
+	}
+	if !strings.Contains(string(b), "phpinfo()") {
+		t.Fatalf("入口页应为建站写下的那份示例 index.php:\n%s", b)
+	}
+	if len(st.sites) != 1 || st.sites[0].Domain != "c.test" {
+		t.Fatalf("站点仍应照常落库: %+v", st.sites)
+	}
+}
+
 // TestSiteService_SwitchPHP_RoundTrip T405 验收：8.4↔8.3 往返切换，上游逐字符精确（硬红线 1），库始终同步
 func TestSiteService_SwitchPHP_RoundTrip(t *testing.T) {
 	svc, st, env, _ := newSiteSvc(t, nil)
@@ -568,6 +594,55 @@ func TestSiteService_ReconcileServe_HealsAfterNginxReady(t *testing.T) {
 	}
 	if len(pub.calls) != 1 || !containsInt(pub.calls[0], 8081) || containsInt(pub.calls[0], 3306) {
 		t.Fatalf("无待补站点时仍应以权威发布集 {8081} 校对一次，实得 %v", pub.calls)
+	}
+}
+
+// TestSiteService_ReconcileServe_HealsStaleVhost 换过容器引擎以后，磁盘上那一份「模板生成的」vhost 可能还写着
+// 上一个引擎的 nginx 运行时 DNS（真机现象：旧版本把 resolver 写死成 Docker 的 127.0.0.11，切到 Podman 后
+// 那一口没人应答，nginx 解析不到 php-8.0-fpm，站点常年 502，而用户什么都没做错、也没地方可点「重建」）。
+// 自愈必须在「任意一次站点写操作或 nginx 启动」时把这一份按当前引擎重刷；用户手改的那一份仍然一个字都不动。
+func TestSiteService_ReconcileServe_HealsStaleVhost(t *testing.T) {
+	ctx := context.Background()
+	svc, _, env, _ := newSiteSvc(t, nil)
+	svc.vhosts.SetResolverProvider(func() string { return "10.89.0.1" }) // 这台机器的引擎是 Podman
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 8081, PHP: "8.4"}); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(env.NginxSitesRoot, "a.test.conf")
+	// 模拟旧引擎时期落盘的那一份：正文已在盘上，但 resolver 是 Docker 的内嵌 DNS
+	stale := "server {\n    resolver 127.0.0.11 valid=10s ipv6=off;\n}\n"
+	if err := os.WriteFile(conf, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileServe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) == stale {
+		t.Fatal("磁盘上那份 vhost 里的 resolver 已经问不到 DNS，自愈必须按当前引擎重刷（否则站点常年 502 没人管）")
+	}
+	if !strings.Contains(string(b), "resolver 10.89.0.1") {
+		t.Fatalf("重刷后的正文应带这台机器的 nginx 运行时 DNS，实得:\n%s", b)
+	}
+	if !strings.Contains(string(b), "listen 8081;") || !strings.Contains(string(b), "set $php_upstream php-8.4-fpm:9000;") {
+		t.Fatalf("重刷不得丢掉端口与精确上游（硬红线 1）:\n%s", b)
+	}
+
+	// 手改的那一份不在自愈范围内：那是用户的正文，程序不替他改
+	if err := svc.SetVhostContent(ctx, "a.test", "server {\n    resolver 1.1.1.1;\n    listen 8081;\n}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conf, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ReconcileServe(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b2, e2 := os.ReadFile(conf); e2 != nil || string(b2) != stale {
+		t.Fatalf("手改过的 vhost 不得被自愈重刷（只动模板生成的那一份）: %v\n%s", e2, b2)
 	}
 }
 

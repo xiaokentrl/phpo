@@ -190,7 +190,7 @@
 | 「同步状态」口径分档 | **2**（两档都现数「这台机器的 Docker 此刻有哪些服务容器」——一次 `ContainerList{All:true}`；差别在镜像：**每任务后与启动＝轻量**只判容器存在性，**手动「同步状态」＝全量**再逐个已安装版本核基座镜像与扩展固化镜像） | `internal/service/lifecycle_service.go` 的 `Calibrate` / `SyncAll` → `calibrate(ctx, auditImages)`（§5.19 / §5.19.3a） |
 | phpo 产出物权限 | **0777**（目录与文件一律；显式 `chmod` 归一，不靠 `MkdirAll`/`WriteFile` 入参） | `internal/util/fs.go` 的 `DirPerm` / `FilePerm`（§5.20）；`internal/config/password_test.go` 锁死 `config.yaml` 为 0777、`internal/store/store_test.go#TestDBFilePermNormalized` 锁死 `phpo.db` |
 | 任务标签消息码数 | **26**（每一条都有任务在用它，漏码即用例变红） | `internal/task/messages.go`；`internal/task/logmap_test.go#TestTaskLabelsAllCoded`（§5.26） |
-| 日志行消息码数 | **159**（`log.*` **112** 含 8 条任务框架行 ／ `step.*` **47**） | `internal/task/logmap.go` + `internal/task/stepnames.go`；两侧语言包键由 `TestLocaleKeysCoverAllCodes` 逐项核对（§5.26） |
+| 日志行消息码数 | **162**（`log.*` **114** 含 8 条任务框架行 ／ `step.*` **48**） | `internal/task/logmap.go` + `internal/task/stepnames.go`；两侧语言包键由 `TestLocaleKeysCoverAllCodes` 逐项核对（§5.26） |
 | 中文日志行的记号覆盖率 | **全部**（源码里每一行中文日志都要能在对照表认出码，容器输出这类数据行除外） | `internal/task/logmap.go` 的 `LookupLine` / `CoversTemplate`；用例 `TestEveryChineseLogLineIsMapped` 扫源码（§5.26） |
 | 任务账本日志保留 | **尾部 500 行** | `internal/task/ledger.go`（`maxLedgerLines`）；写回 `operations` 表（迁移 0008 加 `task_id/label/logs`） |
 | SQLite 迁移数 | **8** | `internal/store/migrate/0001–0008.sql` |
@@ -230,7 +230,8 @@
 | 硬红线数量 | **8** | 见 §3.3 |
 | PHP 切换上游格式 | **`php-{version}-fpm:9000`** | 保留版本号原样 |
 | 默认站点端口 | **80** | 本项目策略 |
-| 新建站点端口冲突 | **两档：自家 Nginx 在监听 → 复用（不提示、照常发布）；否则不顺延——告警 + 站点降级（vhost 照常落盘、只这一个端口暂不发布）** | 保留用户所填端口，站点照常创建 |
+| 新建站点端口冲突 | **三档（§5.8）：自家 Nginx 在监听 → 复用（不提示、照常发布）；rootless 引擎绑不上 <1024 → 告警 + 站点降级（vhost 照常落盘、只这一个端口暂不发布，说清真因与两条恢复路）；探针问不出结果 → 不阻断也不降级** | 保留用户所填端口，站点照常创建 |
+| 装服务 / 改服务端口的占用判定 | **同样不把「站点占用」当占用**（那一口本来就是自家 Nginx 发布的）；数据服务端口与本机别的进程照报 `portInUse`、不顺延 | `internal/preflight/validators.go` 的 `conflictBlock` 与前端 `usePreflight.ts` 的 `!autoAdvance` 同一口径 |
 | 落盘与端口发布 | **解耦**：端口能不能绑不决定配置文件写不写 | §5.8 |
 | nginx 未运行时写 vhost | **跳过 `nginx -t` 照常落盘**（硬红线 2 的登记例外，只对模板生成的配置；手改正文仍拦），启动 Nginx 后重新校验并补齐发布 | §3.3 / §5.8 |
 | 改站点端口顺延范围 | **1–65535 首个可用** | 占用不报错、无窗口上限 |
@@ -1384,7 +1385,7 @@ phpo/
 
 **站点端口的占用判定**：以权威快照的逻辑占用表（`store.CollectUsedPorts`：mysql/pgsql/redis 服务端口 + 已有站点端口）为准，preflight 与服务层共用同一判据，不另立标准。**宿主实测那一侧的分档收在一个纯函数** `service.ClassifyProbe(err, port, rootless)`——绑得上／`EADDRINUSE`／权限不足且 rootless 且 <1024／其余，四种结果只有一个出口，装配层不再自己判 `errors.Is`（否则同一件事会在两处各说一遍）。
 
-**服务端口**（安装服务 / 改配置）占用时仍报 `portInUse` 错误，由用户自行处理，不自动顺延。
+**服务端口**（安装服务 / 改配置）占用时仍报 `portInUse` 错误，由用户自行处理，不自动顺延。但**「站点占用」在这两路都不算占用**：站点那个宿主端口本来就是自家 Nginx 发布出来的，拿它拦新装的 Nginx（或拦改过端口的服务）等于让自家的东西占自家的口（真实现象：装 Nginx 时报「端口已被占用: 8080 (site demo.test)」）。判据只有一处——占用表里 owner 以 `site ` 开头（`internal/preflight/validators.go` 的 `conflictKeepWarn` / `conflictBlock` 两档都剔它，`conflictAdvance` 那一路不剔：改已有站点的端口要在各站点之间挑空口）。前端镜像 `frontend/src/composables/usePreflight.ts` 的 `validatePort` 与后端逐字同判据。
 
 ### 5.9 应用版本检查和升级
 
@@ -2542,7 +2543,7 @@ const (
 - **引擎不进 `rootsKey`**（改自定义根不会连引擎换掉）；**不代用户拉起引擎服务**（不写 daemon.json / containers.conf / 不重启任何引擎，与 §5.21 同纪律），只给可复制的修复命令。
 - 平台：Linux 全量；macOS 跟随（podman machine）；Windows podman 实验性。
 
-**实现落点**：`engine/client.go`（候选 + `DetectEngine` + `classifyEngineVersion`）、`health.go`（双列引导文案）、`model/store snapshot`（Engine 字段 + provider）、`di.go`（3s 拨号识别接线）、前端 `DockerGate`（双列引导 + 当前引擎显示）；**resolver 按引擎动态化**（vhost 模板 `{{ .Resolver }}`：Docker=内嵌 DNS 127.0.0.11 缺省不变，Podman=`engine.NetworkGateway` 现取网关，失败退最后成功值再退 10.89.0.1）；**SaveLoadViaCLI**（`ImageSave/ImageLoad` 的 podman 方言：CLI save --format docker-archive / load -i，仅本地 unix 端点——缓存 tar 两引擎通用）；**not-found 收口**（`isNotFound` 主判据 cerrdefs + 文本兜底）。**已实测**：compat 层容器全生命周期 / exec / archive / commit / 网络别名 DNS 解析全绿；`/build/prune`、plugins/swarm 在 podman 下 404 → 清理面板走「—」+ 原因的既有通道（零代码，端点实测确认）；secrets 200 正常工作。**剩余**：SELinux `:z/:Z` 与 linger doctor 项（需 Fedora 实测与 doctor 数字修订）、doctor 标题方言化、live 双引擎验证。
+**实现落点**：`engine/client.go`（候选 + `DetectEngine` + `classifyEngineVersion`）、`health.go`（双列引导文案）、`model/store snapshot`（Engine 字段 + provider）、`di.go`（3s 拨号识别接线）、前端 `DockerGate`（双列引导 + 当前引擎显示）；**resolver 按引擎动态化**（vhost 模板 `{{ .Resolver }}`：Docker=内嵌 DNS 127.0.0.11 缺省不变，Podman=`engine.NetworkGateway` 现取网关，失败退最后成功值再退 10.89.0.1）；**已落盘的 vhost 要跟着引擎换脸**（v2.9.16 追加）：`resolver` 改成按引擎现取只解决「以后写的」那一份，磁盘上**已经写着 `resolver 127.0.0.11` 的旧正文**没人管——用户从 Docker 覆盖安装切到 Podman 后，nginx 照样解析不到 `php-{ver}-fpm`，站点常年 502，而他既没做错什么、界面上也没有「重建 vhost」可点（真机取证：`{PHPO_HOME}/nginx/1.25/logs/error.log` 连着几十行 `recv() failed (111: Connection refused) while resolving, resolver: 127.0.0.11:53` + `php-8.0-fpm could not be resolved (110: Operation timed out)`）。故 `reconcileServe`（任意一次站点写操作或 Nginx 启动都会跑一次）不再只看「conf 在不在盘上」：**非手改的站点现算一次正文，与磁盘那份不一致就重刷并 reload nginx**——手改的那一份一个字都不动（那是用户的意图，判据是持久化的 `sites.vhost_customized`）。落点 `internal/service/site_service.go` 的 `reconcileServe` + `internal/vhost/manager.go` 的 `Customized`；用例 `TestSiteService_ReconcileServe_HealsStaleVhost` 两头锁死（旧 resolver 被重刷 / 手改正文不被重刷）。**SaveLoadViaCLI**（`ImageSave/ImageLoad` 的 podman 方言：CLI save --format docker-archive / load -i，仅本地 unix 端点——缓存 tar 两引擎通用）；**not-found 收口**（`isNotFound` 主判据 cerrdefs + 文本兜底）。**已实测**：compat 层容器全生命周期 / exec / archive / commit / 网络别名 DNS 解析全绿；`/build/prune`、plugins/swarm 在 podman 下 404 → 清理面板走「—」+ 原因的既有通道（零代码，端点实测确认）；secrets 200 正常工作。**剩余**：SELinux `:z/:Z` 与 linger doctor 项（需 Fedora 实测与 doctor 数字修订）、doctor 标题方言化、live 双引擎验证。
 
 **验收**：Docker-only / Podman-only / 双引擎 / 双无 四种机器上启动 → 引擎结论与界面呈现分别正确；既有 Docker 用户的全部断言逐字绿。
 
@@ -2576,11 +2577,37 @@ const (
 - ❌ 让消息码缺席变成界面缺陷——空行、键名当文案、把任务 ID 显示成标签（§5.6.1／§5.6.3 同口径），都算回归。
 - ❌ 只补一种语言的文案（第 1 项门禁与 `TestLocaleKeysCoverAllCodes` 都会拦）；也 ❌ 把中文文案改得与后端 `text` 不一致（那条中文就是回退显示本身）。
 
-**落地登记**：后端 `internal/task/logmap.go`（对照表 + `LookupLine` + `CoversTemplate`）、`internal/task/stepnames.go`（步骤名 → 码）、`internal/task/messages.go`（26 个任务标签码）、`internal/task/emitter.go`（`Logf` 附带码 / `LogCode`）、`internal/model/task.go`（`TaskLogEvent` 的 `Code`/`Params`）；前端 `frontend/src/utils/msgText.ts`（含 `@` 嵌套与解码回退）、`frontend/src/composables/useI18n.ts` 的 `te()`、`taskStore.appendLog(id, level, text, code?, params?)`、`TaskDrawer.vue` 的 `lineText()`／失败原因／复制日志一律走渲染后的文本。用例：`internal/task/logmap_test.go` 七条（首句形状 · 句中数据 · 步骤名记号 · 标签记号 · 源码全覆盖对账 · 语言包两侧齐备且占位符一致 · 模板与正则自洽）。**当前规模**：消息码 **112** 条 `log.*`（含 8 条任务框架行）+ **47** 条 `step.*` + **26** 条 `task.*` 标签码；语言包两侧各 **1068** 键（以第 1 项门禁输出为准）。
+**落地登记**：后端 `internal/task/logmap.go`（对照表 + `LookupLine` + `CoversTemplate`）、`internal/task/stepnames.go`（步骤名 → 码）、`internal/task/messages.go`（26 个任务标签码）、`internal/task/emitter.go`（`Logf` 附带码 / `LogCode`）、`internal/model/task.go`（`TaskLogEvent` 的 `Code`/`Params`）；前端 `frontend/src/utils/msgText.ts`（含 `@` 嵌套与解码回退）、`frontend/src/composables/useI18n.ts` 的 `te()`、`taskStore.appendLog(id, level, text, code?, params?)`、`TaskDrawer.vue` 的 `lineText()`／失败原因／复制日志一律走渲染后的文本。用例：`internal/task/logmap_test.go` 七条（首句形状 · 句中数据 · 步骤名记号 · 标签记号 · 源码全覆盖对账 · 语言包两侧齐备且占位符一致 · 模板与正则自洽）。**当前规模**：消息码 **114** 条 `log.*`（含 8 条任务框架行）+ **48** 条 `step.*` + **26** 条 `task.*` 标签码；语言包两侧各 **1119** 键（含 `pf.*` 48 条，以第 1 项门禁输出为准）。
 
-**仍欠的那一件（如实登记，不得写成已完成）**：`preflight` 的告警/拦截文案与任务失败的 error 文本（toast 直出的那句）仍是后端中文，它们没有走 `task:log` 通道，要跟着换语言得给 preflight 结果补消息码——那是另一轮的事，本轮不承诺。
+**仍欠的那一件（如实登记，不得写成已完成）**：**后端** preflight 最终裁决给出的告警/拦截文本，以及任务失败的 error（toast 直出的那句，如「容器内命令失败（退出码 1）」「创建并启动 phpo-nginx-1.25 失败: …引擎原话…」），仍是中文——它们不走 `task:log`，要跟着换语言得给 preflight 结果与 error 补消息码，那是另一轮的事，本轮不承诺。
+>
+> **本轮已闭掉的那一半**（v2.9.16 追加）：`preflight` 在**界面上的即时反馈**不再写死中文。`frontend/src/composables/usePreflight.ts` 原先带一张中文 `PF` 字面量表（29 条）外加 19 句拼好的中文告警/拦截语（含 rootless 那两支、建站端口降级那句、卸载/停用 PHP 与 Nginx 的依赖告警、镜像源校验那三条、缓存导入的两条、未填镜像源那条）——用户切到 English 以后，弹窗里这些句子仍是中文，与抽屉已经跟着语言走的日志形成两种口径。现在 `PF` 的每一项与这 19 句全部改为读语言包的 `pf.*` 键（两侧各 **48** 条，第 1 项门禁锁死集合相等），`const PF = …defineProperty(get: () => t('pf.' + k))` **每次访问现读一次**，所以换完语言不必重开应用；中文一侧的值与改前逐字相同（中文界面看不出任何变化），后端那句中文原样保留、仍是 error/toast 与账本里的回退文本。
 
 ---
+
+### 5.27 站点入口页：建站就在站点根目录放一份示例 index.php（v2.9.16 追加）
+
+**这是干什么的**：点「新建站点」成功后，phpo 在该站点的根目录里写一份示例 `index.php`（内容只有两件事：打印自己的完整路径，再调 `phpinfo()`）。这样用户打开域名立刻看到「站点跑起来了、跑的是哪一个 PHP」，而不是 nginx 的一句 `directory index of "/var/www/demo.test/" is forbidden`，也不是空白页——真机取证就是这一行 403/默认页错误。
+
+**什么情况下不会写、界面上看得见什么**：
+
+| 情形 | 行为 | 抽屉那一行 |
+|------|------|-----------|
+| 站点根目录里**已经有** `index.php` | **一个字都不动**（那是用户自己的源码，删掉就是不可逆的丢数据） | 一行 `dim`「站点已有 index.php，不覆盖: {全路径}」 |
+| 站点是降级态建的（PHP 未就绪、nginx 没跑） | **照样写**——降级只影响「端口暂不发布」，站点目录是照常创建的，入口页不该缺席 | 一行 `ok`「已写入 index.php: {全路径}」 |
+| 写失败（目录不可写等） | 整单失败并回滚本次任务已做的步骤（vhost / hosts 都不留） | 一行 `err` 带原因 |
+
+**怎么回来**：不需要恢复动作。用户想放自己的源码时，直接覆盖 `index.php` 即可——phpo 只在「这一份不存在」时写一次，任何后续写链都不会再动它。
+
+**落点**：步骤 `internal/task/steps/steps_site.go` 的 `WriteSiteIndex`（`NewWriteSiteIndex` / `Execute` / `Rollback` 只删本步真正写过的那一份），编排在 `internal/service/site_service.go` 的 `Add` 里、排在「生成 vhost」**之前**且**无条件下发**；权限走 §5.20（`util.WriteFile` 归一 0777）。日志与步骤名各登记消息码（`step.writeSiteIndex` / `log.siteIndexWritten` / `log.siteIndexExists`，见 §5.26），两侧语言包同步。用例：`internal/task/steps/steps_site_test.go` 三条（写下示例页并点名全路径 · 已有用户源码时不覆盖也不回滚删除 · 没执行过时回滚是空操作）+ `internal/service/site_service_test.go#TestSiteService_Add_WritesSiteIndexWhenDegraded`（降级态仍写入口页、仍不写 vhost、站点照常落库）。
+
+**明确禁止**：
+
+- ❌ 覆盖用户已有的 `index.php`（哪怕是降级建站、哪怕是重装站点）——那不是本产品的文件。
+- ❌ 只在「站点完全就绪」那一路才写入口页：降级态也有站点目录，目录里没有入口页就等于访问者看到的还是 nginx 的默认页。
+- ❌ 把这份示例页做成常驻功能（自动刷新、模板化、多语言）或往里面塞数据库连接信息——它就是一次性占位，用户覆盖即消失。
+- ❌ 为这一步新增事件名、任务状态、快照字段或 preflight action（17 事件名／4 状态／20 action 一律不动）。
+
 
 ---
 
@@ -4394,6 +4421,20 @@ const (
 > `steps_cleanup.go` 等落点改为真实文件；§11 标注 Linux 已出包真机验证、win/mac 签名链未落地。
 > 端口策略、密码策略、离线缓存、硬红线 8 条、三段式写操作等**行为条款一字未改**。
 
+> **v2.9.16 追加（未发布版本内折叠，不另计版本号）· 覆盖安装后的八件事：装服务端口判定 · 旧 vhost 跟着引擎换脸 · 建站写示例 index.php · preflight 即时反馈跟语言走**：
+> 用户一句授权：**「覆盖安装phpo之后发现的BUG，全程不需要问我并直接自行规划后修复全部，全部修复完成后提交推送发版也不要问我」**，并列出八条。逐条交代「改了什么 / 为什么会错 / 怎么验证」：
+>
+> **① 装 Nginx 被「站点占用」拦住（报「端口已被占用: 8080 (site demo.test)」）**。这是干什么的：装服务/改服务端口那一档不再把「某个站点正在这个口上」当占用。为什么会错：站点的宿主端口本来就是**自家 Nginx 那一颗容器**发布出来的，拿它拦新装的 Nginx 等于让自家的东西占自家的口；后端 `validators.go` 早在 `conflictBlock` 一档剔了 `site ` 前缀，**前端镜像 `usePreflight.ts` 没跟上**，于是即时反馈那一步先报错、按钮点不动。怎么验证：`internal/preflight/preflight_test.go#TestInstallPortConflictBlocks`（mysql 占的口照报 · 空闲口放行 · 只有站点在 80 上时装 nginx 照常放行）+ 前端与后端同一判据（`!autoAdvance` 才剔；改已有站点端口那一路站点占用照算）。
+>
+> **④ 列表里切换 PHP 版本后站点 502（真机取证，非猜测）**。先看现场再动手：`<PHPO_HOME>/nginx/1.25/logs/error.log` 连续几十行 `recv() failed (111: Connection refused) while resolving, resolver: 127.0.0.11:53` 与 `php-8.0-fpm could not be resolved (110: Operation timed out)`；`phpo.db` 里那次 `切换 PHP 8.0 · demo.test` 任务账本却全是 `ok`（写了 vhost、reload 了 nginx、发布了端口）。**根因不是切换链路，是磁盘上那份旧正文没人管**：v2.9.16 把 `resolver` 改成按引擎现取，只解决「以后写的」那一份；`reconcileServe` 旧的判据是「conf 在盘上就跳过」，于是从 Docker 覆盖安装切到 Podman 以后，旧 vhost 里那行 `resolver 127.0.0.11` 永远留着，nginx 永远解析不到 PHP 上游——用户没做错任何事，界面上也没有「重建 vhost」可点。修法：`reconcileServe`（任意一次站点写操作或 Nginx 启动都会跑）对**非手改**的站点现算一次正文，与磁盘那份不一致就重刷并 reload nginx；**手改的那一份一个字都不动**（判据是持久化的 `sites.vhost_customized`，新增 `vhost.Manager.Customized`）。用例 `TestSiteService_ReconcileServe_HealsStaleVhost` 两头锁死（旧 resolver 被重刷且端口/精确上游不丢 · 手改正文不被重刷），并新增 §5.25 一段。
+>
+> **⑧ 新建站点后打开的是 nginx 的默认页/forbidden，站点根目录里没有入口页**（真机 error.log 同场取证：`directory index of "/var/www/demo.test/" is forbidden`）。修法：建站链路在「生成 vhost」**之前**无条件加一步 `WriteSiteIndex`，写 `<?php echo __FILE__; echo '</hr>'; phpinfo(); ` 这份示例页——**已存在就一个字都不动**（那是用户自己的源码，覆盖等于不可逆的丢数据），降级态照样写（降级只是端口暂不发布，站点目录是照常建的），回滚只删本步真正写过的那一份。新增 **§5.27**（三档行为表 + 四条禁止项）、一个步骤名码 `step.writeSiteIndex` 与两行日志码 `log.siteIndexWritten`/`log.siteIndexExists`；用例 `steps_site_test.go` 三条 + `TestSiteService_Add_WritesSiteIndexWhenDegraded`。
+>
+> **②③⑤⑥⑦ 的多语言，本轮闭掉「界面上的即时反馈」这一半**：`usePreflight.ts` 原先自带一张 29 条的中文 `PF` 字面量表 + 19 句拼好的中文告警/拦截语（rootless 两支、建站端口降级那句、卸载/停用 PHP 与 Nginx 的依赖告警、镜像源校验三条、缓存导入两条、未填镜像源那条），用户切成 English 后弹窗里仍是中文，与抽屉里已经跟着语言走的日志对不上。现全部改为读语言包的 `pf.*`（两侧各新增 **48** 键、集合相等），`PF` 用 `Object.defineProperty(get: () => t('pf.'+k))` **每次访问现读一次**，换语言不必重开应用；**中文一侧的值与改前逐字相同**，后端那句中文原样保留（仍是 error/toast 与任务账本里的回退文本）。⑥⑦（队列行标签与抽屉逐行）在 `91a7adf`/`5b2e7d5` 已实现，本轮逐条复核：`TaskDrawer.vue` 的标题条与队列行都走 `briefLabel()`，`TestEveryChineseLogLineIsMapped`/`TestTaskLabelsAllCoded` 绿。**仍欠、且本轮不承诺的那一半**：后端 preflight 最终裁决的告警/拦截文本与任务失败的 error（toast 直出那句，如「容器内命令失败（退出码 1）」「创建并启动 phpo-nginx-1.25 失败: …」）仍是中文——给它们补消息码要动 preflight 结果与 error 的承载，是另一轮的事（§5.26 的「仍欠」段已就地改写，不得再引用旧表述）。
+>
+> **承载一个都没多**：事件名仍 **17**、任务状态仍 **4**、preflight 仍 **20** action 与 NEEDS_HOME 仍 **18**、`pkg/errs` 仍 **28** 码、快照字段未增、`app.go` 仍 **80** 导出 = **78** 绑定 + 两颗钩子（本轮没动门面也没动 DTO，**不需要**重生成绑定）。数字变化只有两处：消息码 `log.*` **112 → 114**、`step.*` **47 → 48**（§0.3「日志行消息码数」159 → **162**），语言包两侧各 **1068 → 1119** 键。
+> **同源同步**：`docs/{端口策略,CHANGELOG}.md`（①与④的口径）+ `docs/用户手册.md` 建站那一段（示例入口页）。**验真**：`gofmt -l .` 无输出 · `go vet ./...` · `go build ./...` · `go test ./... -count=1` 全绿 · 五项门禁全过（i18n 打印「zh-CN / en-US 各 **1119** 键，集合相等、无重复」；模板 golden 空 diff；Docker 命名；缓存清单字段；扩展 **73** 项分类对账）· `golangci-lint run ./...` · `vue-tsc --noEmit` EXIT=0。**仍欠的那一件**：**真宿主 GUI 未走查**——八条里「装 Nginx 不再被站点端口拦住」「切 PHP 后 502 自愈」「打开域名看到示例页而不是 forbidden」「切成 English 后弹窗那几句话说英文」这四件都是像素级观感，要用户在装有 Docker/Podman 的机器上点一次才算；本轮只有单测、门禁与真机日志取证。
+>
 - 技术栈：Wails ≥ 3 + Go ≥ 1.27 + Vue 3.5+ + TypeScript
 - 目标：Windows / macOS / Linux 三平台桌面应用
 - 形态：**仅 GUI，不提供 CLI**

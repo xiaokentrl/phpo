@@ -5,6 +5,9 @@ package steps
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"phpo/internal/vhost/hosts"
@@ -121,5 +124,86 @@ func TestRemoveHostsRollbackSkipsWhenNothingRemoved(t *testing.T) {
 				t.Fatalf("本步未删除任何条目，回滚不得往 hosts 里加行，实际 %v", tc.h.added)
 			}
 		})
+	}
+}
+
+// indexedLine 取该级别里含这一段的那条日志（logFake 把 level 与 text 拼成一行）
+func indexedLine(lines []string, level, seg string) string {
+	for _, l := range lines {
+		if strings.HasPrefix(l, level+" ") && strings.Contains(l, seg) {
+			return l
+		}
+	}
+	return ""
+}
+
+func TestWriteSiteIndexCreatesSamplePage(t *testing.T) {
+	root := t.TempDir()
+	idx := filepath.Join(root, "index.php")
+	log := &logFake{}
+	s := NewWriteSiteIndex("写入 index.php", root)
+	if err := s.Execute(context.Background(), log); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got, err := os.ReadFile(idx)
+	if err != nil {
+		t.Fatalf("建站即要在站点根目录放入口页，用户访问的不再是 nginx 默认页: %v", err)
+	}
+	if string(got) != siteIndexContent {
+		t.Fatalf("index.php 内容必须是那份示例页，实际 %q", string(got))
+	}
+	if line := indexedLine(log.lines, "ok", "已写入 index.php: "); line != "ok 已写入 index.php: "+idx {
+		t.Fatalf("写了就要逐行点名落点全路径，只说「已写入」用户无法核对是哪一个站点，实际 %v", log.lines)
+	}
+	if err := s.Rollback(context.Background()); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if _, err := os.Stat(idx); !os.IsNotExist(err) {
+		t.Fatalf("本步写过的 index.php，建站失败回滚必须撤掉，实际仍在: %v", err)
+	}
+}
+
+func TestWriteSiteIndexKeepsUserSource(t *testing.T) {
+	root := t.TempDir()
+	idx := filepath.Join(root, "index.php")
+	const userSrc = "<?php // 用户自己的源码\n"
+	if err := os.WriteFile(idx, []byte(userSrc), 0o644); err != nil {
+		t.Fatalf("预置用户源码: %v", err)
+	}
+	log := &logFake{}
+	s := NewWriteSiteIndex("写入 index.php", root)
+	if err := s.Execute(context.Background(), log); err != nil {
+		t.Fatalf("已有源码只该一行 dim 说明、不阻断建站，Execute 应返回 nil: %v", err)
+	}
+	got, err := os.ReadFile(idx)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != userSrc {
+		t.Fatalf("用户自己的 index.php 一个字节都不能动，实际 %q", string(got))
+	}
+	if line := indexedLine(log.lines, "dim", "站点已有 index.php，不覆盖: "); line != "dim 站点已有 index.php，不覆盖: "+idx {
+		t.Fatalf("「不覆盖」这件事必须让用户看得见落点，不得静默，实际 %v", log.lines)
+	}
+	if indexedLine(log.lines, "ok", "已写入 index.php") != "" {
+		t.Fatalf("没写成功却落一行 ok，等于界面在说谎，实际 %v", log.lines)
+	}
+	if err := s.Rollback(context.Background()); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if _, err := os.Stat(idx); err != nil {
+		t.Fatalf("本步没写过任何东西，回滚却把用户自己的源码删了（不可逆的丢数据）: %v", err)
+	}
+}
+
+func TestWriteSiteIndexRollbackWithoutExecuteIsNoop(t *testing.T) {
+	root := t.TempDir()
+	idx := filepath.Join(root, "index.php")
+	s := NewWriteSiteIndex("写入 index.php", root)
+	if err := s.Rollback(context.Background()); err != nil {
+		t.Fatalf("本步什么都没做过，回滚必须是空操作: %v", err)
+	}
+	if _, err := os.Stat(idx); !os.IsNotExist(err) {
+		t.Fatalf("未执行即回滚不得凭空造出文件: %v", err)
 	}
 }

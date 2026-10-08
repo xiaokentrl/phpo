@@ -4,39 +4,27 @@ import { useAppState } from '@/stores/appState'
 import { useCacheStore } from '@/stores/cacheStore'
 import { hasBackend } from '@/api/site'
 import { SVC_META } from '@/constants/service'
+import { t } from '@/composables/useI18n'
 import type { ServiceKind } from '@/types'
 
-const PF = {
-  homeNotReady: '请先完成 phpo 工作目录初始化',
-  versionInvalid: '版本号不合法（禁止路径分隔符与 ..）',
-  versionDup: '该版本已安装',
-  nginxSingle: 'Nginx 为单例服务，已安装',
-  portInvalid: '端口格式不正确（1–65535）',
-  portInUse: '端口已被占用',
-  portAdvance: '端口 {from} 已被占用，自动顺延至 {to}',
-  domainInvalid: '域名格式不正确',
-  domainExists: '域名已存在',
-  rootEmpty: '站点目录不能为空',
-  rootOutsideWww: '站点目录不在 WWW_ROOT 内（允许，但请确认挂载与访问路径正确）',
-  rootDuplicated: '该目录已被其他站点使用',
-  pathTraversal: '路径不合法（不允许 .. 或空段）',
-  notInstalled: '目标服务/版本未安装',
-  isRunning: '服务正在运行，请先停止',
-  notRunning: '服务未运行',
-  hasDependents: '存在依赖该服务的站点，无法继续',
-  backupMissing: '备份归档不存在',
-  offlineMissing: '离线缓存条目不存在',
-  svcMissing: '服务不存在',
-  siteMissing: '站点不存在',
-  extInvalid: '扩展名不合法',
-  configEmpty: '配置内容不能为空',
-  nginxNeeded: '请先安装 Nginx',
-  phpNeeded: '请先安装一个 PHP 版本',
-  fileMissing: '待导入的文件不存在',
-  extTypeInvalid: '缓存文件类型只能是 image / apk / pecl',
-  dataDirPending: '正在运行，数据目录要重建容器后才生效',
-  registryHost: '镜像源地址不正确',
-}
+// PF 的登记项（文案本体在 locales 的 pf.* 里，中英两侧各一份）：
+// 这些句子是**在提交前就展示给用户**的即时反馈，必须跟着界面语言走，所以不能像旧版那样写死中文。
+// 每次取用时现读一次语言，用户切完语言不必重开应用。
+const PF_KEYS = [
+  'homeNotReady', 'versionInvalid', 'versionDup', 'nginxSingle', 'portInvalid',
+  'portInUse', 'portAdvance', 'domainInvalid', 'domainExists', 'rootEmpty',
+  'rootOutsideWww', 'rootDuplicated', 'pathTraversal', 'notInstalled', 'isRunning',
+  'notRunning', 'hasDependents', 'backupMissing', 'offlineMissing', 'svcMissing',
+  'siteMissing', 'extInvalid', 'configEmpty', 'nginxNeeded', 'phpNeeded',
+  'fileMissing', 'extTypeInvalid', 'dataDirPending', 'registryHost',
+] as const
+
+type PfKey = (typeof PF_KEYS)[number]
+
+// PF 按当前语言现取：每访问一次就读一次 locales，所以用户切完语言不必重开应用。
+// 用法与旧的字面量表一致（PF.portInUse），因此下面所有调用点不必跟着改。
+const PF = {} as Record<PfKey, string>
+for (const k of PF_KEYS) Object.defineProperty(PF, k, { get: () => t(`pf.${k}`), enumerable: true })
 
 export interface PreflightResult {
   ok: boolean
@@ -54,39 +42,33 @@ function portKey(kind: string, version: string): string {
   return `${kind.toUpperCase()}_${String(version).replace(/\./g, '')}_PORT`
 }
 
-// PHP 未就绪的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐（建站不阻断，仅暂不写 vhost）
+// PHP 未就绪的降级告警：语义与后端 rules_site.go#siteAdd 那句中文一致（建站不阻断，仅暂不写 vhost）
 function phpPendingWarn(php?: string): string {
-  return `${PF.notInstalled}: PHP ${php || '未指定'}（站点仍会创建，安装或切换到可用 PHP 版本后生效）`
+  return t('pf.phpPending', { notInstalled: PF.notInstalled, php: php || t('pf.phpUnspecified') })
 }
 
-// Nginx 已装但未运行的降级告警：与后端 rules_site.go#nginxNotRunningWarn 文案逐字对齐
+// Nginx 已装但未运行的降级告警：语义与后端 rules_site.go#nginxNotRunningWarn 那句中文一致
 // rootless 那一支说的是另一件事：容器引擎没有以 root 跑时，1024 以下的端口本来就绑不上，
 // 那不是「Nginx 没在跑」造成的，文案不得混为一谈；也不替用户改他填的端口。
 function nginxNotRunningWarn(rootless: boolean): string {
-  if (rootless) {
-    return `${PF.notRunning}: Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布。另外这台机器用的是 rootless 容器引擎，1024 以下的端口本来就绑不上，补齐只对 1024 以上的端口生效——把站点改成这样的端口即可，本站点端口不替你改）`
-  }
-  return `${PF.notRunning}: Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布）`
+  return t(rootless ? 'pf.nginxNotRunningAddRootless' : 'pf.nginxNotRunningAdd', { notRunning: PF.notRunning })
 }
 
-// 编辑站点的降级告警：与后端 rules_site.go#nginxNotServingWarn 文案逐字对齐
+// 编辑站点的降级告警：语义与后端 rules_site.go#nginxNotServingWarn 那句中文一致
 // 模板生成的那三处（改端口 / 切 PHP / 伪静态）走这里——没在跑只告警、照常落盘。
 function nginxNotServingWarn(rootless: boolean): string {
-  if (rootless) {
-    return `${PF.notRunning}: Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐。另外这台机器用的是 rootless 容器引擎，1024 以下的端口本来就绑不上，补齐只对 1024 以上的端口生效——把站点改成这样的端口即可，本站点端口不替你改）`
-  }
-  return `${PF.notRunning}: Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐）`
+  return t(rootless ? 'pf.nginxNotServingEditRootless' : 'pf.nginxNotServingEdit', { notRunning: PF.notRunning })
 }
 
-// 编辑站点的拦截文案：与后端 rules_site.go#nginxNotServingErr 文案逐字对齐
+// 编辑站点的拦截文案：语义与后端 rules_site.go#nginxNotServingErr 那句中文一致
 function nginxNotServingErr(): string {
-  return `${PF.notRunning}: Nginx（vhost 改动须经运行中的 Nginx 校验后才能落盘，请先启动 Nginx 再重试）`
+  return t('pf.nginxNotServingErr', { notRunning: PF.notRunning })
 }
 
-// 端口占用的降级告警：与后端 rules_site.go#siteAdd 文案逐字对齐
+// 端口占用的降级告警：语义与后端 rules_site.go#siteAdd 的 pp.Occupied 那句中文一致
 // §5.8：不改用户所填端口；配置照常落盘，只有这一个端口暂不发布（站点降级），腾出即自动补齐。
 function portDegradeWarn(msg: string): string {
-  return `${msg}（站点仍会创建，站点配置照常落盘，只是这个端口暂不发布；腾出该端口或改用空闲端口后自动补齐）`
+  return t('pf.portDegrade', { msg })
 }
 
 function hasTraversal(p: string): boolean {
@@ -108,9 +90,9 @@ function normalizeRegistryHost(s: string): string {
 // validateRegistryHost 与 config.ValidateRegistryHost 同判据、同文案（UI 这层只作即时反馈，最终裁决在后端）
 function validateRegistryHost(s: string): ValResult {
   const h = normalizeRegistryHost(s)
-  if (!h) return { ok: false, msg: `${PF.registryHost}: 不能为空` }
-  if (/[ \t\x00]/.test(h)) return { ok: false, msg: `${PF.registryHost}: ${s}（不能含空白字符）` }
-  if (h.includes('/')) return { ok: false, msg: `${PF.registryHost}: ${s}（只填主机名或「主机:端口」，不要带路径）` }
+  if (!h) return { ok: false, msg: t('pf.registryHostEmpty', { registryHost: PF.registryHost }) }
+  if (/[ \t\x00]/.test(h)) return { ok: false, msg: t('pf.registryHostSpace', { registryHost: PF.registryHost, value: s }) }
+  if (h.includes('/')) return { ok: false, msg: t('pf.registryHostPath', { registryHost: PF.registryHost, value: s }) }
   if (!reRegistryHost.test(h)) return { ok: false, msg: `${PF.registryHost}: ${s}` }
   return { ok: true, value: h }
 }
@@ -171,14 +153,15 @@ export function usePreflight() {
     const exclude = exRaw.map((x) => parseInt(String(x), 10))
     if (exclude.includes(n)) return { ok: true, value: n }
     const used = collectUsedPorts(opts.excludeDomains || [])
+    // 「站点占用」不算占用：站点那个宿主端口本来就是自家 Nginx 发布出来的，同一颗 Nginx 按 server_name
+    // 分流即可复用（与后端 validators.go#validatePort 的 conflictKeepWarn/conflictBlock 两档同口径）。
+    // 装 Nginx / 改服务端口时拿「Nginx 正在发布的口」去拦它自己，等于让自家的东西占自家的口。
+    // 数据服务（mysql/pgsql/redis）占的端口仍然照报。唯一保留站点占用的是「改已有站点的端口」那一路：
+    // 它要在各站点之间挑一个空口，别的站点正站在那一口上就该往后让。
+    if (!opts.autoAdvance) for (const [p, owner] of used) if (owner.startsWith('site ')) used.delete(p)
     if (!used.has(n)) return { ok: true, value: n }
     // 新建站点端口占用（§5.8）：端口原样保留，只回传占用信息交上层弹框告警 + 降级建站
     if (opts.keepOnConflict) {
-      // 别的站点已经把这个端口交给自己的 Nginx 发布了，同一颗 Nginx 按 server_name 分流即可复用，
-      // 所以「站点占用」不算占用——只剔本地这一份抄件，共用占用表一字不动（与后端 validators.go 同口径）。
-      // 数据服务占用的端口、以及本机其它进程占用的端口仍然照报。
-      for (const [p, owner] of used) if (owner.startsWith('site ')) used.delete(p)
-      if (!used.has(n)) return { ok: true, value: n }
       return { ok: true, value: n, occupied: true, msg: `${PF.portInUse}: ${n} (${used.get(n)})` }
     }
     if (opts.autoAdvance) {
@@ -275,7 +258,7 @@ export function usePreflight() {
         if (kind === 'php') {
           // 依赖站点与「最后一个版本」只告警不阻止（§0.2 规则 16 / §1.11）；文案与后端 rules_service.go 逐字对齐
           const used = app.sites.filter((s) => s.php === version).map((s) => s.domain)
-          if (used.length) warnings.push(`以下站点正在使用 PHP ${version}：${used.join(', ')} —— 卸载后这些站点的 vhost 上游失效`)
+          if (used.length) warnings.push(t('pf.uninstallPhpSites', { version, list: used.join(', ') }))
         }
         break
       }
@@ -286,10 +269,10 @@ export function usePreflight() {
         if (app.isServiceRunning(kind, version)) {
           if (kind === 'php') {
             const used = app.sites.filter((s) => s.php === version).map((s) => s.domain)
-            if (used.length) warnings.push(`以下站点正在使用 PHP ${version}：${used.join(', ')}`)
+            if (used.length) warnings.push(t('pf.stopPhpSites', { version, list: used.join(', ') }))
           }
-          if (kind === 'nginx' && app.sites.length) warnings.push(`${app.sites.length} 个站点依赖 Nginx，停用后无法访问`)
-          if (['mysql', 'pgsql', 'redis'].includes(kind)) warnings.push(`停用 ${kind} ${version} 将中断正在使用该服务的应用`)
+          if (kind === 'nginx' && app.sites.length) warnings.push(t('pf.stopNginxSites', { n: app.sites.length }))
+          if (['mysql', 'pgsql', 'redis'].includes(kind)) warnings.push(t('pf.stopDataService', { kind, version }))
         } else {
           errors.push(`${PF.notRunning}: ${kind} ${version}`)
         }
@@ -361,7 +344,7 @@ export function usePreflight() {
         if (!site) { errors.push(`${PF.siteMissing}: ${domain}`); break }
         if (!nginxServing()) break
         if (content != null && !String(content).trim()) errors.push(PF.configEmpty)
-        if (php && !installed('php').includes(php)) warnings.push(`${PF.notInstalled}: PHP ${php}（站点配置仍可保存，但需安装该版本才能生效）`)
+        if (php && !installed('php').includes(php)) warnings.push(t('pf.vhostPhpPending', { notInstalled: PF.notInstalled, php }))
         break
       }
       case 'php-switch': {
@@ -426,8 +409,8 @@ export function usePreflight() {
         if (!SVC_META[kind as ServiceKind]) { errors.push(PF.svcMissing); break }
         const vv = validateVersion(version)
         if (!vv.ok) { errors.push(vv.msg!); break }
-        if (field !== 'image' && field !== 'apk' && field !== 'pecl') errors.push(`${PF.extTypeInvalid}，得 ${field}`)
-        else if ((field === 'apk' || field === 'pecl') && kind !== 'php') errors.push(`${field} 扩展只能导入到 php 缓存`)
+        if (field !== 'image' && field !== 'apk' && field !== 'pecl') errors.push(t('pf.extTypeGot', { extTypeInvalid: PF.extTypeInvalid, field }))
+        else if ((field === 'apk' || field === 'pecl') && kind !== 'php') errors.push(t('pf.extImportPhpOnly', { field }))
         if (!String(newValue ?? '').trim()) errors.push(PF.fileMissing)
         break
       }
@@ -441,7 +424,7 @@ export function usePreflight() {
           const hv = validateRegistryHost(raw)
           if (!hv.ok) { errors.push(hv.msg!); break }
         }
-        if (!kept.length) warnings.push('未填写镜像源，拉取将直连官方（docker.io）')
+        if (!kept.length) warnings.push(t('pf.registryHostEmptyList'))
         break
       }
     }

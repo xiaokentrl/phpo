@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"phpo/internal/config"
 	"phpo/internal/task"
@@ -67,6 +68,44 @@ func (s *PrepareSiteDir) Rollback(_ context.Context) error {
 		return os.Remove(s.made)
 	}
 	return nil
+}
+
+// siteIndexContent 是建站后放进站点根目录的示例页：打印自身路径 + phpinfo()，
+// 让「站点跑起来了、跑的是哪一个 PHP」一眼可核对。
+const siteIndexContent = `<?php echo __FILE__; echo '</hr>'; phpinfo(); `
+
+// WriteSiteIndex 在站点根目录放一份 index.php；已存在（用户自己的源码）一律不覆盖，
+// 回滚只删本步真正写过的那一份。
+type WriteSiteIndex struct {
+	task.BaseStep
+	root  string
+	wrote string
+}
+
+func NewWriteSiteIndex(name string, root string) *WriteSiteIndex {
+	return &WriteSiteIndex{BaseStep: task.BaseStep{StepName: name}, root: root}
+}
+
+func (s *WriteSiteIndex) Execute(_ context.Context, log task.StepLog) error {
+	abs := config.ExpandHome(s.root)
+	idx := filepath.Join(abs, "index.php")
+	if _, err := os.Stat(idx); err == nil {
+		log.Log("dim", "站点已有 index.php，不覆盖: "+idx)
+		return nil
+	}
+	if err := util.WriteFile(idx, []byte(siteIndexContent)); err != nil {
+		return fmt.Errorf("写入 index.php 失败 %s: %w", idx, err)
+	}
+	s.wrote = idx
+	log.Log("ok", "已写入 index.php: "+idx)
+	return nil
+}
+
+func (s *WriteSiteIndex) Rollback(_ context.Context) error {
+	if s.wrote == "" {
+		return nil
+	}
+	return os.Remove(s.wrote)
 }
 
 // WriteVHost 校验并落盘 vhost 正文；回滚删除文件（硬红线 2）
