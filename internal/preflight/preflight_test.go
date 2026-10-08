@@ -205,6 +205,7 @@ func TestInstallBadExt(t *testing.T) {
 
 // TestInstallPortConflictBlocks 安装期就要拦下被占的服务端口（§5.8 服务端口报错、不顺延）：
 // install 现在携带用户所填端口，裁决必须与「装完再改端口」同口径，否则容器建起来才发现绑不上。
+// 占用表里只认「一个真的应用程序」——数据服务（mysql/pgsql/redis）的宿主端口；站点端口不算。
 func TestInstallPortConflictBlocks(t *testing.T) {
 	w := readyWorld()
 	w.Snap.Env[config.EnvKeyPort("mysql", "8.4")] = "3306"
@@ -215,12 +216,14 @@ func TestInstallPortConflictBlocks(t *testing.T) {
 	if res := Run(ActInstall, Ctx{Kind: "pgsql", Version: "17", Port: 5433}, w); !res.Ok {
 		t.Fatalf("空闲端口应放行，得 %+v", res.Errors)
 	}
-	// 站点端口同样在占用表内：nginx 装到 80 而 demo.test 正在 80 上服务 → 拦
+	// 站点端口**不算**占用者：nginx 装到 80 而 demo.test 正在 80 上服务 → 放行。
+	// 站点的宿主端口本来就是 Nginx 那一颗容器发布出来的，同一颗 Nginx 按 server_name 分流即可复用，
+	// 拿它拦新装的 Nginx 等于让自家的东西占自家的口。真被本机别的进程听着的口，
+	// 由「创建并启动」那一步被引擎如实拒绝，不在这里凭空编一个占用者。
 	wNoNginx := readyWorld()
 	wNoNginx.Snap.Installed["nginx"] = nil
-	if res := Run(ActInstall, Ctx{Kind: "nginx", Version: "1.27", Port: 80}, wNoNginx); res.Ok ||
-		!contains(res.Errors, errs.PortInUse+": 80 (site demo.test)") {
-		t.Fatalf("nginx 装到站点已占的 80 应报 portInUse，得 %+v", res.Errors)
+	if res := Run(ActInstall, Ctx{Kind: "nginx", Version: "1.27", Port: 80}, wNoNginx); !res.Ok {
+		t.Fatalf("80 只被自家站点（= 自家 Nginx）发布时 nginx 应照常放行，得 %+v", res.Errors)
 	}
 }
 
