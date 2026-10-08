@@ -16,7 +16,7 @@ func (r *run) siteAdd() {
 		return
 	}
 	if len(r.w.Snap.Running["nginx"]) == 0 {
-		r.warnf("%s", nginxNotRunningWarn())
+		r.warnf("%s", nginxNotRunningWarn(r.rootless()))
 	}
 	dd := config.ValidateDomain(c.Domain)
 	if !dd.Ok {
@@ -186,18 +186,31 @@ func (r *run) nginxServingWarn() bool {
 		return false
 	}
 	if len(r.w.Snap.Running["nginx"]) == 0 {
-		r.warnf("%s", nginxNotServingWarn())
+		r.warnf("%s", nginxNotServingWarn(r.rootless()))
 	}
 	return true
 }
 
+// rootless 本机容器引擎是不是 rootless 模式（引擎结论缺席即按非 rootless 走，不编一个原因出来）。
+// 为什么只管这一件事：rootless 的容器引擎绑不上 1024 以下的端口（§5.25 真机取证），
+// 那和「Nginx 没在跑」是两件不同的事，文案不得把前者说成后者。
+func (r *run) rootless() bool {
+	return r.w.Snap.Engine != nil && r.w.Snap.Engine.Rootless
+}
+
 // nginxNotRunningWarn nginx 已装但未运行的建站降级告警；文案与前端 usePreflight.ts 逐字对齐
-func nginxNotRunningWarn() string {
+func nginxNotRunningWarn(rootless bool) string {
+	if rootless {
+		return errs.NotRunning + ": Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布。另外这台机器用的是 rootless 容器引擎，1024 以下的端口本来就绑不上，补齐只对 1024 以上的端口生效——把站点改成这样的端口即可，本站点端口不替你改）" //nolint:lll
+	}
 	return errs.NotRunning + ": Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布）"
 }
 
 // nginxNotServingWarn 模板生成型改动（改端口 / 切 PHP / 伪静态）在 Nginx 未运行时的告警；文案与前端 usePreflight.ts 逐字对齐
-func nginxNotServingWarn() string {
+func nginxNotServingWarn(rootless bool) string {
+	if rootless {
+		return errs.NotRunning + ": Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐。另外这台机器用的是 rootless 容器引擎，1024 以下的端口本来就绑不上，补齐只对 1024 以上的端口生效——把站点改成这样的端口即可，本站点端口不替你改）" //nolint:lll
+	}
 	return errs.NotRunning + ": Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐）"
 }
 

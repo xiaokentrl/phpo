@@ -572,6 +572,60 @@ func TestEditVhostRequiresServingNginx(t *testing.T) {
 	}
 }
 
+// wantNginxNotRunningWarnRootless 锁死 rootless 引擎下建站那句降级告警（与 rules_site.go#nginxNotRunningWarn 的 rootless
+// 分支、前端 usePreflight.ts 逐字对齐）：端口绑不上的真因是引擎模式，不是「Nginx 没跑」，两句不能混着说
+func wantNginxNotRunningWarnRootless() string {
+	return errs.NotRunning + ": Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布。另外这台机器用的是 rootless 容器引擎，1024 以下的端口本来就绑不上，补齐只对 1024 以上的端口生效——把站点改成这样的端口即可，本站点端口不替你改）" //nolint:lll
+}
+
+// wantNginxNotServingWarnRootless 同上，锁死模板生成型改动（改端口 / 切 PHP / 伪静态）在 rootless 引擎上的那一句告警
+func wantNginxNotServingWarnRootless() string {
+	return errs.NotRunning + ": Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐。另外这台机器用的是 rootless 容器引擎，1024 以下的端口本来就绑不上，补齐只对 1024 以上的端口生效——把站点改成这样的端口即可，本站点端口不替你改）" //nolint:lll
+}
+
+// TestRootlessEngineNamedInDegradeCopy rootless 那一份告警必须把「1024 以下的端口本来就绑不上」说出来——
+// 只测非 rootless 那一支等于让 Podman rootless 用户读到一句把真因说成「Nginx 没跑」的假话。
+// 手改正文（site-vhost）不看引擎结论：没有模板兜底，照旧硬拦（nginxNotServingErr 因此不带 rootless 参数）。
+func TestRootlessEngineNamedInDegradeCopy(t *testing.T) {
+	content := "server {\n  listen 80;\n}"
+	w := rootlessWorld()
+	w.Snap.Running["nginx"] = nil
+
+	// 建站：照常放行（rootless 不是拦人的理由），但要把引擎这一层原因讲清
+	res := Run(ActSiteAdd, Ctx{Domain: "z.test", Port: "8082", PHP: "8.4"}, w)
+	if !res.Ok {
+		t.Errorf("rootless + nginx 未运行不该拦建站，得 %+v", res.Errors)
+	}
+	if !contains(res.Warnings, wantNginxNotRunningWarnRootless()) {
+		t.Errorf("建站告警应点名 rootless 引擎，实得 %+v", res.Warnings)
+	}
+
+	// 三处模板生成的改动：照常落盘、只告警，且告警带上 rootless 那一句
+	for _, tc := range []struct {
+		name string
+		act  string
+		c    Ctx
+	}{
+		{"site-port", ActSitePort, Ctx{Domain: "demo.test", NewValue: "8080"}},
+		{"php-switch", ActPhpSwitch, Ctx{Domain: "demo.test", NewPhp: "8.1"}},
+		{"rewrite", ActRewrite, Ctx{Domain: "demo.test"}},
+	} {
+		r := Run(tc.act, tc.c, w)
+		if !r.Ok {
+			t.Errorf("%s rootless 时模板生成的改动不该被拦，得 %+v", tc.name, r.Errors)
+			continue
+		}
+		if !contains(r.Warnings, wantNginxNotServingWarnRootless()) {
+			t.Errorf("%s 应含点名 rootless 的告警，实得 %+v", tc.name, r.Warnings)
+		}
+	}
+
+	// 手改正文与引擎模式无关，照旧拦
+	if r := Run(ActSiteVhost, Ctx{Domain: "demo.test", Content: &content}, w); r.Ok || !contains(r.Errors, wantNginxNotServingErr()) {
+		t.Errorf("site-vhost 在 rootless 下仍应硬拦并给人话提示，得 %+v / %+v", r.Errors, r.Warnings)
+	}
+}
+
 // —— extensions / backup / restore / backup-delete / offline-prune ——
 
 func TestExtensionsOK(t *testing.T) {

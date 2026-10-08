@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 
 	"phpo/internal/engine"
@@ -76,9 +77,11 @@ func (s *DockerCleanService) Execute(ctx context.Context, req model.CleanRequest
 	run := &cleanRun{targets: chosen}
 
 	t := &task.Task{
-		ID:    id,
-		Label: fmt.Sprintf("清理 Docker 全量资源（%d 项）", len(chosen)),
-		Meta:  model.TaskMeta{Type: "docker-clean"},
+		ID:          id,
+		Label:       fmt.Sprintf("清理 Docker 全量资源（%d 项）", len(chosen)),
+		LabelCode:   task.MsgTaskDockerClean,
+		LabelParams: map[string]string{"n": strconv.Itoa(len(chosen))},
+		Meta:        model.TaskMeta{Type: "docker-clean"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "核对现场", Exec: func(ctx context.Context, log task.StepLog) error {
 				run.check(ctx, s, log, rep)

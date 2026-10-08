@@ -441,10 +441,12 @@ func (s *ExtensionService) Apply(ctx context.Context, version string, enabled []
 	}
 
 	t := &task.Task{
-		ID:    s.newID("extensions"),
-		Label: fmt.Sprintf("应用 PHP %s 扩展 (%s)", version, joinDiff(added, removed)),
-		Meta:  model.TaskMeta{Type: "extensions", Kind: string(model.KindPHP), Version: version},
-		Steps: steps,
+		ID:          s.newID("extensions"),
+		Label:       fmt.Sprintf("应用 PHP %s 扩展 (%s)", version, joinDiff(added, removed)),
+		LabelCode:   task.MsgTaskExtensionApply,
+		LabelParams: map[string]string{"version": version, "diff": joinDiff(added, removed)},
+		Meta:        model.TaskMeta{Type: "extensions", Kind: string(model.KindPHP), Version: version},
+		Steps:       steps,
 		Apply: func() error {
 			persist := measured
 			if len(persist) == 0 {

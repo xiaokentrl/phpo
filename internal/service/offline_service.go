@@ -157,9 +157,11 @@ func (s *OfflineService) CleanupCache(ctx context.Context, mode model.CleanupMod
 	inUse := s.cacheInUse()
 	res := &model.CleanupResult{Mode: mode}
 	t := &task.Task{
-		ID:    s.newID("cache-cleanup"),
-		Label: "清理离线缓存（" + string(mode) + "）",
-		Meta:  model.TaskMeta{Type: "cache-cleanup"},
+		ID:          s.newID("cache-cleanup"),
+		Label:       "清理离线缓存（" + string(mode) + "）",
+		LabelCode:   task.MsgTaskCleanupCache,
+		LabelParams: map[string]string{"mode": string(mode)},
+		Meta:        model.TaskMeta{Type: "cache-cleanup"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "按模式清理缓存", Exec: func(ctx context.Context, log task.StepLog) error {
 				r, err := s.cache.CleanupCache(ctx, mode, inUse, StandardCacheAgeDays)
@@ -185,9 +187,11 @@ func (s *OfflineService) CleanupCache(ctx context.Context, mode model.CleanupMod
 // RemoveCacheEntry 删除单条 {kind}/{version} 缓存目录（不可恢复，前端确认后调用）
 func (s *OfflineService) RemoveCacheEntry(ctx context.Context, kind, version string) error {
 	t := &task.Task{
-		ID:    s.newID("cache-remove"),
-		Label: "删除缓存 " + kind + "/" + version,
-		Meta:  model.TaskMeta{Type: "cache-remove"},
+		ID:          s.newID("cache-remove"),
+		Label:       "删除缓存 " + kind + "/" + version,
+		LabelCode:   task.MsgTaskOfflineRemove,
+		LabelParams: map[string]string{"kind": kind, "version": version},
+		Meta:        model.TaskMeta{Type: "cache-remove"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "删除缓存目录", Exec: func(_ context.Context, log task.StepLog) error {
 				if err := s.cache.RemoveEntry(kind, version); err != nil {
@@ -215,9 +219,11 @@ func (s *OfflineService) RemoveCacheEntry(ctx context.Context, kind, version str
 func (s *OfflineService) ImportEntry(ctx context.Context, kind, version, extType, srcPath string) error {
 	src := strings.TrimSpace(srcPath)
 	t := &task.Task{
-		ID:    s.newID("cache-import"),
-		Label: "导入缓存 " + kind + "/" + version + " (" + extType + ")",
-		Meta:  model.TaskMeta{Type: "cache-import"},
+		ID:          s.newID("cache-import"),
+		Label:       "导入缓存 " + kind + "/" + version + " (" + extType + ")",
+		LabelCode:   task.MsgTaskOfflineImport,
+		LabelParams: map[string]string{"kind": kind, "version": version, "type": extType},
+		Meta:        model.TaskMeta{Type: "cache-import"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "读取源文件", Exec: func(_ context.Context, log task.StepLog) error {
 				st, err := os.Stat(src)

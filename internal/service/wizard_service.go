@@ -75,9 +75,10 @@ func (s *WizardService) HomeEnsure(ctx context.Context, home, www string) error 
 		return s.emit() // 已设置：仅广播权威快照令前端即时更新就绪态，不重复建树、不重复落库
 	}
 	t := &task.Task{
-		ID:    s.newID("home-ensure"),
-		Label: "初始化工作目录",
-		Meta:  model.TaskMeta{Type: "home-ensure"},
+		ID:        s.newID("home-ensure"),
+		Label:     "初始化工作目录",
+		LabelCode: task.MsgTaskWizardInit,
+		Meta:      model.TaskMeta{Type: "home-ensure"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "创建工作目录子树", Exec: func(_ context.Context, log task.StepLog) error {
 				lines, fsErrs := ensureTree(h, w)

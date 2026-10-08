@@ -43,6 +43,12 @@ export function t(key: string, params?: TParams): string {
   return s
 }
 
+// te：这一把键在当前语言里有没有文案。日志行的消息码就是靠它决定「按语言渲染」还是「照后端原文显示」——
+// 表里没登记、或语言包还没补齐的行，必须显示后端原文，不能显示成键名。
+export function te(key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(messages[locale.value], key)
+}
+
 export function useI18n() {
   return { locale, t, setLocale }
 }

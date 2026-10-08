@@ -52,13 +52,11 @@ func (b sitePortBinder) BlockedSitePorts(ctx context.Context, ports []int) map[i
 		if err == nil {
 			continue
 		}
-		if port.InUse(err) {
-			blocked[p] = "其他程序"
-			continue
-		}
-		// 非 root 绑 1024 以下的端口本来就问不出结果，这只算「认不出占用者」，不算端口不可用
-		if errors.Is(err, os.ErrPermission) {
-			blocked[p] = "其他程序（该端口需管理员权限绑定，无法确认占用者）"
+		// 探测是在 phpo 自己进程里 listen，量的是 phpo 的权限，不是引擎的：只有「rootless 引擎
+		// 绑不上 1024 以下特权端口」这一件是事实，其余认不出占用者的情形一律不降级（探测能力不足
+		// 不得变成阻断，§5.8）。分档收在 service.ClassifyProbe，判据与那句人话文案同处一个包。
+		if owner, degrade := service.ClassifyProbe(err, p, b.cli.Rootless()); degrade {
+			blocked[p] = owner
 		}
 	}
 	return blocked
@@ -318,8 +316,9 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	)
 	// 站点端口并集发布到 nginx（增删改站点端口后重建 nginx 容器以重绑宿主端口）
 	c.SiteService.SetNginxPublisher(lc)
-	// 站点端口实测：问一次宿主上绑不绑得上，认不出占用者的那些端口如实降级并说明，不拦建站
-	// （探测能力不足不等于端口不可用；nginx 没装时不实测，站点照常落盘）
+	// 站点端口实测：问一次宿主上绑不绑得上。只在「rootless 引擎绑不了 1024 以下端口」这一件确实成立的事上降级，
+	// 其余认不出占用者的情形一律不降级——探测能力不足不等于端口不可用，不得变成阻断（nginx 没装时不实测，站点照常落盘）。
+	// rootless 由实测器现问引擎客户端（b.cli.Rootless()），不在装配时抄一份：同一份判据只有一处。
 	c.SiteService.SetPortBinder(sitePortBinder{cli: cli, nameOf: nginxContainer})
 	// 切换 PHP 版本前备好上游：目标容器没起就先启动（走 lifecycle 既有启动路径：StartContainer 幂等、
 	// 稳定 running 验证、状态落库广播），随后站点链路才 reload nginx——先备上游再切流量，避免 502 窗口。

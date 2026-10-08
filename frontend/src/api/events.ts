@@ -47,7 +47,7 @@ export type UICmdName = (typeof UICmd)[keyof typeof UICmd]
 // —— 载荷类型（§5.6 事件表逐行）——
 export interface StateChangedPayload { snapshot: StateSnapshot }
 export interface ServiceChangedPayload { kind: string; version: string; running: boolean }
-export interface TaskLogPayload { id: string; level: string; text: string }
+export interface TaskLogPayload { id: string; level: string; text: string; code?: string; params?: Record<string, string> }
 export interface TaskProgressPayload { id: string; step: number; total: number }
 export interface TaskDonePayload { id: string; status: string; duration: number }
 export interface UpdateAvailablePayload { version: string; changelog: string; size: number; source?: string; download_page?: string }

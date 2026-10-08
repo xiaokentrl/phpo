@@ -107,9 +107,11 @@ func (s *CleanupService) ListTrash() ([]model.TrashEntry, error) {
 func (s *CleanupService) Clean(ctx context.Context, mode model.CleanupMode) (*model.CleanupReport, error) {
 	rep := &model.CleanupReport{Mode: mode}
 	t := &task.Task{
-		ID:    s.newID("cleanup"),
-		Label: "清理孤儿资源（" + string(mode) + "）",
-		Meta:  model.TaskMeta{Type: "cleanup"},
+		ID:          s.newID("cleanup"),
+		Label:       "清理孤儿资源（" + string(mode) + "）",
+		LabelCode:   task.MsgTaskCleanupOrphan,
+		LabelParams: map[string]string{"mode": string(mode)},
+		Meta:        model.TaskMeta{Type: "cleanup"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "扫描并删除孤儿资源", Exec: func(ctx context.Context, log task.StepLog) error {
 				orphan, err := s.dock.ScanOrphans(ctx, s.installedNames())
@@ -156,9 +158,11 @@ func (s *CleanupService) CleanCache(ctx context.Context, mode model.CleanupMode)
 	inUse := s.cacheInUse()
 	var res *model.CleanupResult
 	t := &task.Task{
-		ID:    s.newID("cache-cleanup"),
-		Label: "清理离线缓存（" + string(mode) + "）",
-		Meta:  model.TaskMeta{Type: "cache-cleanup"},
+		ID:          s.newID("cache-cleanup"),
+		Label:       "清理离线缓存（" + string(mode) + "）",
+		LabelCode:   task.MsgTaskCleanupCache,
+		LabelParams: map[string]string{"mode": string(mode)},
+		Meta:        model.TaskMeta{Type: "cache-cleanup"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "按模式清理缓存", Exec: func(ctx context.Context, log task.StepLog) error {
 				r, err := s.cache.CleanupCache(ctx, mode, inUse, StandardCacheAgeDays)
@@ -194,9 +198,11 @@ func (s *CleanupService) RestoreTrash(ctx context.Context, id int64) error {
 		return err
 	}
 	t := &task.Task{
-		ID:    s.newID("trash-restore"),
-		Label: "回收站恢复 " + item.OrigPath,
-		Meta:  model.TaskMeta{Type: "trash-restore"},
+		ID:          s.newID("trash-restore"),
+		Label:       "回收站恢复 " + item.OrigPath,
+		LabelCode:   task.MsgTaskTrashRestore,
+		LabelParams: map[string]string{"path": item.OrigPath},
+		Meta:        model.TaskMeta{Type: "trash-restore"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "移回原位并注销登记", Exec: func(_ context.Context, log task.StepLog) error {
 				if err := s.trash.Restore(item.TrashPath, item.OrigPath); err != nil {
@@ -222,9 +228,10 @@ func (s *CleanupService) RestoreTrash(ctx context.Context, id int64) error {
 func (s *CleanupService) EmptyExpired(ctx context.Context) (int, error) {
 	n := 0
 	t := &task.Task{
-		ID:    s.newID("trash-empty"),
-		Label: "清空到期回收站",
-		Meta:  model.TaskMeta{Type: "trash-empty"},
+		ID:        s.newID("trash-empty"),
+		Label:     "清空到期回收站",
+		LabelCode: task.MsgTaskTrashEmpty,
+		Meta:      model.TaskMeta{Type: "trash-empty"},
 		Steps: []task.Step{
 			&task.FuncStep{StepName: "永久删除到期条目", Exec: func(_ context.Context, log task.StepLog) error {
 				c, err := s.purgeExpired(log)

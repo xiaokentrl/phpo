@@ -41,7 +41,7 @@ func (m *Manager) Run(parent context.Context, t *Task) (status model.TaskStatus,
 	sink := &logSink{}
 	em := &recordingEmitter{em: m.em, sink: sink}
 	logger := &stepLogger{em: em, id: t.ID}
-	Logf(em, t.ID, model.LogMeta, "▶ "+label(t))
+	LogCode(em, t.ID, model.LogMeta, "log.taskStart", map[string]string{"label": labelRef(t)}, "▶ "+label(t))
 
 	status, runErr = m.execute(ctx, t, logger, em)
 
@@ -59,7 +59,7 @@ func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger, em E
 	// Pre-Clean
 	if t.PreClean != nil {
 		if err := t.PreClean(ctx); err != nil {
-			Logf(em, t.ID, model.LogErr, "预清理失败: "+err.Error())
+			LogCode(em, t.ID, model.LogErr, "log.preCleanFail", map[string]string{"reason": err.Error()}, "预清理失败: "+err.Error())
 			return model.TaskFailed, err
 		}
 	}
@@ -72,28 +72,28 @@ func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger, em E
 			m.rollback(completed)
 			return model.TaskCancelled, ctx.Err()
 		}
-		Logf(em, t.ID, model.LogDim, "步骤 "+s.Name())
+		LogCode(em, t.ID, model.LogDim, "log.step", map[string]string{"name": stepRef(s.Name())}, "步骤 "+s.Name())
 		if err := s.Execute(ctx, logger); err != nil {
 			// 步骤执行中被取消（如 pull 阻塞时收到取消）：按取消处理，回滚含当前步
 			if ctx.Err() != nil {
-				Logf(em, t.ID, model.LogMeta, "⏹ 已取消: "+s.Name())
+				LogCode(em, t.ID, model.LogMeta, "log.stepCancelled", map[string]string{"name": stepRef(s.Name())}, "⏹ 已取消: "+s.Name())
 				m.rollback(append(completed, s))
 				return model.TaskCancelled, ctx.Err()
 			}
-			Logf(em, t.ID, model.LogErr, s.Name()+" 失败: "+err.Error())
+			LogCode(em, t.ID, model.LogErr, "log.stepFail", map[string]string{"name": stepRef(s.Name()), "reason": err.Error()}, s.Name()+" 失败: "+err.Error())
 			m.rollback(append(completed, s))
 			return model.TaskFailed, err
 		}
 		completed = append(completed, s)
 		Progressf(em, t.ID, i+1, total)
 		m.setProgress(i+1, total)
-		Logf(em, t.ID, model.LogOk, s.Name()+" 完成")
+		LogCode(em, t.ID, model.LogOk, "log.stepDone", map[string]string{"name": stepRef(s.Name())}, s.Name()+" 完成")
 	}
 
 	// Post-Verify
 	if t.Verify != nil {
 		if err := t.Verify(ctx); err != nil {
-			Logf(em, t.ID, model.LogErr, "核验失败: "+err.Error())
+			LogCode(em, t.ID, model.LogErr, "log.verifyFail", map[string]string{"reason": err.Error()}, "核验失败: "+err.Error())
 			m.rollback(completed)
 			return model.TaskFailed, err
 		}
@@ -102,7 +102,7 @@ func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger, em E
 	// applyStateChange
 	if t.Apply != nil {
 		if err := t.Apply(); err != nil {
-			Logf(em, t.ID, model.LogErr, "状态落地失败: "+err.Error())
+			LogCode(em, t.ID, model.LogErr, "log.applyFail", map[string]string{"reason": err.Error()}, "状态落地失败: "+err.Error())
 			m.rollback(completed)
 			return model.TaskFailed, err
 		}

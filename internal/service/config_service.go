@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 
 	"phpo/internal/config"
@@ -84,10 +85,12 @@ func (s *ConfigService) Save(ctx context.Context, kind model.ServiceKind, versio
 		files = append(files, steps.ConfigFile{Host: s.hostPath(rel), Content: f.Content})
 	}
 	t := &task.Task{
-		ID:    s.newID("config-save"),
-		Label: fmt.Sprintf("保存 %s/%s 配置（%d 个文件）", kind, version, len(files)),
-		Meta:  model.TaskMeta{Type: "config-save", Kind: string(kind), Version: version},
-		Steps: append([]task.Step{steps.NewSaveConfigStep("写入配置文件", files)}, s.effectSteps(kind, version)...),
+		ID:          s.newID("config-save"),
+		Label:       fmt.Sprintf("保存 %s/%s 配置（%d 个文件）", kind, version, len(files)),
+		LabelCode:   task.MsgTaskConfigSave,
+		LabelParams: map[string]string{"kind": string(kind), "version": version, "n": strconv.Itoa(len(files))},
+		Meta:        model.TaskMeta{Type: "config-save", Kind: string(kind), Version: version},
+		Steps:       append([]task.Step{steps.NewSaveConfigStep("写入配置文件", files)}, s.effectSteps(kind, version)...),
 	}
 	_, err := s.tasks.Run(ctx, t)
 	return err

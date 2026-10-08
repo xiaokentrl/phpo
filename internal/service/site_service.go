@@ -8,6 +8,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -21,6 +22,7 @@ import (
 	"phpo/internal/task"
 	"phpo/internal/task/steps"
 	"phpo/internal/vhost"
+	portpkg "phpo/pkg/port"
 )
 
 // SiteStore 站点权威读写子集（*store.Store 满足）
@@ -131,11 +133,13 @@ func (s *SiteService) Add(ctx context.Context, in AddInput) error {
 		}
 	}
 	t := &task.Task{
-		ID:    s.newID("site-add"),
-		Label: "创建站点 " + domain,
-		Meta:  model.TaskMeta{Type: "site-add", Domain: domain},
-		Steps: stepsList,
-		Apply: func() error { return s.commitUpsert(ctx, site) },
+		ID:          s.newID("site-add"),
+		Label:       "创建站点 " + domain,
+		LabelCode:   task.MsgTaskSiteAdd,
+		LabelParams: map[string]string{"domain": domain},
+		Meta:        model.TaskMeta{Type: "site-add", Domain: domain},
+		Steps:       stepsList,
+		Apply:       func() error { return s.commitUpsert(ctx, site) },
 	}
 	_, err := s.tasks.Run(ctx, t)
 	return err
@@ -164,10 +168,12 @@ func (s *SiteService) Remove(ctx context.Context, domain string) error {
 	}
 	id := s.newID("site-remove")
 	t := &task.Task{
-		ID:    id,
-		Label: "删除站点 " + domain,
-		Meta:  model.TaskMeta{Type: "site-remove", Domain: domain},
-		Steps: stepsList,
+		ID:          id,
+		Label:       "删除站点 " + domain,
+		LabelCode:   task.MsgTaskSiteRemove,
+		LabelParams: map[string]string{"domain": domain},
+		Meta:        model.TaskMeta{Type: "site-remove", Domain: domain},
+		Steps:       stepsList,
 		Apply: func() error {
 			trashPath = trashStep.TrashPath()
 			if err := s.commitRemove(ctx, domain, site.Root, trashPath); err != nil {
@@ -328,7 +334,7 @@ func (s *SiteService) find(domain string) (model.Site, bool) {
 
 // SetPort 改站点端口（T404）
 func (s *SiteService) SetPort(ctx context.Context, domain string, port int) error {
-	return s.writeVHost(ctx, "site-port", "改端口 "+domain, func(m *vhost.Manager) string {
+	return s.writeVHost(ctx, "site-port", "改端口 "+domain, task.MsgTaskSitePort, map[string]string{"domain": domain}, func(m *vhost.Manager) string {
 		return m.ApplyPort(domain, port)
 	}, domain, false)
 }
@@ -336,21 +342,21 @@ func (s *SiteService) SetPort(ctx context.Context, domain string, port int) erro
 // SwitchPHP 切换 PHP（T405，硬红线 1 精确上游）。前置「备好上游」步：目标容器没起就先启动——
 // 先让上游就绪再 reload nginx，否则切换完成到容器就绪之间站点是 502 窗口（追加需求）。
 func (s *SiteService) SwitchPHP(ctx context.Context, domain, php string) error {
-	return s.writeVHost(ctx, "php-switch", "切换 PHP "+php+" · "+domain, func(m *vhost.Manager) string {
+	return s.writeVHost(ctx, "php-switch", "切换 PHP "+php+" · "+domain, task.MsgTaskSitePhp, map[string]string{"domain": domain, "php": php}, func(m *vhost.Manager) string {
 		return m.ApplyPhp(domain, php)
 	}, domain, false, s.ensurePHPRunningStep(php))
 }
 
 // SetRewrite 改伪静态（T406）
 func (s *SiteService) SetRewrite(ctx context.Context, domain, preset, rule string) error {
-	return s.writeVHost(ctx, "rewrite", "伪静态 "+preset+" · "+domain, func(m *vhost.Manager) string {
+	return s.writeVHost(ctx, "rewrite", "伪静态 "+preset+" · "+domain, task.MsgTaskSiteRewrite, map[string]string{"domain": domain, "preset": preset}, func(m *vhost.Manager) string {
 		return m.ApplyRewrite(domain, preset, rule)
 	}, domain, false)
 }
 
 // SetVhostContent 手改 vhost 正文（T406）；写前 nginx -t 必过（硬红线 2）
 func (s *SiteService) SetVhostContent(ctx context.Context, domain, content string) error {
-	return s.writeVHost(ctx, "site-vhost", "编辑 vhost · "+domain, func(m *vhost.Manager) string {
+	return s.writeVHost(ctx, "site-vhost", "编辑 vhost · "+domain, task.MsgTaskSiteVhost, map[string]string{"domain": domain}, func(m *vhost.Manager) string {
 		return m.SetContent(domain, content)
 	}, domain, true)
 }
@@ -376,9 +382,11 @@ func (s *SiteService) AddHosts(ctx context.Context, domain string) (string, erro
 	}
 	warning := ""
 	t := &task.Task{
-		ID:    s.newID("hosts"),
-		Label: "加 hosts · " + domain,
-		Meta:  model.TaskMeta{Type: "hosts-add", Domain: domain},
+		ID:          s.newID("hosts"),
+		Label:       "加 hosts · " + domain,
+		LabelCode:   task.MsgTaskSiteHosts,
+		LabelParams: map[string]string{"domain": domain},
+		Meta:        model.TaskMeta{Type: "hosts-add", Domain: domain},
 		Steps: []task.Step{&task.FuncStep{StepName: "写入 hosts", Exec: func(_ context.Context, log task.StepLog) error {
 			res, e := s.hosts.Add(domain)
 			if e != nil {
@@ -409,7 +417,9 @@ func (s *SiteService) AddHosts(ctx context.Context, domain string) (string, erro
 // pre 为可变前置步（SwitchPHP 的「备好上游」用），排在写盘之前执行。
 // strict 为真时一律要 nginx -t 才落盘（用户手改 vhost 正文走这条）；为假时 nginx 没在跑就跳过校验先落盘，
 // 等 nginx 起来后由 ReconcileServe 重新校验补齐（§5.8 的硬红线 2 例外）。
-func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate func(*vhost.Manager) string, domain string, strict bool, pre ...task.Step) error {
+// labelCode / labelParams 是这次操作在队列行与抽屉标题上的可翻译名字（多语言 Phase 2）；
+// label 仍是中文原文，账本与不认码的界面都用它。
+func (s *SiteService) writeVHost(ctx context.Context, op, label, labelCode string, labelParams map[string]string, mutate func(*vhost.Manager) string, domain string, strict bool, pre ...task.Step) error {
 	sites, _ := s.store.ListSites()
 	s.vhosts.Sync(sites)
 	content := mutate(s.vhosts)
@@ -440,10 +450,12 @@ func (s *SiteService) writeVHost(ctx context.Context, op, label string, mutate f
 	}
 	id := s.newID(op)
 	t := &task.Task{
-		ID:    id,
-		Label: label,
-		Meta:  model.TaskMeta{Type: op, Domain: domain},
-		Steps: stepList,
+		ID:          id,
+		Label:       label,
+		LabelCode:   labelCode,
+		LabelParams: labelParams,
+		Meta:        model.TaskMeta{Type: op, Domain: domain},
+		Steps:       stepList,
 		Apply: func() error {
 			if err := s.store.UpsertSite(updated); err != nil {
 				return err
@@ -660,8 +672,42 @@ func (s *SiteService) publishPlan(ctx context.Context, sites []model.Site, excep
 	return ports, blocked
 }
 
+// OwnerRootlessPrivileged 是「这个端口不是被谁占了，而是 rootless 模式的容器引擎自己绑不了 1024
+// 以下的特权端口」这一事实的记号，由装配层的端口实测写进占用表。为什么要单独立一个记号：拿它当
+// 「其他程序占用」报给用户就是假话——本机并没有别的东西在听 80，用户按提示去「腾出端口」也腾不出
+// 任何东西，真正要动的是引擎的特权端口限制。
+const OwnerRootlessPrivileged = "rootless:privileged-port"
+
+// ClassifyProbe 把一次「phpo 自己能不能绑上这个宿主端口」的实测结果归成档，交回占用者记号。
+// 返回 degraded=false 表示这一档不该把站点标成降级。为什么要分这么细：这个探针是在 phpo 自己进程里
+// listen，量的是 phpo 的权限，不是容器引擎的权限——把「phpo 问不出结果」报成「被其他程序占了」，
+// 用户就会去腾一个根本不存在的东西。
+//
+//	绑得上            → 不降级
+//	明确已被占用        → 「其他程序」，降级（真有人听着这个口）
+//	权限不足 + rootless 引擎 + 端口 <1024 → OwnerRootlessPrivileged，降级（是引擎绑不了特权端口，不是被人占）
+//	其余报错           → 不降级（探测能力不足不得变成阻断，§5.8）
+func ClassifyProbe(err error, p int, rootless bool) (string, bool) {
+	switch {
+	case err == nil:
+		return "", false
+	case portpkg.InUse(err):
+		return "其他程序", true
+	case errors.Is(err, os.ErrPermission) && p < 1024 && rootless:
+		return OwnerRootlessPrivileged, true
+	}
+	return "", false
+}
+
 // portBlockedMsg 给人话一句：这个端口此刻归谁、这次只做了哪一半、怎么回来。
+// rootless 那一档不说「被占用」（那是假话），改成说清两件事：绑不上的真正原因 + 该动哪里。
 func portBlockedMsg(port int, owner string) string {
+	if owner == OwnerRootlessPrivileged {
+		return fmt.Sprintf("端口 %d 绑不上：rootless 模式的容器引擎不能绑定 1024 以下的端口（不是别的程序占了它）。"+
+			"站点配置已落盘，只是这个端口暂不发布。要放开任选其一：给引擎允许特权端口 "+
+			"sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80（写进 /etc/sysctl.d/ 下次开机仍然有效），"+
+			"或把站点端口改成 1024 以上。改好后任意一次站点保存、或重启容器引擎，这个端口就自动补上发布。", port)
+	}
 	return fmt.Sprintf("端口 %d 已被 %s 占用：站点配置已落盘，只是这个端口暂不发布（腾出后自动补齐）", port, owner)
 }
 

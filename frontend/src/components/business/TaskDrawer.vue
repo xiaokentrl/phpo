@@ -11,6 +11,8 @@ import { useLayoutStore } from '@/stores/layoutStore'
 import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
 import { copyText } from '@/utils/str'
+import { msgText } from '@/utils/msgText'
+import type { TaskLine } from '@/stores/taskStore'
 import type { ServiceKind } from '@/types'
 
 const store = useTaskStore()
@@ -28,7 +30,17 @@ const expanded = computed(() => store.expanded)
 const display = computed(() => store.display)
 const progress = computed(() => store.progress)
 // errorText：失败原因（终态 failed 时由 err 日志收口；成功/取消不显示）
-const errorText = computed(() => (task.value?.status === 'failed' ? task.value.error || '' : ''))
+// 失败原因同样按当前语言渲染：那一行日志的消息码在落库时一起记下了（v2.9.16 多语言 Phase 3）
+const errorText = computed(() => {
+  const tk = task.value
+  if (!tk || tk.status !== 'failed') return ''
+  return msgText(tk.error || '', tk.errorCode, tk.errorParams)
+})
+
+// lineText：一行日志的显示文本——认得出消息码就按当前语言说，认不出就照后端原文显示
+function lineText(l: TaskLine): string {
+  return msgText(l.s, l.c, l.p)
+}
 
 // 需求 5（§5.6.1 头部三区口径）：头部左侧只有状态点 + 固定标签「服务」——标签取 t('nav.services')，
 // 不随选中任务变化（任务名在右栏队列每行给出，头部只作区块标题，避免日志/队列切换时标题跳动）。
@@ -127,7 +139,7 @@ async function copyLog(): Promise<void> {
     toast(t('task.noLog'), 'info', 1200)
     return
   }
-  const ok = await copyText(lines.value.map((l) => l.s).join('\n'))
+  const ok = await copyText(lines.value.map(lineText).join('\n'))
   toast(ok ? t('task.copyLog') : t('common.copyFailed'), ok ? 'ok' : 'err', 1600)
 }
 
@@ -200,7 +212,7 @@ async function onClear(): Promise<void> {
           <svg class="error-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>
           <span class="drawer-error-text" :title="errorText">{{ t('task.reason') }}: {{ errorText }}</span>
         </div>
-        <pre ref="logRef" class="drawer-log"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ l.s || ' ' }}</div><div v-if="!lines.length" class="log-line dim">{{ task ? t('task.noLog') : t('task.sysEmpty') }}</div></pre>
+        <pre ref="logRef" class="drawer-log"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ lineText(l) || ' ' }}</div><div v-if="!lines.length" class="log-line dim">{{ task ? t('task.noLog') : t('task.sysEmpty') }}</div></pre>
       </div>
       <div class="drawer-splitter" :title="t('drawer.splitTitle')" @pointerdown="onSplitterDown" @dblclick="layout.setSplit(70)"></div>
       <aside class="drawer-queue">

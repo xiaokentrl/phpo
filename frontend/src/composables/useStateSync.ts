@@ -145,7 +145,7 @@ function landEvent(event: EventName, payload: unknown): void {
   }
   if (event === EVENT.TaskLog) {
     const p = payload as TaskLogPayload
-    task.appendLog(p.id, p.level as LineType, p.text)
+    task.appendLog(p.id, p.level as LineType, p.text, p.code, p.params)
     return
   }
   if (event === EVENT.TaskProgress) {

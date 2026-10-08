@@ -142,10 +142,12 @@ func serviceMeta(op string, kind model.ServiceKind, version string) model.TaskMe
 func (s *AppService) Install(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
 	t := &task.Task{
-		ID:    s.newID(opInstall),
-		Label: "安装 " + name, LabelCode: task.MsgTaskInstall, LabelParams: map[string]string{"name": name},
-		Meta:  serviceMeta(opInstall, kind, version),
-		Steps: s.serviceSteps(kind, version, s.lifecycle.Install),
+		ID:          s.newID(opInstall),
+		Label:       "安装 " + name,
+		LabelCode:   task.MsgTaskInstall,
+		LabelParams: map[string]string{"name": name},
+		Meta:        serviceMeta(opInstall, kind, version),
+		Steps:       s.serviceSteps(kind, version, s.lifecycle.Install),
 	}
 	if st := s.healStep(kind, opInstall); st != nil {
 		t.Steps = append(t.Steps, st)
@@ -160,10 +162,12 @@ func (s *AppService) Install(ctx context.Context, kind model.ServiceKind, versio
 func (s *AppService) Reinstall(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
 	t := &task.Task{
-		ID:    s.newID(opReinstall),
-		Label: "重建 " + name, LabelCode: task.MsgTaskReinstall, LabelParams: map[string]string{"name": name},
-		Meta:  serviceMeta(opReinstall, kind, version),
-		Steps: s.serviceSteps(kind, version, s.lifecycle.Reinstall),
+		ID:          s.newID(opReinstall),
+		Label:       "重建 " + name,
+		LabelCode:   task.MsgTaskReinstall,
+		LabelParams: map[string]string{"name": name},
+		Meta:        serviceMeta(opReinstall, kind, version),
+		Steps:       s.serviceSteps(kind, version, s.lifecycle.Reinstall),
 	}
 	if st := s.healStep(kind, opReinstall); st != nil {
 		t.Steps = append(t.Steps, st)
@@ -196,7 +200,7 @@ func (s *AppService) serviceSteps(kind model.ServiceKind, version string, apply 
 // 启动 nginx 可能让降级站点转为可服务，故带补齐
 func (s *AppService) Start(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
-	return s.one(serviceMeta(opStart, kind, version), "启动 "+name,
+	return s.one(serviceMeta(opStart, kind, version), "启动 "+name, task.MsgTaskStart, map[string]string{"name": name},
 		func(ctx context.Context, log task.StepLog) error {
 			healPgLogging(s.env, kind, version, log)
 			healPhpAllowedClients(s.env, kind, version, log)
@@ -207,13 +211,13 @@ func (s *AppService) Start(ctx context.Context, kind model.ServiceKind, version 
 
 // Stop 停止容器（保留数据，§5.13.7）
 func (s *AppService) Stop(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one(serviceMeta(opStop, kind, version), "停止 "+dockerutil.ContainerName(string(kind), version),
+	return s.one(serviceMeta(opStop, kind, version), "停止 "+dockerutil.ContainerName(string(kind), version), task.MsgTaskStop, map[string]string{"name": dockerutil.ContainerName(string(kind), version)},
 		func(ctx context.Context, _ task.StepLog) error { return s.lifecycle.Stop(ctx, kind, version) })
 }
 
 // Remove 卸载容器（保留数据卷）；卸载数据服务会让出端口，被端口占用卡住的降级站点靠此补齐
 func (s *AppService) Remove(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one(serviceMeta(opRemove, kind, version), "卸载 "+dockerutil.ContainerName(string(kind), version),
+	return s.one(serviceMeta(opRemove, kind, version), "卸载 "+dockerutil.ContainerName(string(kind), version), task.MsgTaskRemove, map[string]string{"name": dockerutil.ContainerName(string(kind), version)},
 		func(ctx context.Context, _ task.StepLog) error { return s.lifecycle.Remove(ctx, kind, version) }, s.healStep(kind, opRemove))
 }
 
@@ -221,11 +225,15 @@ func (s *AppService) Remove(ctx context.Context, kind model.ServiceKind, version
 
 // one 单步任务的便捷构造：把一次 lifecycle 原子操作包成一步，仍经 task.Manager 发事件；extra 追加可选步骤（nil 跳过）。
 // 步骤拿到 log 是为了让「启动时发现并修了什么」这类信息逐行进抽屉，而不是只留一个成败布尔值
-func (s *AppService) one(meta model.TaskMeta, label string, fn func(ctx context.Context, log task.StepLog) error, extra ...task.Step) error {
+// code/labelParams 是这一次操作在队列行与抽屉标题上的可翻译名字（多语言 Phase 2）；
+// label 仍是中文原文，不认消息码的界面与任务账本用的都是它。
+func (s *AppService) one(meta model.TaskMeta, label, code string, labelParams map[string]string, fn func(ctx context.Context, log task.StepLog) error, extra ...task.Step) error {
 	t := &task.Task{
-		ID:    s.newID(meta.Type),
-		Label: label,
-		Meta:  meta,
+		ID:          s.newID(meta.Type),
+		Label:       label,
+		LabelCode:   code,
+		LabelParams: labelParams,
+		Meta:        meta,
 		Steps: []task.Step{
 			&task.FuncStep{StepName: label, Exec: func(ctx context.Context, log task.StepLog) error { return fn(ctx, log) }},
 		},

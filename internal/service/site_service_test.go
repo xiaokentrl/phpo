@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"phpo/internal/config"
@@ -646,6 +647,40 @@ func TestSiteService_Add_KeepsPrivilegedPortAsDegraded(t *testing.T) {
 	}
 }
 
+// TestSiteService_Add_RootlessPrivilegedPortNamesRealCause rootless 引擎绑不了 1024 以下的端口时，
+// 那句提示必须点名真因（是引擎绑不上，不是别的程序占了它）并给出两条恢复路（放开引擎的特权端口上限 /
+// 把端口改到 1024 以上）。站点照常建、用户所填端口原样保留。
+func TestSiteService_Add_RootlessPrivilegedPortNamesRealCause(t *testing.T) {
+	ctx := context.Background()
+	svc, st, env, _ := newSiteSvc(t, nil)
+	bd := &fakeBinder{owners: map[int]string{80: OwnerRootlessPrivileged}}
+	svc.SetPortBinder(bd)
+	if err := svc.Add(ctx, AddInput{Domain: "a.test", Port: 80, PHP: "8.4"}); err != nil {
+		t.Fatalf("引擎绑不上不该拦住建站: %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(env.NginxSitesRoot, "a.test.conf")); e != nil {
+		t.Fatalf("vhost 仍应落盘: %v", e)
+	}
+	if st.sites[0].Port != 80 {
+		t.Fatalf("端口要保留用户所填值，实得 %d", st.sites[0].Port)
+	}
+	msg := st.portBlocks["a.test"]
+	if msg == "" {
+		t.Fatal("绑不上的端口要如实标记降级，而不是当作已发布")
+	}
+	for _, want := range []string{
+		"端口 80 绑不上：rootless 模式的容器引擎不能绑定 1024 以下的端口",
+		"或把站点端口改成 1024 以上",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("降级说明要点名真因与恢复路径，缺 %q: %q", want, msg)
+		}
+	}
+	if strings.Contains(msg, "已被 其他程序") {
+		t.Fatalf("引擎自己绑不上不是被别人占用，不得说成占用: %q", msg)
+	}
+}
+
 // TestSiteService_Remove_HealsSiteFreedByDeletedPort 一次站点写操作重算占用表时，此前被外部占用
 // 而卡住的降级站点要跟着恢复（否则用户清掉冲突源之后，界面上会留着一颗「条件已满足却仍带降级标记」
 // 的站点）。恢复的判据是降级表被重算清空，不是重刷已落盘的 conf——healFreed 不校对宿主端口，
@@ -919,4 +954,56 @@ func TestSiteService_AddHosts_Errors(t *testing.T) {
 			t.Fatalf("失败的任务不得走 Apply 广播，实得 %v", em.events)
 		}
 	})
+}
+
+// TestClassifyProbe 端口实测结果的分档判据。为什么单独立一条用例：这一档决定「站点要不要被标成降级」
+// 以及那句提示说什么——rootless 引擎绑不上 80 被说成「被其他程序占用」是假话，
+// 而 phpo 自己问不出结果却去降级，等于用探测能力的不足拦住用户建站（§5.8）。
+func TestClassifyProbe(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		port       int
+		rootless   bool
+		wantOwner  string
+		wantEncode bool
+	}{
+		{"绑得上就不降级", nil, 80, false, "", false},
+		{"明确被占说其他程序", syscall.EADDRINUSE, 8080, false, "其他程序", true},
+		{"明确被占不受引擎影响", syscall.EADDRINUSE, 80, true, "其他程序", true},
+		{"rootless 特权口点名引擎", syscall.EACCES, 80, true, OwnerRootlessPrivileged, true},
+		{"非 rootless 时权限不足不背锅", syscall.EACCES, 80, false, "", false},
+		{"rootless 但端口不缺权限", syscall.EACCES, 8080, true, "", false},
+		{"其他报错一律不降级", errors.New("boom"), 80, true, "", false},
+	}
+	for _, c := range cases {
+		owner, degrade := ClassifyProbe(c.err, c.port, c.rootless)
+		if degrade != c.wantEncode || owner != c.wantOwner {
+			t.Fatalf("%s: 实得 (%q, %v)，期望 (%q, %v)", c.name, owner, degrade, c.wantOwner, c.wantEncode)
+		}
+	}
+}
+
+// TestPortBlockedMsg_RootlessTellsTruthAndFix rootless 那一档的降级说明必须说清三件事：
+// 这不是被别的程序占了、站点配置已经落盘只是这个端口暂不发布、以及两条恢复路。
+func TestPortBlockedMsg_RootlessTellsTruthAndFix(t *testing.T) {
+	msg := portBlockedMsg(80, OwnerRootlessPrivileged)
+	for _, want := range []string{
+		"rootless 模式的容器引擎不能绑定 1024 以下的端口",
+		"不是别的程序占了它",
+		"net.ipv4.ip_unprivileged_port_start=80",
+		"或把站点端口改成 1024 以上",
+		"这个端口就自动补上发布",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("降级说明缺 %q: %q", want, msg)
+		}
+	}
+	if strings.Contains(msg, "已被") {
+		t.Fatalf("引擎自己绑不上不是被别人占用，不得说成占用: %q", msg)
+	}
+	// 真被别人占着的那一档仍走原来那句（两种情形不能混着说）
+	if got := portBlockedMsg(8080, "其他程序"); !strings.Contains(got, "已被 其他程序 占用") {
+		t.Fatalf("其他程序占用那档文案变了: %q", got)
+	}
 }

@@ -60,6 +60,11 @@ type TaskLogEvent struct {
 	ID    string   `json:"id"`
 	Level LogLevel `json:"level"`
 	Text  string   `json:"text"`
+	// Code/Params 是 v2.9.16 多语言 Phase 3 给这一行补的消息码记号（§5.6 事件名仍 17 个，只补载荷字段，
+	// 先例是 cache:miss 补 source）：Text 仍是中文原文，账本存它、缺码时界面也显示它。
+	// 参数值以 @ 开头表示那一段本身又是一条消息（如步骤名），界面先渲染它再塞回整句。
+	Code   string            `json:"code,omitempty"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 type TaskProgressEvent struct {

@@ -60,13 +60,21 @@ function phpPendingWarn(php?: string): string {
 }
 
 // Nginx 已装但未运行的降级告警：与后端 rules_site.go#nginxNotRunningWarn 文案逐字对齐
-function nginxNotRunningWarn(): string {
+// rootless 那一支说的是另一件事：容器引擎没有以 root 跑时，1024 以下的端口本来就绑不上，
+// 那不是「Nginx 没在跑」造成的，文案不得混为一谈；也不替用户改他填的端口。
+function nginxNotRunningWarn(rootless: boolean): string {
+  if (rootless) {
+    return `${PF.notRunning}: Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布。另外这台机器用的是 rootless 容器引擎，1024 以下的端口本来就绑不上，补齐只对 1024 以上的端口生效——把站点改成这样的端口即可，本站点端口不替你改）`
+  }
   return `${PF.notRunning}: Nginx（站点仍会创建，站点配置先落盘但未经 Nginx 校验；启动 Nginx 后重新校验并补齐端口发布）`
 }
 
 // 编辑站点的降级告警：与后端 rules_site.go#nginxNotServingWarn 文案逐字对齐
 // 模板生成的那三处（改端口 / 切 PHP / 伪静态）走这里——没在跑只告警、照常落盘。
-function nginxNotServingWarn(): string {
+function nginxNotServingWarn(rootless: boolean): string {
+  if (rootless) {
+    return `${PF.notRunning}: Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐。另外这台机器用的是 rootless 容器引擎，1024 以下的端口本来就绑不上，补齐只对 1024 以上的端口生效——把站点改成这样的端口即可，本站点端口不替你改）`
+  }
   return `${PF.notRunning}: Nginx（站点配置仍会落盘，但未经 Nginx 校验、端口暂不发布；启动 Nginx 后自动重新校验并补齐）`
 }
 
@@ -237,7 +245,7 @@ export function usePreflight() {
         return false
       }
       if (!vs.some((v) => app.isServiceRunning('nginx', v))) {
-        warnings.push(nginxNotServingWarn())
+        warnings.push(nginxNotServingWarn(app.engine?.rootless ?? false))
       }
       return true
     }
@@ -310,7 +318,7 @@ export function usePreflight() {
         const { domain, port, php, root } = c
         // 建站的唯一服务门禁是 nginx 未装（阻断）；未运行只降级告警，PHP 等其余服务缺失同样只告警不阻断
         if (!installed('nginx').length) { errors.push(PF.nginxNeeded); break }
-        if (!installed('nginx').some((v) => app.isServiceRunning('nginx', v))) warnings.push(nginxNotRunningWarn())
+        if (!installed('nginx').some((v) => app.isServiceRunning('nginx', v))) warnings.push(nginxNotRunningWarn(app.engine?.rootless ?? false))
         const dd = validateDomain(domain)
         if (!dd.ok) { errors.push(dd.msg!); break }
         if (app.sites.some((s) => s.domain === dd.value)) errors.push(`${PF.domainExists}: ${dd.value}`)

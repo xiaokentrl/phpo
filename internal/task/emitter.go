@@ -18,9 +18,17 @@ type NopEmitter struct{}
 
 func (NopEmitter) Emit(string, any) {}
 
-// Logf 发射 task:log
+// Logf 发射 task:log。除原文外附带消息码（§5.6 多语言 Phase 3）：
+// 这一行的中文原文照旧发出——任务账本存的就是它，前端在没有消息码时也显示它；
+// code/params 只是给界面多一个「按用户语言说同一句话」的记号，认不出记号的行照原文显示。
 func Logf(e Emitter, id string, level model.LogLevel, text string) {
-	e.Emit("task:log", model.TaskLogEvent{ID: id, Level: level, Text: text})
+	code, params := LookupLine(text)
+	e.Emit("task:log", model.TaskLogEvent{ID: id, Level: level, Text: text, Code: code, Params: params})
+}
+
+// LogCode 发射一行已确定消息码的日志（框架行这类原文与参数都在调用点现拼的走这条）。
+func LogCode(e Emitter, id string, level model.LogLevel, code string, params map[string]string, text string) {
+	e.Emit("task:log", model.TaskLogEvent{ID: id, Level: level, Text: text, Code: code, Params: params})
 }
 
 // Progressf 发射 task:progress

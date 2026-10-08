@@ -34,7 +34,9 @@ export const DISPLAY_LABEL: Record<TaskDisplayStatus, string> = {
 export type LineType = 'cmd' | 'meta' | 'ok' | 'dim' | 'err'
 export interface TaskLine {
   t: LineType
-  s: string
+  s: string            // 后端原文（中文）；没有消息码、或当前语言没这条键时就显示它
+  c?: string           // 消息码（v2.9.16 多语言 Phase 3）
+  p?: Record<string, string> // 消息码参数；值以 @ 开头表示那一段本身又是一条消息
 }
 export interface TaskMeta {
   type: string
@@ -61,6 +63,10 @@ export interface TaskRecord {
   step: number // 已完成步骤数（task:progress / 快照 tasks）
   total: number // 总步骤数；0=未知（如账本回放的历史任务）
   lastErr: string | null // 最近一条 err 日志（终态为 failed 时即失败原因）
+  errorCode?: string     // 失败原因那条日志的消息码与参数（历史账本没有，照原文显示）
+  errorParams?: Record<string, string>
+  lastErrCode?: string   // 那条 err 日志的消息码与参数（v2.9.16 多语言 Phase 3）：失败原因也要跟着语言走
+  lastErrParams?: Record<string, string>
   error: string | null // 失败原因：仅由终态判定写入，避免中途告警被误读为失败
   durationMs: number | null // 后端 task:done 的权威耗时
 }
@@ -488,11 +494,15 @@ export const useTaskStore = defineStore('task', () => {
 
   // appendLog：task:log 一行落地。err 行记为「最近错误」；失败原因只在终态为 failed 时成立
   // （§5.6 的 task:done 载荷不带 error，可用来源是这一行与账本 error 列）。
-  function appendLog(id: string, level: LineType, text: string): void {
+  function appendLog(id: string, level: LineType, text: string, code?: string, params?: Record<string, string>): void {
     if (!id) return
     const r = ensureLive(id)
-    r.lines.push({ t: level, s: text })
-    if (level === 'err') r.lastErr = text
+    r.lines.push({ t: level, s: text, c: code, p: params })
+    if (level === 'err') {
+      r.lastErr = text
+      r.lastErrCode = code
+      r.lastErrParams = params
+    }
   }
 
   // setProgress：task:progress 落地（快照 tasks 亦带同一进度，两者同源不冲突）
@@ -514,8 +524,10 @@ export const useTaskStore = defineStore('task', () => {
       r.cancelled = true
       r.abortReason = r.abortReason || 'user'
     }
-    // 失败原因实时收口：优先任务内最后一条 err 日志，退化用取消标记
+    // 失败原因实时收口：优先任务内最后一条 err 日志（连同它的消息码，界面才能跟着语言换），退化用取消标记
     r.error = status === 'failed' ? r.lastErr : null
+    r.errorCode = status === 'failed' ? r.lastErrCode : undefined
+    r.errorParams = status === 'failed' ? r.lastErrParams : undefined
     if (!r.total && r.step) r.total = r.step // 进度行已到即总步数收口，避免停在 x/0
     trim()
   }

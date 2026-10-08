@@ -14,6 +14,7 @@ const (
 	MsgTaskBackupCreate   = "task.backupCreate"
 	MsgTaskBackupRestore  = "task.backupRestore"
 	MsgTaskBackupDelete   = "task.backupDelete"
+	MsgTaskSiteAdd        = "task.siteAdd"
 	MsgTaskSitePort       = "task.sitePort"
 	MsgTaskSitePhp        = "task.sitePhp"
 	MsgTaskSiteRewrite    = "task.siteRewrite"
