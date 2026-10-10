@@ -352,12 +352,19 @@ func (s *DockerCleanService) targetsFor(key string, cache cleanCache, hostRows m
 		return out, ""
 
 	case "swarm.config":
-		if inv.Failed(engine.CatSwarmConfigs) {
-			return nil, fmt.Sprintf("这次没读到（Docker 没答上来）：%s", inv.Reason(engine.CatSwarmConfigs))
+		// 这一行叫「配置 / 密钥」，两类都得进清单：只列配置等于删掉承诺的一半。
+		// 任一类没读到就不给清单——把「不知道」当成「没有」会让界面报一笔没做过的删除。
+		for _, cat := range []string{engine.CatSwarmConfigs, engine.CatSwarmSecrets} {
+			if inv.Failed(cat) {
+				return nil, fmt.Sprintf("这次没读到（Docker 没答上来）：%s", inv.Reason(cat))
+			}
 		}
-		out := make([]model.CleanTarget, 0, len(inv.Configs))
+		out := make([]model.CleanTarget, 0, len(inv.Configs)+len(inv.Secrets))
 		for _, cf := range inv.Configs {
-			out = append(out, swarmTarget(engine.DelSwarmConfig, cf))
+			out = append(out, swarmNamedTarget(engine.DelSwarmConfig, "配置", cf))
+		}
+		for _, sec := range inv.Secrets {
+			out = append(out, swarmNamedTarget(engine.DelSwarmSecret, "密钥", sec))
 		}
 		return out, ""
 
@@ -406,6 +413,14 @@ func (s *DockerCleanService) targetsFor(key string, cache cleanCache, hostRows m
 // 拿名字过去会删不掉又报一句看不懂的原因。
 func swarmTarget(kind string, n engine.InvNamed) model.CleanTarget {
 	return model.CleanTarget{Kind: kind, ID: n.ID, Name: n.Name, Foreign: !rowIsPhpo(n.Name)}
+}
+
+// swarmNamedTarget 同上，只是把类型写进显示名：「配置 / 密钥」这一行一次列两类对象，
+// 配置和密钥可以同名，只写名字用户就看不出自己勾走的是哪一样——而密钥删了不落盘、找不回来。
+func swarmNamedTarget(kind, kindWord string, n engine.InvNamed) model.CleanTarget {
+	tg := swarmTarget(kind, n)
+	tg.Name = fmt.Sprintf("%s · %s", kindWord, n.Name)
+	return tg
 }
 
 // hostTargets 把宿主行摊成逐项对象。

@@ -807,3 +807,103 @@ func TestCleanHostRowKeysMatchEngine(t *testing.T) {
 		}
 	}
 }
+
+// TestCleanSwarmConfigRowCarriesBothKinds 锁住「配置 / 密钥」这一行的兑现：
+// 界面这句话既数配置也数密钥，动手时两类都真得交给删除那一层。
+//
+// 密文与配置刻意同名：同名不同类在界面上必须分得开，删除时也不能因为「名字撞了」而被当成同一个对象。
+func TestCleanSwarmConfigRowCarriesBothKinds(t *testing.T) {
+	inv := engine.DockerInventory{
+		Configs: []engine.InvNamed{{ID: "cfg1", Name: "db-password"}},
+		Secrets: []engine.InvNamed{{ID: "sec1", Name: "db-password"}},
+	}
+	eng := &dcEngine{info: engine.DaemonInfo{OK: true, Rootless: true},
+		invs: []engine.DockerInventory{inv, inv}}
+	svc, _, _, _ := dcSvc(t, eng, &dcUninst{})
+
+	report, err := svc.Scan(context.Background(), false)
+	if err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	row := dcRow(report.Rows, "swarm.config")
+	if row.Status != model.RowOK || row.Count != 2 {
+		t.Fatalf("这一行叫「配置 / 密钥」，配置与密文各一份就该是 2，实得 %+v", row)
+	}
+
+	pv, err := dcPreview(t, svc, false, "swarm.config")
+	if err != nil {
+		t.Fatalf("预览失败: %v", err)
+	}
+	if len(pv.Targets) != 2 {
+		t.Fatalf("两类对象都要进清单，实得 %+v", pv.Targets)
+	}
+	cfg, sec := dcFind(pv.Targets, engine.DelSwarmConfig), dcFind(pv.Targets, engine.DelSwarmSecret)
+	if cfg == nil || sec == nil {
+		t.Fatalf("清单里两类各要有一颗，实得 %+v", pv.Targets)
+	}
+	if cfg.ID != "swarm_config|cfg1" || sec.ID != "swarm_secret|sec1" {
+		t.Fatalf("同名不同类要靠「类型+引用」分开，实得 %q / %q", cfg.ID, sec.ID)
+	}
+	if !strings.Contains(cfg.Name, "配置") || !strings.Contains(sec.Name, "密钥") {
+		t.Fatalf("界面上要看得出删的是哪一类（密钥删了就没了、不落盘），实得 %q / %q", cfg.Name, sec.Name)
+	}
+
+	rep, err := svc.Execute(context.Background(), model.CleanRequest{
+		Token: pv.Token, IDs: dcIDs(pv.Targets)})
+	if err != nil {
+		t.Fatalf("清空失败: %v", err)
+	}
+	// 这一条同时证「动手前核对现场」那张表里有密文：漏了一类，好端端存在的密文会被报成
+	// 「已经不在了，跳过」——既没删，界面还说删过了。
+	if rep.Removed != 2 || rep.Skipped != 0 || rep.Failed != 0 {
+		t.Fatalf("两份都该真删掉，实得 %+v", rep)
+	}
+	if !dcHasRef(eng.dockerOps, engine.DelSwarmSecret, "sec1") {
+		t.Fatalf("密文要真的交给删除那一层，实得 %+v", eng.dockerOps)
+	}
+	if !dcHasRef(eng.dockerOps, engine.DelSwarmConfig, "cfg1") {
+		t.Fatalf("配置照旧要删，实得 %+v", eng.dockerOps)
+	}
+}
+
+// TestCleanSwarmConfigRowFailsWhenSecretsUnread 是「不知道」不等于「没有」在这一行的落法：
+// 密文那一类没读到，整行给「读不到」，不得只拿配置那一份数字显示成 1 项、预览也只交一半单子。
+func TestCleanSwarmConfigRowFailsWhenSecretsUnread(t *testing.T) {
+	inv := engine.DockerInventory{
+		Configs:  []engine.InvNamed{{ID: "cfg1", Name: "c"}},
+		Failures: map[string]string{engine.CatSwarmSecrets: "daemon 说读不到"},
+	}
+	eng := &dcEngine{info: engine.DaemonInfo{OK: true, Rootless: true},
+		invs: []engine.DockerInventory{inv, inv}}
+	svc, _, _, _ := dcSvc(t, eng, &dcUninst{})
+
+	report, err := svc.Scan(context.Background(), false)
+	if err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	row := dcRow(report.Rows, "swarm.config")
+	if row.Status != model.RowUnavailable {
+		t.Fatalf("密文没读到就不能把这一行画成已数清，实得 %+v", row)
+	}
+	if _, err := svc.Preview(context.Background(), []string{"swarm.config"}); err == nil {
+		t.Fatal("读不到的那一半不许拿一份残缺清单去删")
+	}
+}
+
+func dcRow(rows []model.CleanRow, key string) model.CleanRow {
+	for _, r := range rows {
+		if r.Key == key {
+			return r
+		}
+	}
+	return model.CleanRow{}
+}
+
+func dcHasRef(ops []engine.DeleteOp, kind, ref string) bool {
+	for _, o := range ops {
+		if o.Kind == kind && o.Ref == ref {
+			return true
+		}
+	}
+	return false
+}

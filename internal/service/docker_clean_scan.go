@@ -357,10 +357,14 @@ func (s *DockerCleanService) dockerRows(inv engine.DockerInventory, installed ma
 		stacks := inv.Groups(engine.SwarmStackLabel())
 		ok("swarm.stack", len(stacks), groupBytes(stacks), true)
 	}
-	out["swarm.config"] = cleanFailRow("swarm.config", inv, engine.CatSwarmConfigs)
+	// 这一行的界面名字是「配置 / 密钥」：密文只采进清单却不数进来，数量就只兑现了一半承诺。
+	// 两类任一类没读到都算这一行读不到——把「不知道」画成「没有」是 §5.11 不接受的。
+	out["swarm.config"] = cleanFailRow("swarm.config", inv, engine.CatSwarmConfigs, engine.CatSwarmSecrets)
 	out["compose.config"] = cleanFailRow("compose.config", inv, engine.CatSwarmConfigs)
+	if !inv.Failed(engine.CatSwarmConfigs) && !inv.Failed(engine.CatSwarmSecrets) {
+		ok("swarm.config", len(inv.Configs)+len(inv.Secrets), 0, false)
+	}
 	if !inv.Failed(engine.CatSwarmConfigs) {
-		ok("swarm.config", len(inv.Configs), 0, false)
 		composeCfg := 0
 		for _, c := range inv.Configs {
 			if c.Labels[engine.ComposeProjectLabel()] != "" {

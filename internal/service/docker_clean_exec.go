@@ -467,5 +467,13 @@ func cleanPresent(inv engine.DockerInventory) map[string]bool {
 			add(engine.DelSwarmConfig, cf.Name)
 		}
 	}
+	// 密文与配置同属「配置 / 密钥」这一行：这一份「还在不在」的表里少了它，
+	// 动手时就会把一个好端端存在的密文当成「已经不在了」而跳过，等于报了删除却没删。
+	if !inv.Failed(engine.CatSwarmSecrets) {
+		for _, sec := range inv.Secrets {
+			add(engine.DelSwarmSecret, sec.ID)
+			add(engine.DelSwarmSecret, sec.Name)
+		}
+	}
 	return out
 }
