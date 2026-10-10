@@ -99,6 +99,93 @@ export function useModals() {
     })
   }
 
+  // ---- 总览页批量操作（需求）：勾选多行 → 启动/停止/删除，逐个 preflight + submitWrite 进串行队列 ----
+  // 每个服务是独立的三段式任务（预检/回滚语义各自成立），不是一个大任务——队列本就串行 FIFO，顺序执行。
+
+  // enqueueBatch 逐个入队；返回预检被跳过的数量（由调用方汇总 toast）。
+  function enqueueBatch(
+    action: 'service-start' | 'service-stop' | 'uninstall',
+    rows: { kind: string; version: string }[],
+    verbKey: string,
+  ): number {
+    let skipped = 0
+    for (const r of rows) {
+      const check = preflight(action, { kind: r.kind, version: r.version })
+      if (!check.ok) { skipped++; continue }
+      const meta = kindMeta(r.kind)
+      const label = `${t(verbKey)} ${t(meta.titleKey)} ${r.version}`
+      const args = [r.kind, action === 'uninstall' ? 'uninstall' : action === 'service-start' ? 'start' : 'stop', r.version]
+      const real =
+        action === 'uninstall' ? svcRemove : action === 'service-start' ? svcStart : svcStop
+      submitWrite(args, label, { type: action, kind: r.kind, version: r.version }, () => real(r.kind, r.version))
+    }
+    return skipped
+  }
+
+  function notifySkipped(skipped: number): void {
+    if (skipped) toast(t('overview.batch.skipped', { n: skipped }), 'info', 3200)
+  }
+
+  // batchLifecycle 批量启停：先整体预检（失败的剔除，最后汇总）；有警告合并成一扇危险确认（对齐单服务口径），无警告直接入队。
+  function batchLifecycle(
+    action: 'service-start' | 'service-stop',
+    rows: { kind: string; version: string }[],
+    verbKey: string,
+  ): void {
+    if (!rows.length) return
+    const warnings: string[] = []
+    const plan: { kind: string; version: string }[] = []
+    for (const r of rows) {
+      const check = preflight(action, { kind: r.kind, version: r.version })
+      if (!check.ok) continue
+      warnings.push(...check.warnings)
+      plan.push(r)
+    }
+    const skipped = rows.length - plan.length
+    if (!plan.length) { toast(t('overview.batch.noneQueued'), 'err', 3200); return }
+    const submit = (): void => {
+      enqueueBatch(action, plan, verbKey)
+      notifySkipped(skipped)
+    }
+    if (warnings.length) {
+      modal.open(DangerConfirm, {
+        title: t(verbKey),
+        warnings: warnings.map((w) => ({ text: w })),
+        confirmLabel: t('common.confirm'),
+        onConfirm: submit,
+      })
+      return
+    }
+    submit()
+  }
+
+  function batchStartService(rows: { kind: string; version: string }[]): void {
+    batchLifecycle('service-start', rows, 'svc.start')
+  }
+  function batchStopService(rows: { kind: string; version: string }[]): void {
+    batchLifecycle('service-stop', rows, 'svc.stop')
+  }
+
+  // batchRemoveService 批量卸载：一扇危险确认列全部名单，勾选确认后逐个预检入队。
+  function batchRemoveService(rows: { kind: string; version: string }[]): void {
+    if (!rows.length) return
+    const names = rows.map((r) => `${t(kindMeta(r.kind).titleKey)} ${r.version}`).join('、')
+    modal.open(DangerConfirm, {
+      title: t('danger.batchUninstall.title', { n: rows.length }),
+      description: t('danger.batchUninstall.desc'),
+      warnings: [
+        { text: t('danger.batchUninstall.warn1', { names }) },
+        { text: t('danger.uninstall.warn3'), keep: true },
+        { text: t('danger.uninstall.warn4'), keep: true },
+      ],
+      checkbox: { label: t('danger.batchUninstall.check') },
+      confirmLabel: t('danger.batchUninstall.confirm'),
+      onConfirm: () => {
+        notifySkipped(enqueueBatch('uninstall', rows, 'svc.uninstall'))
+      },
+    })
+  }
+
   // dispatchLifecycle：生命周期写操作统一入口。预检 → 错误阻断 / 警告危险确认 → 有宿主走后端绑定（事件回流），无宿主回落 mock 日志。
   function dispatchLifecycle(
     action: 'service-start' | 'service-stop',
@@ -298,6 +385,7 @@ export function useModals() {
     openUpdateModal, openCleanupModal, openTrashModal,
     openUninstallModal, openSiteRemoveModal, openDeleteBackupModal, openRestoreModal,
     startService, stopService, openRebuildModal,
+    batchStartService, batchStopService, batchRemoveService,
     runGuardedTask,
     runBackup, downloadBackupFile, refreshBackups,
   }

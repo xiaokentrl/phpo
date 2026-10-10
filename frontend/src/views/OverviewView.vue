@@ -72,6 +72,28 @@ const lines = computed(() => new Set(all.value.map((x) => x.kind)).size)
 function jump(kind: ServiceKind) {
   router.push('/' + kind)
 }
+
+// ---- 批量操作（需求）：表格左侧多选列，支持全选/反选；对选中项批量启动/停止/删除（走任务队列） ----
+const { batchStartService, batchStopService, batchRemoveService } = useModals()
+
+const selected = ref<Set<string>>(new Set())
+const keyOf = (r: Row): string => `${r.kind}/${r.version}`
+const selectedRows = computed(() => all.value.filter((r) => selected.value.has(keyOf(r))))
+const allSelected = computed(() => all.value.length > 0 && selectedRows.value.length === all.value.length)
+const someSelected = computed(() => selectedRows.value.length > 0 && !allSelected.value)
+// 启停按状态过滤适用行：停止只对运行中的、启动只对已停止的——对不在状态里的服务入队只会换来一颗报错任务
+const stoppable = computed(() => selectedRows.value.filter((r) => r.running))
+const startable = computed(() => selectedRows.value.filter((r) => !r.running))
+
+function toggleAll(): void {
+  selected.value = allSelected.value ? new Set() : new Set(all.value.map(keyOf))
+}
+function toggleRow(r: Row): void {
+  const s = new Set(selected.value)
+  if (s.has(keyOf(r))) s.delete(keyOf(r))
+  else s.add(keyOf(r))
+  selected.value = s
+}
 </script>
 
 <template>
@@ -118,10 +140,27 @@ function jump(kind: ServiceKind) {
         <div class="summary-item"><div class="summary-num">{{ lines }}</div><div class="summary-label">{{ t('overview.lines') }}</div></div>
       </div>
 
+      <!-- 批量操作栏：有勾选才出现（需求）——删除是危险操作，弹窗里另有勾选确认 -->
+      <div v-if="selectedRows.length" class="ov-batch-bar">
+        <span class="ov-batch-count">{{ t('overview.batch.selected', { n: selectedRows.length }) }}</span>
+        <button class="btn btn-sm" :disabled="!startable.length" @click="batchStartService(startable)">{{ t('overview.batch.start') }}</button>
+        <button class="btn btn-sm" :disabled="!stoppable.length" @click="batchStopService(stoppable)">{{ t('overview.batch.stop') }}</button>
+        <button class="btn btn-sm btn-danger" @click="batchRemoveService(selectedRows)">{{ t('overview.batch.delete') }}</button>
+      </div>
+
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
+              <th class="ov-th-check">
+                <input
+                  type="checkbox"
+                  :checked="allSelected"
+                  :indeterminate="someSelected"
+                  :aria-label="t('overview.batch.selectAll')"
+                  @change="toggleAll"
+                />
+              </th>
               <th class="ov-th-svc">{{ t('overview.col.svc') }}</th>
               <th class="ov-th-ver">{{ t('overview.col.ver') }}</th>
               <th class="ov-th-status">{{ t('overview.col.status') }}</th>
@@ -131,6 +170,14 @@ function jump(kind: ServiceKind) {
           </thead>
           <tbody>
             <tr v-for="item in all" :key="`${item.kind}/${item.version}`">
+              <td class="ov-td-check">
+                <input
+                  type="checkbox"
+                  :checked="selected.has(`${item.kind}/${item.version}`)"
+                  :aria-label="`${t(SVC_META[item.kind].titleKey)} ${item.version}`"
+                  @change="toggleRow(item)"
+                />
+              </td>
               <td>
                 <div class="svc-cell"><span class="svc-icon">{{ SVC_META[item.kind].icon }}</span>{{ t(SVC_META[item.kind].titleKey) }}</div>
               </td>
@@ -203,6 +250,32 @@ function jump(kind: ServiceKind) {
 }
 .ov-th-svc {
   width: 22%;
+}
+.ov-th-check {
+  width: 36px;
+}
+.ov-td-check {
+  text-align: center;
+}
+.ov-td-check input,
+.ov-th-check input {
+  accent-color: var(--accent, var(--text));
+  cursor: pointer;
+}
+.ov-batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-xs, 6px);
+  background: var(--surface-2);
+}
+.ov-batch-count {
+  font-size: 12px;
+  color: var(--text);
+  margin-right: auto;
 }
 .ov-th-ver {
   width: 16%;
