@@ -26,6 +26,18 @@ func (s *Store) AppendOperation(op model.Operation) error {
 	return err
 }
 
+// ClearOperations 清空操作账本（任务队列历史 + 任务日志的唯一持久层）：覆盖安装（运行版本变化）
+// 后由应用装配调用，新版首屏队列与日志从零开始。只动 operations 这一张表——
+// 回收站、清理审计、运行态（installed/running/sites）一律不碰，不属「任务记录」。
+func (s *Store) ClearOperations() error {
+	db, err := s.ensure()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM operations`)
+	return err
+}
+
 func (s *Store) ListOperations(limit int) ([]model.Operation, error) {
 	if limit <= 0 {
 		limit = 100

@@ -248,6 +248,24 @@ func (c *Container) ProbeDockerSources(ctx context.Context, raw []string) []mode
 	return out
 }
 
+// pruneHistoryOnUpgrade：覆盖安装（运行版本 ≠ config.yaml 记的 last_run_version）后把任务账本
+// 连根清空——任务队列历史与任务日志都只落在 SQLite 的 operations 表，清表即双双归零。
+// 记号由 ConfigStore 在每次落盘时盖当前版本戳；这里清表成功后再立即落一次盘把戳写死，
+// 不等用户下一次改配置——否则本进程崩溃后下次启动会把本版刚产生的记录也误清。
+// 首启（两根未落盘）整段跳过：config.yaml 与 phpo.db 都还不存在，首启用户数据目录零落盘原则不动；
+// 账本不存在（配置过但从未产生任务）只补戳、不借机建库。清表失败记号留旧值，下次启动重试。
+func (c *Container) pruneHistoryOnUpgrade(cfg *config.ConfigStore, st *store.Store, dbPath string) {
+	if !cfg.RootsPersisted() || cfg.LastRunVersion() == c.CurrentVersion {
+		return
+	}
+	if _, err := os.Stat(dbPath); err == nil {
+		if err := st.ClearOperations(); err != nil {
+			return
+		}
+	}
+	_ = cfg.StampRunVersion()
+}
+
 // buildObjectGraph 按已载入的配置构造（重绑时重建）整棵运行期对象图。
 // env 两份：原始值供展示与快照，展开值供真实文件 IO 与容器挂载。
 // calibrate=false 跳过启动校准：重绑只为换根，此刻库里没有任何「已装」记录，校准会把旧根下遗留的
@@ -263,6 +281,11 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	}
 	st := store.New(dbPath)
 	st.SetEnvProvider(cfg)
+	// 本进程运行版本注入 ConfigStore：此后每次落盘自动盖 last_run_version 戳（覆盖安装识别的记号来源）
+	cfg.SetRunVersion(c.CurrentVersion)
+	// 覆盖安装后清账本（需求）：运行版本 ≠ config.yaml 记的 last_run_version → 任务队列历史与
+	// 任务日志记录全部作废，新版首屏从零开始。任何失败只跳过本轮、下次启动重试，不阻断启动。
+	c.pruneHistoryOnUpgrade(cfg, st, dbPath)
 	cli, err := engine.New() // 惰性：不拨号，Docker 缺席亦不报错
 	if err != nil {
 		_ = st.Close()
