@@ -85,6 +85,59 @@ func (m *Manager) LookupExtension(phpVersion, extType, name string) (ExtLookup, 
 	return ExtLookup{Hit: true, Path: path, Size: fileSize(path)}, nil
 }
 
+// corruptTarLight 轻判一份镜像 tar 是否判坏（列表/概览用，非安装链路）：
+// 文件存在但 manifest 无记录、或记录 Size 与当前文件 size 不一致即坏。
+// **不做全文件 SHA256**——docker save 的 tar 动辄数百 MB，列表每次进页对每份重哈希就是风扇狂转
+// （用户真机取证，与备份页同病）。镜像 tar 提升后永不改写，size 漂移 = 被外部改动，判坏即足够；
+// 字节级真伪由显式「校验」（VerifyEntry/VerifyAll，重哈希落盘）负责。文件不存在 = 无镜像，不算坏。
+func (m *Manager) corruptTarLight(kind, version, tar string, rec func(*model.CacheManifest) *model.ManifestImage) bool {
+	fi, err := os.Stat(tar)
+	if err != nil {
+		return false
+	}
+	var want *model.ManifestImage
+	if mf, err := m.LoadManifest(kind, version); err == nil {
+		want = rec(mf)
+	}
+	if want == nil {
+		return true
+	}
+	return want.Size != fi.Size()
+}
+
+// corruptExtPkgLight 扩展包轻判（同上）：文件存在但 manifest 无记录或 size 漂移即坏。
+func (m *Manager) corruptExtPkgLight(phpVersion, extType, name string) bool {
+	path := filepath.Join(m.env.OfflineExtDir("php", phpVersion, extType), name)
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	var want *model.ManifestPackage
+	if mf, err := m.LoadManifest("php", phpVersion); err == nil {
+		want = manifestExtRec(mf, extType, name)
+	}
+	if want == nil {
+		return true
+	}
+	return want.Size != fi.Size()
+}
+
+func manifestExtRec(mf *model.CacheManifest, extType, name string) *model.ManifestPackage {
+	var list []model.ManifestPackage
+	switch extType {
+	case "apk":
+		list = mf.Apk
+	case "pecl":
+		list = mf.Pecl
+	}
+	for i := range list {
+		if list[i].Name == name {
+			return &list[i]
+		}
+	}
+	return nil
+}
+
 func manifestExtSha(mf *model.CacheManifest, extType, name string) string {
 	var list []model.ManifestPackage
 	switch extType {

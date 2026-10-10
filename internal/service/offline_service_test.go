@@ -83,8 +83,12 @@ func TestOffline_ListEntries_AggregatesManifest(t *testing.T) {
 	svc, m, env, _, _, _ := newOfflineSvc(t)
 	seedImage(t, m, env, "php", "8.4", []byte("IMG"), "") // 完好
 	seedPecl(t, m, env, "8.4", "redis-6.tgz", []byte("EXT"))
-	// nginx 损坏：manifest 记 sha 与真实不符
-	seedImage(t, m, env, "nginx", "alpine", []byte("REAL"), "deadbeef")
+	// nginx 损坏（列表轻判语义）：文件 size 漂移 = 被外部改动/替换，不重哈希即判坏；
+	// sha 不符但 size 一致的场景归显式「校验」按钮抓（字节级真伪不做进列表，防入页全文件哈希烧 CPU）
+	seedImage(t, m, env, "nginx", "alpine", []byte("REAL"), "")
+	if err := os.WriteFile(env.OfflineImageTar("nginx", "alpine"), []byte("REAL-CHANGED"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	list, err := svc.ListCacheEntries(context.Background())
 	if err != nil {

@@ -53,18 +53,24 @@ func (m *Manager) ListEntries() ([]Entry, error) {
 	return out, nil
 }
 
-// corrupted 判定：镜像/固化镜像/扩展任一存在文件校验失败
+// corrupted 判定（轻量，列表/概览用）：镜像/固化镜像/扩展包任一「存在但无 manifest 记录或 size 漂移」。
+// 不做全文件 SHA256——每份镜像 tar 数百 MB 起，列表每次进页对每份重哈希 = 风扇狂转（用户真机取证，
+// 与备份页 TopLevel 同病）；字节级校验由显式「校验」按钮（VerifyEntry/VerifyAll）负责并发射 cache:corrupted。
 func (m *Manager) corrupted(kind, version string) bool {
-	if il, _ := m.LookupImage(kind, version); il.Corrupted {
+	if m.corruptTarLight(kind, version, m.env.OfflineImageTar(kind, version), func(mf *model.CacheManifest) *model.ManifestImage {
+		return mf.Image
+	}) {
 		return true
 	}
 	if kind == "php" {
-		if el, _ := m.LookupExtImage(version); el.Corrupted {
+		if m.corruptTarLight("php", version, m.env.OfflineExtImageTar("php", version), func(mf *model.CacheManifest) *model.ManifestImage {
+			return mf.ExtImage
+		}) {
 			return true
 		}
 		for _, et := range []string{"apk", "pecl"} {
 			for _, name := range listFiles(filepath.Join(m.env.OfflineExtDir(kind, version, et))) {
-				if el, _ := m.LookupExtension(version, et, name); el.Corrupted {
+				if m.corruptExtPkgLight(version, et, name) {
 					return true
 				}
 			}

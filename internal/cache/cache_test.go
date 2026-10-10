@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"path/filepath"
 	"phpo/internal/config"
 	"phpo/internal/model"
 )
@@ -468,4 +469,56 @@ func count(list []string, s string) int {
 		}
 	}
 	return n
+}
+
+// ---- corrupted 轻判：列表不重哈希（入页烧 CPU 的修复）----
+
+func TestCorrupted_Lightweight(t *testing.T) {
+	m, env, _, _ := newMgr(t)
+	dir := filepath.Join(env.OfflineRoot, "mysql", "8.4")
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	tarPath := filepath.Join(dir, "image.tar")
+	// 文件内容与记录 sha256 故意不一致、但 size 与记录一致：重哈希会判坏，轻判不判坏
+	if err := os.WriteFile(tarPath, []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SaveManifest(&model.CacheManifest{
+		SchemaVersion: 1, Kind: "mysql", Version: "8.4",
+		Image: &model.ManifestImage{Name: "phpo-mysql:8.4", Sha256: "deadbeef", Size: 10},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if m.corrupted("mysql", "8.4") {
+		t.Fatal("size 一致即视为完好——轻判不得重哈希（否则该用例必红：sha 故意不符）")
+	}
+
+	// size 漂移（外部改动/替换）→ 判坏
+	if err := os.WriteFile(tarPath, []byte("0123456789EXTRA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !m.corrupted("mysql", "8.4") {
+		t.Fatal("size 漂移应判坏")
+	}
+
+	// manifest 无记录（文件裸放）→ 判坏
+	if err := os.WriteFile(tarPath, []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	if !m.corrupted("mysql", "8.4") {
+		t.Fatal("无记录应判坏")
+	}
+
+	// tar 不存在 = 无镜像，不算坏
+	if err := os.Remove(tarPath); err != nil {
+		t.Fatal(err)
+	}
+	if m.corrupted("mysql", "8.4") {
+		t.Fatal("tar 缺席不算损坏")
+	}
 }
