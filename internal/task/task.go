@@ -72,22 +72,22 @@ func (m *Manager) execute(ctx context.Context, t *Task, logger *stepLogger, em E
 			m.rollback(completed)
 			return model.TaskCancelled, ctx.Err()
 		}
-		LogCode(em, t.ID, model.LogDim, "log.step", map[string]string{"name": stepRef(s.Name())}, "步骤 "+s.Name())
+		LogCode(em, t.ID, model.LogDim, "log.step", map[string]string{"name": stepRefOf(s)}, "步骤 "+s.Name())
 		if err := s.Execute(ctx, logger); err != nil {
 			// 步骤执行中被取消（如 pull 阻塞时收到取消）：按取消处理，回滚含当前步
 			if ctx.Err() != nil {
-				LogCode(em, t.ID, model.LogMeta, "log.stepCancelled", map[string]string{"name": stepRef(s.Name())}, "⏹ 已取消: "+s.Name())
+				LogCode(em, t.ID, model.LogMeta, "log.stepCancelled", map[string]string{"name": stepRefOf(s)}, "⏹ 已取消: "+s.Name())
 				m.rollback(append(completed, s))
 				return model.TaskCancelled, ctx.Err()
 			}
-			LogCode(em, t.ID, model.LogErr, "log.stepFail", map[string]string{"name": stepRef(s.Name()), "reason": err.Error()}, s.Name()+" 失败: "+err.Error())
+			LogCode(em, t.ID, model.LogErr, "log.stepFail", map[string]string{"name": stepRefOf(s), "reason": err.Error()}, s.Name()+" 失败: "+err.Error())
 			m.rollback(append(completed, s))
 			return model.TaskFailed, err
 		}
 		completed = append(completed, s)
 		Progressf(em, t.ID, i+1, total)
 		m.setProgress(i+1, total)
-		LogCode(em, t.ID, model.LogOk, "log.stepDone", map[string]string{"name": stepRef(s.Name())}, s.Name()+" 完成")
+		LogCode(em, t.ID, model.LogOk, "log.stepDone", map[string]string{"name": stepRefOf(s)}, s.Name()+" 完成")
 	}
 
 	// Post-Verify
@@ -128,4 +128,14 @@ type stepLogger struct {
 
 func (l *stepLogger) Log(level, text string) {
 	Logf(l.em, l.id, model.LogLevel(level), text)
+}
+
+// StepLogCode 可选接口：支持消息码的日志实现（service 层通过类型断言使用）。
+type StepLogCode interface {
+	LogCode(level, code string, params map[string]string, text string)
+}
+
+// LogCode 消息码日志（v2.9.16 多语言）：code 走前端 i18n，text 是中文回退。
+func (l *stepLogger) LogCode(level, code string, params map[string]string, text string) {
+	LogCode(l.em, l.id, model.LogLevel(level), code, params, text)
 }

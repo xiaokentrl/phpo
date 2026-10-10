@@ -570,6 +570,8 @@ const messages: Record<string, string> = {
   "task.update": "Update application",
   "task.extensionApply": "Apply PHP {version} extensions ({diff})",
   "task.wizardInit": "Initialize work directory",
+  "log.workDir": "Work directory: {path}",
+  "log.keptConfigs": "{count} existing configs kept (reinstall won't overwrite user changes)",
   "task.progressTitle": "Step progress",
   "task.reason": "Failure reason",
   "drawer.cancelTitle": "Cancel task",

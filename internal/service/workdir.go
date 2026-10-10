@@ -21,7 +21,7 @@ import (
 // log 逐行吐真实落盘位置与新建/保留的配置，用户才能分辨「装到哪了、是否覆盖了我的改动」（可为 nil）。
 func prepareService(env config.Env, kind model.ServiceKind, version string, log task.StepLog) error {
 	root := env.RootFor(string(kind), version)
-	logf(log, model.LogDim, "工作目录: "+root)
+	logfCode(log, model.LogDim, "log.workDir", map[string]string{"path": root}, "工作目录: "+root)
 	// 版本子目录树（conf/logs/data/…，§5.13.2 隔离于 phpo 命名空间）
 	for _, sub := range config.VersionSubdirs[string(kind)] {
 		// 数据目录已自定义（需求 7）：默认的 {KIND_ROOT}/{version}/data 不再凭空建出，避免两处数据目录并存
@@ -66,7 +66,8 @@ func prepareService(env config.Env, kind model.ServiceKind, version string, log 
 		logf(log, model.LogOk, "写入默认配置 "+host)
 	}
 	if kept > 0 {
-		logf(log, model.LogDim, fmt.Sprintf("保留既有配置 %d 个（重装不覆盖用户改动）", kept))
+		logfCode(log, model.LogDim, "log.keptConfigs", map[string]string{"count": fmt.Sprintf("%d", kept)},
+			fmt.Sprintf("保留既有配置 %d 个（重装不覆盖用户改动）", kept))
 	}
 	healPgLogging(env, kind, version, log)
 	healPhpAllowedClients(env, kind, version, log)
@@ -174,6 +175,15 @@ func healPhpAllowedClients(env config.Env, kind model.ServiceKind, version strin
 		return
 	}
 	logf(log, model.LogOk, "已删除 "+path+" 里非法的 listen.allowed_clients = any（fpm 不认该值，会把 nginx 的连接全部拒掉造成 502）；重启或重建容器后生效")
+}
+
+// logfCode 消息码日志：通过 StepLogCode 可选接口走 i18n，不支持时回落纯文本（logf）。
+func logfCode(log task.StepLog, level model.LogLevel, code string, params map[string]string, text string) {
+	if lc, ok := log.(task.StepLogCode); ok {
+		lc.LogCode(string(level), code, params, text)
+		return
+	}
+	logf(log, level, text)
 }
 
 // logf 向步骤日志写一行；未注入 logger（只读校验路径）时静默

@@ -570,6 +570,8 @@ const messages: Record<string, string> = {
   "task.update": "升级应用",
   "task.extensionApply": "应用 PHP {version} 扩展 ({diff})",
   "task.wizardInit": "初始化工作目录",
+  "log.workDir": "工作目录: {path}",
+  "log.keptConfigs": "保留既有配置 {count} 个（重装不覆盖用户改动）",
   "task.progressTitle": "步骤进度",
   "task.reason": "失败原因",
   "drawer.cancelTitle": "取消任务",
