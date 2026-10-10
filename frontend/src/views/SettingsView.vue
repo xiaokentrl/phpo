@@ -9,6 +9,7 @@ import { useLayoutStore } from '@/stores/layoutStore'
 import { useModals } from '@/composables/useModals'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { currentVersion } from '@/api/updater'
 import { getSources, setSources, probeSources } from '@/api/dockerSource'
 import { LAYOUT_LIMITS, LAYOUT_PRESETS, UI_SCALE, type PresetName } from '@/constants/layout'
@@ -38,8 +39,14 @@ onMounted(async () => {
   dockerText.value = list.join('\n')
 })
 
+// cleanMirrorLine 清理用户粘贴的镜像地址：去首尾引号/逗号/空白（从网页复制常带格式杂物）
+function cleanMirrorLine(line: string): string {
+  return line.replace(/^[\s"',，]+|[\s"',，]+$/g, '')
+}
+
 // dockerLines 与后端 config.ValidateRegistryHosts 同口径：忽略空行，只把非空行当地址。
-const dockerLines = computed(() => dockerText.value.split(/\r?\n/).map((x) => x.trim()).filter((x) => x !== ''))
+// 每行经 cleanMirrorLine 清洗——去引号/逗号/空白后仍非空才算有效地址。
+const dockerLines = computed(() => dockerText.value.split(/\r?\n/).map(cleanMirrorLine).filter((x) => x !== ''))
 const dockerDirty = computed(() => dockerLines.value.join('\n') !== dockerSaved.value.join('\n'))
 // fastestOf 是本次检测结果里延迟最小的可用源；检测结果的行序与文本框的非空行一一对应，故按下标记。
 const dockerFastest = computed(() => {
@@ -63,7 +70,7 @@ async function saveDockerSources() {
     dockerResults.value = null
     toast(t('settings.docker.saved'), 'ok', 2600)
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     dockerSaving.value = false
   }
@@ -76,7 +83,7 @@ async function testDockerSources() {
   try {
     dockerResults.value = await probeSources(dockerLines.value)
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     dockerTesting.value = false
   }

@@ -101,7 +101,9 @@ func NormalizeRegistryHost(s string) string {
 
 // ValidateRegistryHost 归一并校验单个镜像源主机名：非空、无空白字符、无路径分段、字符集合规。
 // 返回归一后的值；非法时 error 带原值（供界面与 preflight 同一判据，不另立标准）。
+// 先清洗用户粘贴的格式杂物（引号/逗号/首尾空白），再走归一校验。
 func ValidateRegistryHost(s string) (string, error) {
+	s = strings.Trim(s, "\"',， \t")
 	h := NormalizeRegistryHost(s)
 	switch {
 	case h == "":
