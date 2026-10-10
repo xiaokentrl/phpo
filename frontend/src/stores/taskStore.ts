@@ -71,9 +71,6 @@ export interface TaskRecord {
   durationMs: number | null // 后端 task:done 的权威耗时
 }
 
-// 忙锁文案（原型 PF.taskBusy，1594 行）
-export const TASK_BUSY = '已有任务运行中，请等待完成后再操作'
-
 function sitesRootOf(env: Env): string {
   return env.NGINX_SITES_ROOT || `${env.PHPO_HOME}/nginx/sites`
 }
@@ -356,6 +353,8 @@ export const useTaskStore = defineStore('task', () => {
         return {
           id: r.id,
           label: r.label,
+          labelCode: r.labelCode,
+          labelParams: r.labelParams,
           step: r.step,
           total: r.total,
           display: ds,
@@ -674,7 +673,7 @@ export const useTaskStore = defineStore('task', () => {
     }
     const busy = records.value.find((r) => r.status === 'running')
     if (busy) {
-      toast(TASK_BUSY, 'err', 2200)
+      toast(i18nT('err.taskBusy'), 'err', 2200)
       return false
     }
     const t: TaskRecord = { ...newRecord(`demo-${++demoSeq}`, lbl, meta.type, false), args, meta, lines: buildScript(args, meta) }
