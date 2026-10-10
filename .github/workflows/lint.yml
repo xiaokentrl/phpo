@@ -52,8 +52,8 @@ jobs:
       # 已转阻断门禁：迁移后首次真跑的既有问题已全部清零（真实基线 42 项 = errcheck 27 + goimports 5
       # + staticcheck 6 + unused 4；当时默认 --max-same-issues=3 把它折叠成 31 项显示，故登记数偏小）。
       # 本机与 CI 同为 v2.13.2，`run ./... --max-issues-per-linter=0 --max-same-issues=0` 实测 0 issues。
-      - name: Install golangci-lint (build from source for Go version compat)
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
       - name: golangci-lint
         run: |
