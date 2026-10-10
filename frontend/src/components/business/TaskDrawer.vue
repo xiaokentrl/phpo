@@ -81,10 +81,32 @@ const svcGroups = computed(() =>
   })).filter((g) => g.versions.length)
 )
 
-// 新行滚动到底（原型 playTask 每行 log.scrollTop = scrollHeight）
+// pinned：日志视口是否吸底。新行只在吸底时才自动滚到底——点了 ⬆️ 锚到首行后，后续日志不再把
+// 视口拽走；点 ⬇️ 或手动滚回底部即恢复跟随。程序滚动同样触发 scroll 事件，pinned 自行归位。
+const pinned = ref(true)
+
+function onLogScroll(): void {
+  const el = logRef.value
+  if (!el) return
+  pinned.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 4
+}
+
+// scrollLog：⬆️ 锚到本条日志第一行、⬇️ 锚到末行。失败原因横幅（drawer-error）在日志滚动区之外
+// （标题行与 <pre> 之间的独立块，不叠加），滚到 0 首行完整可见，不会被它盖住。
+function scrollLog(dir: 'top' | 'bottom'): void {
+  nextTick(() => {
+    const el = logRef.value
+    if (!el) return
+    el.scrollTop = dir === 'top' ? 0 : el.scrollHeight
+    pinned.value = dir === 'bottom'
+  })
+}
+
+// 新行滚动到底（原型 playTask 每行 log.scrollTop = scrollHeight）；仅吸底时跟随，见 pinned
 watch(
   () => lines.value.length,
   () => {
+    if (!pinned.value) return
     nextTick(() => {
       const el = logRef.value
       if (el) el.scrollTop = el.scrollHeight
@@ -208,14 +230,26 @@ async function onClear(): Promise<void> {
       <div class="drawer-main">
         <!-- 需求（v2.9.13）：把当前操作的直观名字摆在日志之上——用户点开抽屉第一眼即知「这是哪一件事」。
              文本唯一来源仍是权威快照的 TaskBrief.Label（硬红线 4）；无选中任务（系统日志通道）时不渲染。
-             头部三区不动（§5.6.1 左区恒为「服务」二字），故标题落在日志栏内。 -->
-        <div v-if="task" class="drawer-task-title" :title="task.label">{{ briefLabel(task) }}</div>
+             头部三区不动（§5.6.1 左区恒为「服务」二字），故标题落在日志栏内。
+             标题行右侧三颗：复制本条任务全部日志、⬆️ 锚到首行、⬇️ 锚到末行。 -->
+        <div v-if="task" class="drawer-title-row">
+          <div class="drawer-task-title" :title="task.label">{{ briefLabel(task) }}</div>
+          <button class="icon-btn" :title="t('drawer.copyTitle')" @click="copyLog">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+          </button>
+          <button class="icon-btn" :title="t('drawer.logTop')" @click="scrollLog('top')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 15l-6-6-6 6" /></svg>
+          </button>
+          <button class="icon-btn" :title="t('drawer.logBottom')" @click="scrollLog('bottom')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+        </div>
         <div v-if="progress" class="drawer-progress"><div class="drawer-progress-bar" :style="{ width: progress.percent + '%' }"></div></div>
         <div v-if="errorText" class="drawer-error">
           <svg class="error-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></svg>
           <span class="drawer-error-text" :title="errorText">{{ t('task.reason') }}: {{ errorText }}</span>
         </div>
-        <pre ref="logRef" class="drawer-log"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ lineText(l) || ' ' }}</div><div v-if="!lines.length" class="log-line dim">{{ task ? t('task.noLog') : t('task.sysEmpty') }}</div></pre>
+        <pre ref="logRef" class="drawer-log" @scroll="onLogScroll"><div v-for="(l, i) in lines" :key="i" class="log-line" :class="l.t">{{ lineText(l) || ' ' }}</div><div v-if="!lines.length" class="log-line dim">{{ task ? t('task.noLog') : t('task.sysEmpty') }}</div></pre>
       </div>
       <div class="drawer-splitter" :title="t('drawer.splitTitle')" @pointerdown="onSplitterDown" @dblclick="layout.setSplit(70)"></div>
       <aside class="drawer-queue">
@@ -254,13 +288,22 @@ async function onClear(): Promise<void> {
   padding: 1px 6px;
 }
 
-.drawer-task-title {
+.drawer-title-row {
   flex-shrink: 0;
-  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--border-2);
+}
+
+.drawer-task-title {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text);
-  border-bottom: 1px solid var(--border-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

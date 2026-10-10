@@ -576,6 +576,8 @@ const messages: Record<string, string> = {
   "task.reason": "失败原因",
   "drawer.cancelTitle": "取消任务",
   "drawer.copyTitle": "复制日志",
+  "drawer.logTop": "滚动到日志开头",
+  "drawer.logBottom": "滚动到日志末尾",
   "drawer.expandTitle": "展开 / 收起",
   "drawer.splitTitle": "拖动调整日志／队列宽度，双击恢复 70%／30%",
   "tray.openLogs": "打开日志",

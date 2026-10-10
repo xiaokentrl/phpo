@@ -576,6 +576,8 @@ const messages: Record<string, string> = {
   "task.reason": "Failure reason",
   "drawer.cancelTitle": "Cancel task",
   "drawer.copyTitle": "Copy log",
+  "drawer.logTop": "Scroll to first line",
+  "drawer.logBottom": "Scroll to last line",
   "drawer.expandTitle": "Expand / Collapse",
   "drawer.splitTitle": "Drag to resize log / queue; double-click restores 70% / 30%",
   "tray.openLogs": "Open logs",
