@@ -21,13 +21,23 @@ function safeDecode(v: string): string {
   }
 }
 
+// reportMissing：后端给了消息码、当前语言却没有这条文案时，界面退回原文显示，
+// 同时开发构建下报一次——「登记漏了」要当场看得见，而不是等用户发现某行不换语言（§5.15）。
+// 只报「有码但没文案」；码缺席的那些行本来就是数据（容器输出、路径、argv），不该报。
+function reportMissing(code: string): void {
+  if (import.meta.env.DEV) console.warn(`[i18n] 消息码缺文案，退回原文显示：${code}`)
+}
+
 function nested(ref: string): string {
   const bar = ref.indexOf('|')
   const spec = bar < 0 ? ref : ref.slice(0, bar)
   const fallback = bar < 0 ? '' : safeDecode(ref.slice(bar + 1))
   const cut = spec.indexOf('?')
   const code = cut < 0 ? spec : spec.slice(0, cut)
-  if (!te(code)) return fallback
+  if (!te(code)) {
+    reportMissing(code)
+    return fallback
+  }
   const params: MsgParams = {}
   for (const kv of (cut < 0 ? '' : spec.slice(cut + 1)).split('&')) {
     const i = kv.indexOf('=')
@@ -45,6 +55,10 @@ function resolve(params?: MsgParams): MsgParams {
 
 // msgText：按当前语言渲染一行文本。码缺席、或这条语言没有对应文案 → 回落原文。
 export function msgText(text: string, code?: string, params?: MsgParams): string {
-  if (!code || !te(code)) return text
+  if (!code) return text
+  if (!te(code)) {
+    reportMissing(code)
+    return text
+  }
   return t(code, resolve(params))
 }

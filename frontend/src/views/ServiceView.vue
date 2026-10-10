@@ -7,6 +7,7 @@ import { useTaskStore } from '@/stores/taskStore'
 import { useModals } from '@/composables/useModals'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { runTask } from '@/composables/useTask'
 import { syncState } from '@/composables/useStateSync'
 import { hasBackend } from '@/api/site'
@@ -161,7 +162,7 @@ async function commitPort(version: string): Promise<void> {
       })
     }
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     portSaving.value = ''
   }
@@ -209,7 +210,7 @@ async function commitDir(version: string, nextArg?: string): Promise<void> {
       ? t('svc.dataDirSet', { kind: props.kind, version, path: next })
       : t('svc.dataDirReset', { kind: props.kind, version }), 'info', 5600)
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     dirSaving.value = ''
   }

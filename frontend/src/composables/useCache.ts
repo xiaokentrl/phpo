@@ -7,6 +7,7 @@ import { EVENT, onEvent, type CacheHitPayload, type CacheMissPayload } from '@/a
 import { useCacheStore } from '@/stores/cacheStore'
 import { listEntries, stats, verifyAll as apiVerifyAll, verifyEntry as apiVerifyEntry, cleanupCache, removeEntry, importEntry } from '@/api/offline'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { t } from '@/composables/useI18n'
 import { humanSize } from '@/composables/useCleanup'
 import type { CleanupMode, VerifyAllResult } from '@/types'
@@ -26,7 +27,7 @@ async function pull(quiet = false): Promise<boolean> {
     if (st) s.setStats(st)
     return true
   } catch (e) {
-    if (!quiet) toast(String(e), 'err', 4600)
+    if (!quiet) toast(backendMsg(String(e)), 'err', 4600)
     return false
   } finally {
     s.loading = false
@@ -78,7 +79,7 @@ export function useCache() {
       await load()
       return r
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
       return null
     }
   }
@@ -90,7 +91,7 @@ export function useCache() {
       toast(r.ok ? t('offline.verify.ok') : t('offline.verifyFail', { n: r.failed.length }), r.ok ? 'ok' : 'err', 3200)
       await load()
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     }
   }
 
@@ -100,7 +101,7 @@ export function useCache() {
       toast(t('offline.cleanupDone', { size: humanSize(freed) }), 'ok', 3200)
       await load()
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     }
   }
 
@@ -110,7 +111,7 @@ export function useCache() {
       toast(t('offline.removed'), 'ok', 2600)
       await load()
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     }
   }
 
@@ -122,7 +123,7 @@ export function useCache() {
       await load()
       return true
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
       return false
     }
   }

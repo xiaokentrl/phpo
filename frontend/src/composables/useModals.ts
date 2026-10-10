@@ -5,6 +5,7 @@ import { useAppState } from '@/stores/appState'
 import { usePreflight } from './usePreflight'
 import { useI18n } from './useI18n'
 import { toast } from './useToast'
+import { backendMsg } from '../utils/backendMsg'
 import { runTask, submitWrite, type TaskMeta } from './useTask'
 import { removeSite, hasBackend } from '@/api/site'
 import { startService as svcStart, stopService as svcStop, removeService as svcRemove, reinstallService as svcReinstall } from '@/api/lifecycle'
@@ -204,7 +205,7 @@ export function useModals() {
         deleteBackup(file)
           .then(refreshBackups)
           .then(() => toast(t('backup.deleted', { file }), 'ok', 2200))
-          .catch((e: unknown) => toast(String(e), 'err', 4600))
+          .catch((e: unknown) => toast(backendMsg(String(e)), 'err', 4600))
       },
     })
   }
@@ -263,7 +264,7 @@ export function useModals() {
     if (!hasBackend()) { toast(t('backup.downloaded', { file }), 'ok', 2200); return }
     downloadBackup(file)
       .then(() => toast(t('backup.downloaded', { file }), 'ok', 2200))
-      .catch((e: unknown) => toast(String(e), 'err', 4600))
+      .catch((e: unknown) => toast(backendMsg(String(e)), 'err', 4600))
   }
 
   // runGuardedTask：忠实原型 1939–1956。预检 → 错误 toast / 有警告则危险确认 → runTask。

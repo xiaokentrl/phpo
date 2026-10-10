@@ -9,6 +9,7 @@ import { useLayoutStore } from '@/stores/layoutStore'
 import { CMD_ITEMS, type CmdItem } from '@/constants/cmd'
 import { router } from '@/router'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { runSync } from '@/composables/useStateSync'
 import { runDoctor } from '@/api/doctor'
 
@@ -54,7 +55,7 @@ async function runDiagnose(): Promise<void> {
     const clean = r.errors === 0 && r.warnings === 0
     toast(clean ? t('doctor.allGood') : t('doctor.summary', { ok: r.ok, warnings: r.warnings, errors: r.errors }), clean ? 'ok' : 'err', 3600)
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   }
 }
 

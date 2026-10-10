@@ -5,6 +5,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { humanSize } from '@/composables/useCleanup'
 import { useModalStore } from '@/stores/modalStore'
 import { cleanHostSupported, previewClean, refreshCleanRow, scanClean } from '@/api/dockerClean'
@@ -284,7 +285,7 @@ async function onRetry(r: CleanRow) {
     if (i >= 0) rows.value.splice(i, 1, fresh)
     if (fresh.status !== 'ok') toast(t('clean.panel.retryStill', { msg: fresh.message ?? t('clean.panel.unknown') }), 'info', 5200)
   } catch (e) {
-    toast(String(e), 'err', 5200)
+    toast(backendMsg(String(e)), 'err', 5200)
   } finally {
     retrying.value = ''
   }
@@ -310,7 +311,7 @@ async function onClean() {
     if (!pv) return
     modal.open(DockerCleanPreviewModal, { preview: pv, onDone: () => void load(false) })
   } catch (e) {
-    toast(String(e), 'err', 6000)
+    toast(backendMsg(String(e)), 'err', 6000)
   }
 }
 

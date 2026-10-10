@@ -20,12 +20,19 @@ type Step interface {
 // BaseStep 提供默认实现：不可取消、回滚/清理为空，具体步骤按需覆盖
 type BaseStep struct {
 	StepName string
+	// Code 是这一步人话名字的消息码：构造点直接给码，界面才跟着语言换（§5.26）；
+	// 留空表示这一步还没接上，那一行退回按中文名识别的兼容路，最坏是不换语言，不是少一行日志。
+	Code   string
+	Params map[string]string // Code 里的参数（容器名、版本号这类数据，不翻译）
 }
 
 func (b BaseStep) Name() string                   { return b.StepName }
 func (b BaseStep) Rollback(context.Context) error { return nil }
 func (b BaseStep) Cleanup()                       {}
 func (b BaseStep) Cancelable() bool               { return false }
+
+// StepMsg 交出构造点给的名字消息码与参数。
+func (b BaseStep) StepMsg() (string, map[string]string) { return b.Code, b.Params }
 
 // NoopStep 空步骤：三段式骨架与测试占位
 type NoopStep struct{ BaseStep }

@@ -7,6 +7,7 @@ import { Dialogs } from '@wailsio/runtime'
 import ModalShell from '@/components/common/ModalShell.vue'
 import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { useAppState } from '@/stores/appState'
 import { HOME_SUBDIRS } from '@/constants/home'
 import { DEFAULT_HOME, DEFAULT_WWW, derivePaths } from '@/utils/path'
@@ -69,7 +70,7 @@ async function restart(): Promise<void> {
     await restartApp()
   } catch (e) {
     busy.value = ''
-    toast(String((e as Error)?.message ?? e), 'err')
+    toast(backendMsg(String((e as Error)?.message ?? e)), 'err')
   }
 }
 
@@ -180,10 +181,10 @@ async function doConfirm(): Promise<void> {
       await runDemoVerify(h, w) // 无宿主：原型动画，不落盘
     } else {
       const segs: Seg[] = []
-      for (const ln of r.lines) segs.push({ c: ln.startsWith('⚠') ? 'warn' : 'ok', x: ln })
-      for (const e of r.errors) segs.push({ c: 'err', x: e })
+      for (const ln of r.lines) segs.push({ c: ln.startsWith('⚠') ? 'warn' : 'ok', x: backendMsg(ln) })
+      for (const e of r.errors) segs.push({ c: 'err', x: backendMsg(e) })
       verifyLog.value = segs
-      if (!r.ok) { if (r.errors[0]) toast(r.errors[0], 'err'); return } // 未通过：不落盘，日志留在原地说明缺哪一步
+      if (!r.ok) { if (r.errors[0]) toast(backendMsg(r.errors[0]), 'err'); return } // 未通过：不落盘，日志留在原地说明缺哪一步
       await homeEnsure(h, w) // 通过后才真正建目录 → 写 config.yaml → 广播 state:changed（dirReady 由快照派生，硬红线 4/5）
     }
     busy.value = 'sync'
@@ -197,7 +198,7 @@ async function doConfirm(): Promise<void> {
     done.value = true // 成功后就地提示；不接续任何后续写操作（禁止目录设置与安装/建站连续操作）
     if (hasBackend() && !app.homeReady) await restart() // 同步后仍未就绪：本会话无法归位，重启兜底
   } catch (e) {
-    toast(String((e as Error)?.message ?? e), 'err')
+    toast(backendMsg(String((e as Error)?.message ?? e)), 'err')
   } finally {
     confirming.value = false
   }

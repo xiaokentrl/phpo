@@ -96,6 +96,39 @@ func TestStepRef(t *testing.T) {
 	}
 }
 
+// TestStepRefOf 步骤名记号：**构造点直接给了码就用它**，没给才退到按中文名识别的兼容路（§5.26）。
+func TestStepRefOf(t *testing.T) {
+	// 构造点给码：中文名照旧进记号末尾作回退，参数按 key 排序拼在 ? 后面
+	got := stepRefOf(&FuncStep{StepName: "启动 phpo-php-8.4", Code: MsgTaskStart, Params: map[string]string{"name": "phpo-php-8.4"}})
+	if want := "@task.start?name=phpo-php-8.4|启动 phpo-php-8.4"; got != want {
+		t.Fatalf("构造点的码要用上，实得 %q，期望 %q", got, want)
+	}
+	// 没给码：退回对照表按中文名识别，结果与 stepRef 一致
+	got = stepRefOf(&FuncStep{StepName: "校验"})
+	if want := stepRef("校验"); got != want {
+		t.Fatalf("没给码时要走识别层，实得 %q，期望 %q", got, want)
+	}
+	// 两处都认不出：原样返回中文名，那一行只是不跟着换语言，不会少一行日志
+	got = stepRefOf(&FuncStep{StepName: "扫描并删除孤儿资源"})
+	if got != "扫描并删除孤儿资源" {
+		t.Fatalf("认不出的步骤名要原样返回，实得 %q", got)
+	}
+	// 不内嵌 BaseStep 的步骤（没有 StepMsg 这个方法）也不能炸，直接走识别层
+	got = stepRefOf(nameOnlyStep("校验"))
+	if want := "@step.verify|校验"; got != want {
+		t.Fatalf("无码接口实现要照旧识别，实得 %q，期望 %q", got, want)
+	}
+}
+
+// nameOnlyStep 只实现 Step 五个方法、不内嵌 BaseStep 的步骤，用来验证类型断言的降级路。
+type nameOnlyStep string
+
+func (s nameOnlyStep) Name() string                           { return string(s) }
+func (s nameOnlyStep) Execute(context.Context, StepLog) error { return nil }
+func (s nameOnlyStep) Rollback(context.Context) error         { return nil }
+func (s nameOnlyStep) Cleanup()                               {}
+func (s nameOnlyStep) Cancelable() bool                       { return false }
+
 // TestLabelRef 任务标签记号：有消息码时带码与参数，没有时原样返回中文标签（Phase 2 之后不该再有后者）。
 func TestLabelRef(t *testing.T) {
 	got := labelRef(&Task{Label: "安装 phpo-mysql-8.4", LabelCode: MsgTaskInstall, LabelParams: map[string]string{"name": "phpo-mysql-8.4"}})
@@ -202,6 +235,38 @@ func TestFrameworkLinesCarryCodes(t *testing.T) {
 	if g := byText["▶ 安装 phpo-nginx-alpine"]; !strings.HasPrefix(g.Params["label"], "@task.install?name=") {
 		t.Fatalf("任务开始行应引用标签自己的码，实得 %q", g.Params["label"])
 	}
+}
+
+// TestFrameworkLinesUseConstructionCode 步骤名在对照表里认不出、但构造点直接给了消息码时，
+// 框架行要用构造点那份码（§5.26 条款③）。锁的是 task.go 真的走 stepRefOf，不是只测助手函数。
+func TestFrameworkLinesUseConstructionCode(t *testing.T) {
+	em := &capturingEmitter{}
+	m := NewManager(em)
+	name := "启动 phpo-php-8.4" // 这个步骤名没登记进对照表，只有构造点的码认得它
+	task := &Task{
+		ID:    "t-coded",
+		Label: name,
+		Steps: []Step{&testStep{BaseStep: BaseStep{StepName: name, Code: MsgTaskStart, Params: map[string]string{"name": "phpo-php-8.4"}}, rec: &recorder{}}},
+	}
+	if _, err := m.Run(context.Background(), task); err != nil {
+		t.Fatalf("任务应当成功: %v", err)
+	}
+	for _, e := range em.Capture() {
+		if e.Name != "task:log" {
+			continue
+		}
+		g := e.Payload.(model.TaskLogEvent)
+		if g.Code == "log.step" {
+			if want := "@task.start?name=phpo-php-8.4|" + name; g.Params["name"] != want {
+				t.Fatalf("构造点给的码要用上：实得 %q，期望 %q", g.Params["name"], want)
+			}
+			if g.Text != "步骤 "+name {
+				t.Fatalf("中文原文不得改：实得 %q", g.Text)
+			}
+			return
+		}
+	}
+	t.Fatalf("没有收到「步骤」那一行，实收 %+v", em.Capture())
 }
 
 // TestTaskLabelsAllCoded 每个任务的标签都必须带消息码（Phase 2 的收口判据）：

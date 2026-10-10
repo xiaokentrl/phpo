@@ -4,6 +4,7 @@ import { useModalStore } from '@/stores/modalStore'
 import { useI18n } from './useI18n'
 import { usePreflight } from './usePreflight'
 import { toast } from './useToast'
+import { backendMsg } from '../utils/backendMsg'
 import { runTask } from './useTask'
 import { syncState } from '@/composables/useStateSync'
 import { setSitePort, hasBackend } from '@/api/site'
@@ -28,7 +29,7 @@ export function usePortSuggest() {
       try {
         await setSitePort(domain, finalPort)
       } catch (e: unknown) {
-        toast(String(e), 'err', 4600)
+        toast(backendMsg(String(e)), 'err', 4600)
       }
       await syncState()
     }

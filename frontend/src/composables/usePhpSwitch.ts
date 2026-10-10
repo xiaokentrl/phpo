@@ -6,6 +6,7 @@ import { useTaskStore } from '@/stores/taskStore'
 import { syncState } from '@/composables/useStateSync'
 import { switchSitePhp, hasBackend } from '@/api/site'
 import { toast } from './useToast'
+import { backendMsg } from '../utils/backendMsg'
 
 export function usePhpSwitch() {
   async function switchPhp(domain: string, php: string, original: string): Promise<void> {
@@ -22,7 +23,7 @@ export function usePhpSwitch() {
     try {
       await switchSitePhp(domain, php)
     } catch (e: unknown) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     }
     try {
       await syncState()

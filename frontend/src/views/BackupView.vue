@@ -9,6 +9,7 @@ import { useModals } from '@/composables/useModals'
 import { usePreflight } from '@/composables/usePreflight'
 import { hasBackend } from '@/api/site'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { backupRoot, defaultBackupRoot, setBackupRoot } from '@/api/env'
 import EditablePathBar from '@/components/common/EditablePathBar.vue'
 
@@ -38,7 +39,7 @@ async function saveRoot(root: string): Promise<void> {
     toast(t('root.saved'), 'ok', 2600)
     if (hasBackend()) await modals.refreshBackups()
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     savingRoot.value = false
   }

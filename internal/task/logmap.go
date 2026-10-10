@@ -1,12 +1,20 @@
-// 高频日志行的消息码对照（v2.9.16 多语言 Phase 3）：
-// 这是干什么的——抽屉里每一行日志仍然由后端发中文原文（§5.16.3 冻结的措辞、任务账本里的等效日志原文都不动），
-// 这一张表只做一件事：认出这一行说的是哪种消息，把句子里那几段动态内容（域名、路径、字节数、错误原因）
-// 作为参数一起随 task:log 带出去，界面因此能按用户选的语言说同一句话。
+// 高频日志行的消息码对照——**兼容层，不是新增消息的登记处**（总纲 §5.15 原则 3 / 规则 46）。
+//
+// 这是干什么的：抽屉里每一行日志仍然由后端发中文原文（任务账本里那份「等效日志原文」不动），
+// 这一张表只认那些**还没在构造点直接给码**的旧调用点：认出这一行说的是哪种消息，
+// 把句子里那几段动态内容（域名、路径、字节数、错误原因）作为参数随 task:log 带出去，
+// 界面因此能按用户选的语言说同一句话。
+//
+// 适用场景（只有这两种）：① 旧日志与任务账本回看；② 尚未迁移到「构造点直接给码」的存量调用点。
+//
+// 新增一行日志**不得**登记到这里——那等于把中文又变成第二份文案源。正确做法是在调用点直接给码
+// （`log.Logf(level, defs.Xxx, params...)`），中文原文由定义源生成。
+//
 // 什么情况下看不见效果：表里没登记的行——容器内命令逐行打出来的输出、以数据开头的句子——认不出消息码，
 // 界面就照直显示后端原文。缺记号绝不等于少一行日志。
-// 怎么补：新加一行日志时把它的中文句子登记进 logPatterns（句中夹数据）或 logLines（中文在句首），
-// 并在 frontend/src/locales/{zh-CN,en-US}.ts 各补一条 log.<码>；第 1 项门禁核对两侧键集合相等，
-// 用例 logmap_test.go 锁死「表里的中文确实还在源码里出现」。
+//
+// 下线条件（可 grep 验证）：`grep -rn "LookupLine(" internal/ --include=*.go` 只剩本文件与它的用例一处引用
+// （即 emitter 不再需要按中文反查），届时本表与 LookupLine 一并删除。
 package task
 
 import (
@@ -435,20 +443,50 @@ func zipParams(keys, vals []string) map[string]string {
 	return out
 }
 
+// refToken 拼 §5.6 载荷里的记号：@码?k=v&k2=v2｜中文原文。
+// 原文带在记号里，语言包万一缺这条键时界面还能显示中文，不会渲染成空串或键名。
+func refToken(code string, params map[string]string, zh string) string {
+	if len(params) == 0 {
+		return "@" + code + "|" + zh
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	q := make([]string, 0, len(keys))
+	for _, k := range keys {
+		q = append(q, k+"="+url.QueryEscape(params[k]))
+	}
+	return "@" + code + "?" + strings.Join(q, "&") + "|" + zh
+}
+
 // stepRef 把步骤名换成 @消息码记号（§5.6 的 task:log 载荷约定：参数值以 @ 开头即一个消息码，
-// 界面先把它渲染出来再塞回整句）；带参数时写成 @码?k=v&k2=v2。
+// 界面先把它渲染出来再塞回整句）。
+// 这是**兼容路**：只服务那些没在构造点给码的步骤（旧代码与账本回看）。
 // 认不出的步骤名原样返回——新加一步忘了登记码，最坏是那一行不跟着换语言，不是少一行日志。
 func stepRef(name string) string {
 	code, params := StepCodeOf(name)
 	if code == "" {
 		return name
 	}
-	// 记号形如 @码[?k=v…]｜中文原文。原文带在记号里，语言包万一缺这条键时界面还能显示中文，
-	// 不会渲染成空串或键名。
-	if len(params) == 0 {
-		return "@" + code + "|" + name
+	return refToken(code, params, name)
+}
+
+// codedStep 是构造点已经直接给了名字消息码的步骤（BaseStep 默认实现）。
+type codedStep interface {
+	StepMsg() (string, map[string]string)
+}
+
+// stepRefOf 交出这一步名字的记号：**优先用构造点给的码**，没给才退到 stepRef 按中文名识别。
+func stepRefOf(s Step) string {
+	name := s.Name()
+	if c, ok := s.(codedStep); ok {
+		if code, params := c.StepMsg(); code != "" {
+			return refToken(code, params, name)
+		}
 	}
-	return "@" + code + "?rest=" + url.QueryEscape(params["rest"]) + "|" + name
+	return stepRef(name)
 }
 
 // labelRef 把任务标签换成 @消息码?k=v&k2=v2 记号；标签没有消息码（还没接上 Phase 2 的那几类任务）时原样返回。
@@ -456,17 +494,5 @@ func labelRef(t *Task) string {
 	if t.LabelCode == "" {
 		return label(t)
 	}
-	if len(t.LabelParams) == 0 {
-		return "@" + t.LabelCode + "|" + label(t)
-	}
-	keys := make([]string, 0, len(t.LabelParams))
-	for k := range t.LabelParams {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	q := make([]string, 0, len(keys))
-	for _, k := range keys {
-		q = append(q, k+"="+url.QueryEscape(t.LabelParams[k]))
-	}
-	return "@" + t.LabelCode + "?" + strings.Join(q, "&") + "|" + label(t)
+	return refToken(t.LabelCode, t.LabelParams, label(t))
 }

@@ -17,6 +17,7 @@ import { SVC_META } from '@/constants/service'
 import { addSiteHosts, hasBackend, openSiteFolder } from '@/api/site'
 import { envKeyPort } from '@/api/env'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { Browser } from '@wailsio/runtime'
 import { runTask } from '@/composables/useTask'
 import { syncState } from '@/composables/useStateSync'
@@ -103,7 +104,7 @@ function onAddHosts(site: Site): void {
   hostsBusy.value = site.domain
   addSiteHosts(site.domain)
     .then((warn) => toast(warn || t('sites.hosts.toast', { domain: site.domain }), warn ? 'err' : 'ok', warn ? 6000 : 2400))
-    .catch((e: unknown) => toast(String(e), 'err', 4600))
+    .catch((e: unknown) => toast(backendMsg(String(e)), 'err', 4600))
     .finally(() => {
       hostsBusy.value = ''
       // 写后拉权威快照收口：Hosts 列真值以后端探针为准，不靠本地推断（硬红线 4）
@@ -150,7 +151,7 @@ function openSite(site: Site): void {
 // 点路径即在系统文件管理器里打开这个文件夹；打不开就把后端原话转达给用户
 function onOpenRoot(site: Site): void {
   if (!hasBackend()) return
-  openSiteFolder(site.root).catch((e: unknown) => toast(String(e), 'err', 4600))
+  openSiteFolder(site.root).catch((e: unknown) => toast(backendMsg(String(e)), 'err', 4600))
 }
 // 复制完整路径：小按钮和右键各一路，两条都只复制、不改任何东西
 function onCopyRoot(site: Site): void {

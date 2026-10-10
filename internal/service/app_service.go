@@ -59,7 +59,7 @@ func (s *AppService) healStep(kind model.ServiceKind, op string) task.Step {
 	if !siteHealedBy(kind, op) || s.healer == nil {
 		return nil
 	}
-	return &task.FuncStep{StepName: "补齐站点 vhost", Exec: func(ctx context.Context, log task.StepLog) error {
+	return &task.FuncStep{StepName: "补齐站点 vhost", Code: "step.reconcileVhost", Exec: func(ctx context.Context, log task.StepLog) error {
 		if err := s.healer.ReconcileServe(ctx); err != nil {
 			log.Log(string(model.LogErr), err.Error())
 		}
@@ -181,17 +181,18 @@ func (s *AppService) serviceSteps(kind model.ServiceKind, version string, apply 
 	name := dockerutil.ContainerName(string(kind), version)
 	return []task.Step{
 		steps.NewInstallImageStep("准备镜像", s.cache, s.probe, s.env, string(kind), version),
-		&task.FuncStep{StepName: "落盘工作目录与配置", Exec: func(_ context.Context, log task.StepLog) error {
+		&task.FuncStep{StepName: "落盘工作目录与配置", Code: "step.landHomeConfigs", Exec: func(_ context.Context, log task.StepLog) error {
 			return prepareService(s.env, kind, version, log)
 		}},
-		&task.FuncStep{StepName: "创建并启动 " + name, Exec: func(ctx context.Context, log task.StepLog) error {
-			if err := apply(ctx, kind, version); err != nil {
-				return err
-			}
-			// 校验通过才报成功：lifecycle 的 Post-Verify 已按 Docker 实际态确认在运行
-			log.Log(string(model.LogDim), name+" 运行状态校验通过")
-			return nil
-		}},
+		&task.FuncStep{StepName: "创建并启动 " + name, Code: "step.createAndStart", Params: map[string]string{"rest": name},
+			Exec: func(ctx context.Context, log task.StepLog) error {
+				if err := apply(ctx, kind, version); err != nil {
+					return err
+				}
+				// 校验通过才报成功：lifecycle 的 Post-Verify 已按 Docker 实际态确认在运行
+				log.Log(string(model.LogDim), name+" 运行状态校验通过")
+				return nil
+			}},
 	}
 }
 
@@ -235,7 +236,7 @@ func (s *AppService) one(meta model.TaskMeta, label, code string, labelParams ma
 		LabelParams: labelParams,
 		Meta:        meta,
 		Steps: []task.Step{
-			&task.FuncStep{StepName: label, Exec: func(ctx context.Context, log task.StepLog) error { return fn(ctx, log) }},
+			&task.FuncStep{StepName: label, Code: code, Params: labelParams, Exec: func(ctx context.Context, log task.StepLog) error { return fn(ctx, log) }},
 		},
 	}
 	for _, st := range extra {

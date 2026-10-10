@@ -12,6 +12,7 @@ import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
 import { copyText } from '@/utils/str'
 import { msgText } from '@/utils/msgText'
+import { backendMsg } from '@/utils/backendMsg'
 import type { TaskLine } from '@/stores/taskStore'
 import type { ServiceKind } from '@/types'
 
@@ -34,12 +35,14 @@ const progress = computed(() => store.progress)
 const errorText = computed(() => {
   const tk = task.value
   if (!tk || tk.status !== 'failed') return ''
-  return msgText(tk.error || '', tk.errorCode, tk.errorParams)
+  const s = msgText(tk.error || '', tk.errorCode, tk.errorParams)
+  return tk.errorCode ? s : backendMsg(s)
 })
 
 // lineText：一行日志的显示文本——认得出消息码就按当前语言说，认不出就照后端原文显示
 function lineText(l: TaskLine): string {
-  return msgText(l.s, l.c, l.p)
+  const s = msgText(l.s, l.c, l.p)
+  return l.c ? s : backendMsg(s)
 }
 
 // 需求 5（§5.6.1 头部三区口径）：头部左侧只有状态点 + 固定标签「服务」——标签取 t('nav.services')，

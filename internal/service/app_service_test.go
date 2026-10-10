@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -406,5 +407,27 @@ func TestAppService_HealsSitesOnReadyingEvents(t *testing.T) {
 		if h.calls != c.want {
 			t.Fatalf("%s 后补齐次数应为 %d，实得 %d", c.what, c.want, h.calls)
 		}
+	}
+}
+
+// TestAppService_StepConstructionPointsCarryCodes §5.26 条款③「构造点直接给码」在本文件的锁死处：
+// AppService 那几处 FuncStep 必须自己带消息码，不得只靠事后按中文名识别——
+// 「步骤 启动 phpo-php-8.4」这类名字是运行期拼出来的，对照表永远认不出它。
+func TestAppService_StepConstructionPointsCarryCodes(t *testing.T) {
+	src, err := os.ReadFile("app_service.go")
+	if err != nil {
+		t.Fatalf("读 app_service.go: %v", err)
+	}
+	var missed []string
+	for i, line := range strings.Split(string(src), "\n") {
+		if !strings.Contains(line, "&task.FuncStep{") || !strings.Contains(line, "StepName:") {
+			continue
+		}
+		if !strings.Contains(line, "Code:") {
+			missed = append(missed, fmt.Sprintf("app_service.go:%d  %s", i+1, strings.TrimSpace(strings.Split(line, "//")[0])))
+		}
+	}
+	if len(missed) > 0 {
+		t.Fatalf("这些步骤构造点没带消息码（英文界面会显示中文步骤名）:\n%s", strings.Join(missed, "\n"))
 	}
 }

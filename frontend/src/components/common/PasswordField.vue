@@ -4,6 +4,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { runTask } from '@/composables/useTask'
 import { hasBackend } from '@/api/site'
 import { syncState } from '@/composables/useStateSync'
@@ -46,7 +47,7 @@ async function persist(next: string, prev: string): Promise<boolean> {
       toast(t('svc.passwordPending'), 'info', 5600)
     }
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
     return false
   }
   if (!hasBackend()) {

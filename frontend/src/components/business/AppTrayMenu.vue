@@ -5,9 +5,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { usePrefsStore, type ThemeId } from '@/stores/prefsStore'
-import { useTaskStore, TASK_BUSY } from '@/stores/taskStore'
+import { useTaskStore } from '@/stores/taskStore'
 import { useModals } from '@/composables/useModals'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { quitApp as nativeQuit } from '@/api/state'
 import { THEMES } from '@/constants/themes'
 import { onEvent, UI_COMMAND, UICmd } from '@/api/events'
@@ -79,11 +80,11 @@ async function quitApp(): Promise<void> {
   closeMenu()
   if (task.queueRunning) {
     // 忙锁：任务运行中不得退出（原生托盘菜单同样将 CmdQuit 广播到这里，两条入口共用同一裁决）
-    toast(TASK_BUSY, 'err', 2200)
+    toast(t('err.taskBusy'), 'err', 2200)
     return
   }
   // 真实宿主：调门面 Quit → 原生外壳退出进程；无宿主的 demo 通道没有可退出的进程，静默跳过
-  await nativeQuit().catch((e: unknown) => toast(String(e), 'err', 4600))
+  await nativeQuit().catch((e: unknown) => toast(backendMsg(String(e)), 'err', 4600))
 }
 
 function onDocClick(e: MouseEvent): void {

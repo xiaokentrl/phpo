@@ -7,6 +7,7 @@ import MountList from '@/components/common/MountList.vue'
 import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { runTask } from '@/composables/useTask'
 import { useAppState } from '@/stores/appState'
 import { SVC_META } from '@/constants/service'
@@ -48,7 +49,7 @@ onMounted(async () => {
   try {
     seed(await getConfigFiles(props.kind, props.version))
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     loading.value = false
   }
@@ -103,7 +104,7 @@ async function apply(): Promise<void> {
     toast(t('config.saved', { kind: props.kind, version: props.version, count: names.length }), 'ok', 2600)
     toast(t('config.restartHint', { kind: props.kind, version: props.version }), 'info', 3600)
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   }
 }
 </script>

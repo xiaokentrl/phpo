@@ -9,6 +9,7 @@ import { useCache } from '@/composables/useCache'
 import { usePreflight } from '@/composables/usePreflight'
 import { humanSize } from '@/composables/useCleanup'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { SVC_ICON } from '@/constants/service'
 import { defaultOfflineRoot, offlineRoot, setOfflineRoot } from '@/api/env'
 import EditablePathBar from '@/components/common/EditablePathBar.vue'
@@ -43,7 +44,7 @@ async function saveRoot(root: string): Promise<void> {
     toast(t('root.saved'), 'ok', 2600)
     await load()
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     savingRoot.value = false
   }

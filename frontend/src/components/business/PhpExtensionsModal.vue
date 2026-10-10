@@ -9,6 +9,7 @@ import ExtPicker from '@/components/common/ExtPicker.vue'
 import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { runTask } from '@/composables/useTask'
 import { useAppState } from '@/stores/appState'
 import { catalogFor } from '@/constants/ext'
@@ -58,7 +59,7 @@ onMounted(async () => {
   } catch (e: unknown) {
     // 现查失败：留着库里那一份可看，但这次不许提交（改一次容器状态再打开即可）
     live.value = false
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     loading.value = false
   }
@@ -109,7 +110,7 @@ async function apply(): Promise<void> {
       toast(t('ext.applied', { version: props.version }), 'ok', 2600)
     })
     .catch((e: unknown) => {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     })
 }
 </script>

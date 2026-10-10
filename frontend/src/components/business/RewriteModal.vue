@@ -6,6 +6,7 @@ import ModalShell from '@/components/common/ModalShell.vue'
 import { useI18n } from '@/composables/useI18n'
 import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { runTask } from '@/composables/useTask'
 import { syncState } from '@/composables/useStateSync'
 import { setSiteRewrite, hasBackend } from '@/api/site'
@@ -51,7 +52,7 @@ function onApply(): void {
   }
   // 写后拉权威快照收口：rewrite 列与健康列随后端一致（硬红线 4）
   void setSiteRewrite(props.domain, selected.value, ruleToStore)
-    .catch((e: unknown) => toast(String(e), 'err', 4600))
+    .catch((e: unknown) => toast(backendMsg(String(e)), 'err', 4600))
     .finally(() => syncState())
 }
 function finalRuleEqualsPreset(presetRule: string): boolean {

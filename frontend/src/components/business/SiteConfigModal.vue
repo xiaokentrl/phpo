@@ -45,7 +45,7 @@ function onSave(): void {
   if (!check.ok) { errText.value = check.errors.join('\n'); return }
   if (!hasBackend()) {
     emit('close')
-    runTask(['site', 'vhost', 'save', props.domain], `${props.domain} · nginx 配置`, { type: 'site-vhost', domain: props.domain, content: content.value })
+    runTask(['site', 'vhost', 'save', props.domain], t('task.siteVhost', { domain: props.domain }), { type: 'site-vhost', domain: props.domain, content: content.value })
     toast(t('siteConfig.saved', { domain: props.domain }), 'ok', 2400)
     return
   }

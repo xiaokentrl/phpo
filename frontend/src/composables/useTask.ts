@@ -4,9 +4,9 @@ import { useTaskStore } from '@/stores/taskStore'
 import { syncState } from '@/composables/useStateSync'
 import { hasBackend } from '@/api/site'
 import { toast } from './useToast'
+import { backendMsg } from '@/utils/backendMsg'
 
 export type { TaskStatus, TaskMeta, TaskRecord, TaskLine, LineType } from '@/stores/taskStore'
-export { TASK_BUSY } from '@/stores/taskStore'
 
 export function runTask(args: string[], label?: string, meta?: import('@/stores/taskStore').TaskMeta): void {
   useTaskStore().start(args, label, meta)
@@ -29,7 +29,7 @@ export function submitWrite(
   const key = store.busyKeyOf(meta)
   store.beginSubmit(key)
   void exec()
-    .catch((e: unknown) => toast(String(e), 'err', 4600))
+    .catch((e: unknown) => toast(backendMsg(String(e)), 'err', 4600))
     .finally(async () => {
       await syncState()
       store.endSubmit(key)

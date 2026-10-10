@@ -7,6 +7,7 @@ import {
   scanOrphans, runCleanup, cleanCache, listTrash, restoreTrash, emptyExpired, listOperations,
 } from '@/api/cleanup'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { t } from '@/composables/useI18n'
 
 export function useCleanup() {
@@ -24,7 +25,7 @@ export function useCleanup() {
       const o = await scanOrphans()
       if (o) s.setOrphans(o)
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     } finally {
       s.scanning = false
     }
@@ -45,7 +46,7 @@ export function useCleanup() {
       // 审计列表随每次写操作变化（清理落账），不重拉就会停在旧记录（硬红线 4）
       await loadOperations()
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     } finally {
       s.cleaning = false
     }
@@ -57,7 +58,7 @@ export function useCleanup() {
       toast(t('cleanup.cacheDone', { size: humanSize(freed) }), 'ok', 3200)
       await loadOperations()
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     }
   }
 
@@ -73,7 +74,7 @@ export function useCleanup() {
       await loadTrash()
       await loadOperations()
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     }
   }
 
@@ -84,7 +85,7 @@ export function useCleanup() {
       await loadTrash()
       await loadOperations()
     } catch (e) {
-      toast(String(e), 'err', 4600)
+      toast(backendMsg(String(e)), 'err', 4600)
     }
   }
 

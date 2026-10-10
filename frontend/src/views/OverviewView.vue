@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useAppState } from '@/stores/appState'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { runDoctor, fixDoctor } from '@/api/doctor'
 import { useModals } from '@/composables/useModals'
 import { SVC_META } from '@/constants/service'
@@ -28,7 +29,7 @@ async function runDiagnose() {
     report.value = r
     if (!r) toast(t('doctor.demoHint'), 'info', 3200)
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     diagnosing.value = false
   }
@@ -43,7 +44,7 @@ async function onFix(id: string) {
     report.value = r
     toast(t('doctor.fix') + ' ✓', 'ok', 2200)
   } catch (e) {
-    toast(String(e), 'err', 4600)
+    toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     fixing.value = ''
   }

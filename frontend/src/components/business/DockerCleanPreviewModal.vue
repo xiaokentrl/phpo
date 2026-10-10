@@ -7,6 +7,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
+import { backendMsg } from '@/utils/backendMsg'
 import { humanSize } from '@/composables/useCleanup'
 import { executeClean } from '@/api/dockerClean'
 import ModalShell from '@/components/common/ModalShell.vue'
@@ -75,7 +76,7 @@ async function run() {
     emit('close')
   } catch (e) {
     // 一次性凭据过期 / 危险项没确认 / 清单外的 ID——后端那句人话原样贴出来，用户才知道下一步点哪里。
-    toast(String(e), 'err', 6800)
+    toast(backendMsg(String(e)), 'err', 6800)
     // 后端拦下来说明清单可能已经过期，退回第一屏让用户重新看一遍再决定。
     stage.value = 'preview'
   } finally {
