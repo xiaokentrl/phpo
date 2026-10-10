@@ -43,6 +43,8 @@ export interface TaskMeta {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [k: string]: any
 }
+const LS_LAST_CLEARED = 'phpo-task-last-cleared'
+
 export interface TaskRecord {
   id: string
   args: string[]
@@ -589,7 +591,7 @@ export const useTaskStore = defineStore('task', () => {
       records.value.find((r) => displayOf(r) === 'running')?.id ??
       ''
     const pending = (app.tasks.pending ?? []).filter((p) => p.id !== keepId)
-    await Promise.all(pending.map((p) => withdrawQueued(p.id).catch(() => false)))
+    await Promise.all(pending.map((p) => p.id !== keepId ? withdrawQueued(p.id).catch(() => false) : Promise.resolve(false)))
     for (const r of records.value) {
       if (r.id === keepId || r.live) continue
       r.cancelled = true
@@ -602,21 +604,29 @@ export const useTaskStore = defineStore('task', () => {
     sysLines.value = []
     activeId.value = keepId
     followedId = keepId
+    // 记住清除时间戳：loadHistory 跳过早于它的历史记录（刷新后不再回填已清空的日志）
+    try { localStorage.setItem(LS_LAST_CLEARED, String(Date.now())) } catch { /* 忽略 */ }
     toast(i18nT('task.cleared'), 'info', 1800)
   }
 
   // loadHistory：从任务账本补齐跨重启的历史记录（含失败原因与日志原文），已在池中的按 ID 跳过。
+  // 清除时间戳之后的历史照常回填（清除只影响已结束的旧条目，不影响新任务的可见性）。
+  // 用户点「清空日志」时记 lastClearedAt 到 localStorage——刷新后 loadHistory 跳过早于它的条目，
+  // 否则清空只是视觉效果、刷新即回填（用户真机反馈的 bug）。
   async function loadHistory(): Promise<void> {
+    let cleared = 0
+    try { cleared = Number(localStorage.getItem(LS_LAST_CLEARED)) || 0 } catch { /* 忽略 */ }
     const rows = await listTaskHistory().catch(() => [] as Operation[])
     for (const op of rows) {
       const id = op.taskId
       if (!id || find(id)) continue
+      const opTs = Date.parse(op.ts)
+      if (cleared > 0 && Number.isFinite(opTs) && opTs <= cleared) continue
       const r = newRecord(id, op.label || op.op, op.op, true)
       r.status = (op.status === 'success' ? 'success' : op.status === 'cancelled' ? 'cancelled' : 'failed') as TaskStatus
       r.error = op.error || null
       r.durationMs = op.durationMs || null
-      const started = Date.parse(op.ts)
-      r.startedAt = Number.isFinite(started) ? started : r.startedAt
+      r.startedAt = Number.isFinite(opTs) ? opTs : r.startedAt
       r.endedAt = r.startedAt + (op.durationMs || 0)
       r.lines = String(op.logs || '')
         .split('\n')
