@@ -24,13 +24,13 @@ func NewScheduler(c *Checker, interval time.Duration) *Scheduler {
 	return &Scheduler{checker: c, interval: interval}
 }
 
-// Start 立即检查一次，随后按周期检查，直到 ctx 取消；整个循环后台运行，不阻塞调用方——
-// 启动钩子若同步等首查，发布源不可达时最坏阻塞 15 秒，直接推迟主窗口出现
+// Start 按 interval 周期检查更新（首次在启动 interval 后触发），直到 ctx 取消。
+// 不做启动即查：应用打开时不发起网络请求（v2.9.16 移除——用户不需要打开就知道有没有新版本，
+// 24h 周期 + 手动「检查更新」覆盖了所有场景）。
 func (s *Scheduler) Start(ctx context.Context) {
 	go func() {
 		t := time.NewTicker(s.interval)
 		defer t.Stop()
-		s.runOnce(ctx)
 		for {
 			select {
 			case <-ctx.Done():

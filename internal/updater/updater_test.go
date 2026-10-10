@@ -187,7 +187,7 @@ func TestVerifyPackageNoKey(t *testing.T) {
 	}
 }
 
-// —— 调度器：立即检查一次 ——
+// —— 调度器：纯周期检查，不做启动即查（v2.9.16 移除启动首查） ——
 
 type countingSource struct{ n int }
 
@@ -196,16 +196,17 @@ func (c *countingSource) FetchLatest(context.Context) (*Release, error) {
 	return &Release{Version: "0.0.1"}, nil
 }
 
-func TestSchedulerRunsOnce(t *testing.T) {
+// TestScheduler_PeriodicOnly 调度器启动后不做立即检查——首次检查在 interval 后触发。
+func TestScheduler_PeriodicOnly(t *testing.T) {
 	src := &countingSource{}
 	c := NewChecker("9.9.9", src, &capEmitter{})
 	s := NewScheduler(c, time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s.Start(ctx)
-	time.Sleep(20 * time.Millisecond)
-	if src.n < 1 {
-		t.Fatalf("启动应立即检查，得检查 %d 次", src.n)
+	time.Sleep(50 * time.Millisecond)
+	if src.n != 0 {
+		t.Fatalf("启动时不应立即检查（首查已移除），得 %d 次", src.n)
 	}
 }
 
