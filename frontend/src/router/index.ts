@@ -3,7 +3,7 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/overview' },
+  { path: '/', redirect: '/sites' }, // 默认落站点列表页（需求）：打开/重启 phpo 第一眼是站点，不是总览
   { path: '/sites', name: 'sites', component: () => import('@/views/SitesView.vue'), meta: { icon: '🔗' } },
   { path: '/php', name: 'php', component: () => import('@/views/PhpView.vue'), meta: { icon: '🐘' } },
   { path: '/mysql', name: 'mysql', component: () => import('@/views/MysqlView.vue'), meta: { icon: '🐬' } },
