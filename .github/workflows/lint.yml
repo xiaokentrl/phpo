@@ -56,7 +56,8 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 
       - name: golangci-lint
-        run: "$(go env GOPATH)/bin/golangci-lint" run ./...
+        run: |
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
 
   # vue-tsc 静态导入 frontend/bindings/（wails3 生成物且被 gitignore），全新 checkout 必须先出绑定，
   # 否则 typecheck 作业与 CI 的前端作业一样恒红。工具链同 ci.yml frontend 作业。
