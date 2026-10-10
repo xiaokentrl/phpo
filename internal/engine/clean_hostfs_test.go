@@ -963,3 +963,40 @@ func hsChmod(t *testing.T, p string, mode os.FileMode) {
 		t.Fatal(err)
 	}
 }
+
+// hostSources 必须把 Podman 的配置目录纳入检索（引擎是 podman 时 /etc/docker 与 ~/.docker 往往不存在，
+// 漏了这两根，配置两行就永远报「这台机器上没有这个目录」——真机取证级的漏检）。
+func TestHostSources_IncludesPodmanConfigDirs(t *testing.T) {
+	t.Setenv("HOME", "/home/u")
+	srcs := hostSources(DaemonInfo{Root: "/var/lib/docker"})
+	byID := map[string]hostSource{}
+	for _, s := range srcs {
+		byID[s.id] = s
+	}
+	etc, ok := byID["etc-docker"]
+	if !ok {
+		t.Fatal("etc-docker source 缺失")
+	}
+	wantEtc := map[string]bool{"/etc/docker": false, "/etc/containers": false}
+	for _, r := range etc.roots {
+		wantEtc[r] = true
+	}
+	for _, want := range []string{"/etc/docker", "/etc/containers"} {
+		if !wantEtc[want] {
+			t.Fatalf("etc-docker 应含 %q，got=%v", want, etc.roots)
+		}
+	}
+	user, ok := byID["userconfig"]
+	if !ok {
+		t.Fatal("userconfig source 缺失")
+	}
+	wantUser := map[string]bool{"/home/u/.docker": false, "/home/u/.config/containers": false}
+	for _, r := range user.roots {
+		wantUser[r] = true
+	}
+	for _, want := range []string{"/home/u/.docker", "/home/u/.config/containers"} {
+		if !wantUser[want] {
+			t.Fatalf("userconfig 应含 %q，got=%v", want, user.roots)
+		}
+	}
+}

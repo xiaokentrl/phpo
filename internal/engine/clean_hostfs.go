@@ -40,17 +40,18 @@ var ErrHostNotSupported = errors.New("当前平台够不着 Docker 的宿主目�
 // 说清一件事：这些路径**不是 phpo 的产出物**，也不跟着 PHPO_HOME 走，所以不适用总纲 §0.1.1 的 `./` 记法——
 // 它们是 Docker 自己的固定落点，写死是准确的，不是偷懒。
 const (
-	dirContainerd = "/var/lib/containerd"
-	dirEtcDocker  = "/etc/docker"
-	dirCniConf    = "/etc/cni/net.d"
-	dirNetns      = "/var/run/netns"
-	dirSysCgroup  = "/sys/fs/cgroup"
-	dirSysNet     = "/sys/class/net"
-	dirVarLog     = "/var/log"
-	dirJournal    = "/var/log/journal"
-	dirRunJournal = "/run/log/journal"
-	dirEtcGroup   = "/etc/group"
-	dotDocker     = ".docker" // 用户主目录下的 Docker 配置目录
+	dirContainerd    = "/var/lib/containerd"
+	dirEtcDocker     = "/etc/docker"
+	dirEtcContainers = "/etc/containers" // podman / containers-common 的配置目录
+	dirCniConf       = "/etc/cni/net.d"
+	dirNetns         = "/var/run/netns"
+	dirSysCgroup     = "/sys/fs/cgroup"
+	dirSysNet        = "/sys/class/net"
+	dirVarLog        = "/var/log"
+	dirJournal       = "/var/log/journal"
+	dirRunJournal    = "/run/log/journal"
+	dirEtcGroup      = "/etc/group"
+	dotDocker        = ".docker" // 用户主目录下的 Docker 配置目录
 )
 
 // 宿主侧进度阶段文案（人话）。服务层用既有 docker:cleanup 事件逐行广播，界面进度条 = 已报到 / 总数，
@@ -265,9 +266,10 @@ type hostSource struct {
 func hostSources(info DaemonInfo) []hostSource {
 	root := info.Root
 	home, homeErr := os.UserHomeDir()
-	var userDir string
+	var userDir, podmanUserDir string
 	if homeErr == nil && home != "" {
 		userDir = filepath.Join(home, dotDocker)
+		podmanUserDir = filepath.Join(home, ".config", "containers") // podman rootless 的用户配置（containers.conf 等）
 	}
 	return []hostSource{
 		{id: "containers", stage: StageHostContainers, roots: []string{joinRoot(root, "containers")},
@@ -297,13 +299,16 @@ func hostSources(info DaemonInfo) []hostSource {
 
 		// 用户自己的 Docker 配置目录：~/.docker 里除了 trust 那一片（上面单独数）都算这一行。
 		// 注意它**不是** linuxOnly：macOS / Windows 上这个目录就在宿主上，读得到，不该跟着一起说「够不着」。
-		{id: "userconfig", stage: StageHostUserConfig, roots: []string{userDir},
+		{id: "userconfig", stage: StageHostUserConfig, roots: dedupe([]string{userDir, podmanUserDir}),
 			rows: []string{rowSystemUser}},
 
 		{id: "containerd", stage: StageHostContainerd, roots: []string{dirContainerd},
 			linuxOnly: true, rows: []string{rowSystemContainerd}},
 
-		{id: "etc-docker", stage: StageHostEtcDocker, roots: []string{dirEtcDocker},
+		// /etc/containers 是 podman 的配置目录（containers.conf、storage.conf、netavark 网络配置）：
+		// 引擎是 podman 时这一行必须数得到它，否则配置占用永远报「这台机器上没有这个目录」。
+		// 两个根都缺席 → 走 walkSource 的 MsgNoRoot，语义不变。
+		{id: "etc-docker", stage: StageHostEtcDocker, roots: dedupe([]string{dirEtcDocker, dirEtcContainers}),
 			linuxOnly: true, rows: []string{rowSystemConfig}},
 
 		// 容器的资源限制目录。深度设 4 层是实测够用：cgroupfs 在 /sys/fs/cgroup/<子系统>/docker/<id>，

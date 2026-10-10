@@ -301,14 +301,15 @@ func TestHostRowRootsCountsPerRow(t *testing.T) {
 	single := []string{rowVolumeData, rowVolumeDriver, rowContainerCheckpoint, rowContainerMeta,
 		rowLogContainer, rowLogRotate, rowSystemTmp, rowPluginConfig, rowPluginData,
 		rowContainerCgroup, rowNetworkBridge, rowNetworkVeth, rowNetworkNetns,
-		rowLogDaemon, rowSystemContainerd, rowSystemConfig}
+		rowLogDaemon, rowSystemContainerd}
 	for _, row := range single {
 		if got := hostRowRoots(row, info); len(got) != 1 {
 			t.Fatalf("%s 该只有 1 个候选目录，实得 %d 个：%v", row, len(got), got)
 		}
 	}
-	// 两个候选目录的行：日志同时看 /var/log 与 journal，CNI 既可能是网卡也可能是配置。
-	for _, row := range []string{rowNetworkCni, rowLogJournald, rowSystemBuilder, rowSystemRoot} {
+	// 两个候选目录的行：日志同时看 /var/log 与 journal，CNI 既可能是网卡也可能是配置，
+	// system.config 双引擎各一套配置目录（/etc/docker 与 /etc/containers）。
+	for _, row := range []string{rowNetworkCni, rowLogJournald, rowSystemBuilder, rowSystemRoot, rowSystemConfig} {
 		if got := hostRowRoots(row, info); len(got) != 2 {
 			t.Fatalf("%s 该有 2 个候选目录，实得 %d 个：%v", row, len(got), got)
 		}
