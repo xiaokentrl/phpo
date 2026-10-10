@@ -26,6 +26,8 @@ type EnvProvider interface {
 	FlatEnv() map[string]string
 	RootsPersisted() bool         // 两根是否已写入 config.yaml → 决定能否创建/打开 phpo.db
 	RootsReady() (home, www bool) // 两根是否「已持久化且目录存在」→ 派生快照 dirReady
+	SiteOrder() []string          // 站点域名展示顺序（拖拽排序持久化于 config.yaml）；快照按此排序
+	SetSiteOrder(domains []string) error
 }
 
 type Store struct {

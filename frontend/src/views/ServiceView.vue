@@ -18,7 +18,7 @@ import { DIR_ROWS, DEFAULT_FILE_COUNT, GAP_REASON_KEYS, SVC_META } from '@/const
 import { catalogFor } from '@/constants/ext'
 import type { DiscoveredService, ServiceKind, TaskBrief } from '@/types'
 import { needsPort, needsPassword } from '@/utils/format'
-import { verRoot } from '@/utils/path'
+import { verRoot, hostToContainer } from '@/utils/path'
 
 const props = defineProps<{ kind: ServiceKind }>()
 const { t } = useI18n()
@@ -81,7 +81,17 @@ function portValue(version: string): string {
 function dirPath(version: string, sub: string): string {
   // 数据目录可整体自定义（需求 7）：自定义即唯一生效路径，未自定义才随服务根派生
   if (sub === 'data') return dataDirOf(props.kind, version)
+  // nginx 的 www/sites 是全局路径（挂载在容器里的 /var/www 与 /etc/nginx/sites），不随版本根派生
+  if (sub === 'www') return state.env.WWW_ROOT
+  if (sub === 'sites') return state.env.NGINX_SITES_ROOT
   return `${verRoot(state.env, props.kind, version)}/${sub}`
+}
+
+// dirTitle 悬停显示宿主路径；nginx 的 www/sites 两行沿用原独立行的容器路径映射提示
+function dirTitle(version: string, sub: string): string {
+  const p = dirPath(version, sub)
+  if (sub === 'www' || sub === 'sites') return `${p} → ${hostToContainer(state.env, p)}`
+  return p
 }
 // extCount 卡片上「已启用扩展」的颗数：只数扩展目录里那些（管理扩展弹窗铺的就是这一份）。
 // 快照里现在是容器内实测的全集，含 Core／date 这类目录管不到的名字，照直数会比弹窗对不上。
@@ -323,7 +333,7 @@ function dirGroupSize(version: string): number {
             <PasswordField :kind="kind" :version="version" />
           </div>
 
-          <!-- php/nginx：高频行前移——php 的扩展入口、nginx 的站点源码与 vhost 目录（需求） -->
+          <!-- php：高频行前移——扩展入口（nginx 的站点源码与 vhost 目录已并入「目录」组，见 DIR_ROWS） -->
           <div v-if="kind === 'php' && !externalOnly(version)" class="kv">
             <span class="k">{{ t('php.extensions') }}</span>
             <button class="btn btn-sm" data-action="php-extensions" :data-version="version" :title="t('php.manageExt')" @click="modals.openPhpExtensionsModal(version)">
@@ -331,14 +341,6 @@ function dirGroupSize(version: string): number {
               {{ t('php.manageExt') }}
               <span class="ext-count">{{ extCount(version) }}</span>
             </button>
-          </div>
-          <div v-if="kind === 'nginx' && !externalOnly(version)" class="kv">
-            <span class="k">{{ t('svc.wwwDir') }}</span>
-            <span class="v" :title="`${state.env.WWW_ROOT} → /var/www`">{{ state.env.WWW_ROOT }}</span>
-          </div>
-          <div v-if="kind === 'nginx' && !externalOnly(version)" class="kv">
-            <span class="k">{{ t('svc.sitesDir') }}</span>
-            <span class="v" :title="`${state.env.NGINX_SITES_ROOT} → /etc/nginx/sites`">{{ state.env.NGINX_SITES_ROOT }}</span>
           </div>
 
           <!-- 五个服务：目录行默认折叠，点击整组展开（php 组内含站点源码，见 dirGroupSize） -->
@@ -396,7 +398,7 @@ function dirGroupSize(version: string): number {
                 </button>
                 <span v-if="isCustomDataDir(version)" class="chip chip-accent">{{ t('root.custom') }}</span>
               </template>
-              <span v-else class="v" :title="dirPath(version, sub)">{{ dirPath(version, sub) }}</span>
+              <span v-else class="v" :title="dirTitle(version, sub)">{{ dirPath(version, sub) }}</span>
             </div>
             <!-- php：站点源码也收进折叠组（追加需求），排在配置/日志目录之后 -->
             <div v-if="kind === 'php' && !externalOnly(version)" class="kv">

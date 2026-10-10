@@ -14,7 +14,7 @@ import { cmpVer, siteUrl } from '@/utils/format'
 import { copyText } from '@/utils/str'
 import { hostToContainer } from '@/utils/path'
 import { SVC_META } from '@/constants/service'
-import { addSiteHosts, hasBackend, openSiteFolder } from '@/api/site'
+import { addSiteHosts, hasBackend, openSiteFolder, reorderSites } from '@/api/site'
 import { envKeyPort } from '@/api/env'
 import { toast } from '@/composables/useToast'
 import { backendMsg } from '@/utils/backendMsg'
@@ -138,7 +138,7 @@ function rootLeaf(path: string): string {
   const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
   return i >= 0 ? s.slice(i + 1) : s
 }
-// 域名点击交给系统浏览器：在用户自己的浏览器里开新标签页，而不是在应用窗口内跳
+// 域名点击交给系统浏览器：在用户自己的浏览器里开新标签页，而不是在应用窗口内跳（需求②：点域名=新标签页打开）
 function openSite(site: Site): void {
   const url = siteUrl(site)
   if (!url) return
@@ -147,6 +147,41 @@ function openSite(site: Site): void {
     return
   }
   Browser.OpenURL(url)
+}
+// 复制域名（需求①：原「外链」小图标改为复制域名；只复制、不跳转）
+async function copyDomain(domain: string): Promise<void> {
+  const ok = await copyText(domain)
+  toast(ok ? t('common.copied') : t('common.copyFailed'), ok ? 'ok' : 'err', 2000)
+}
+
+// ---- 拖拽排序（需求③）：拖动行即时换位，松手后持久化到 config.yaml（site_order），快照按新序回流 ----
+const dragIndex = ref(-1)
+function onSiteDragStart(i: number, e: DragEvent): void {
+  // 只允许从域名单元格发起拖拽——端口输入、PHP 下拉、行内按钮各自的手势不被拖拽抢走
+  if (!(e.target as HTMLElement).closest('.site-domain')) {
+    e.preventDefault()
+    return
+  }
+  dragIndex.value = i
+  e.dataTransfer?.setData('text/plain', String(i))
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+function onSiteDrop(target: number, e: DragEvent): void {
+  e.preventDefault()
+  const from = dragIndex.value
+  dragIndex.value = -1
+  if (from < 0 || from === target) return
+  const list = [...state.sites]
+  const [moved] = list.splice(from, 1)
+  list.splice(target, 0, moved)
+  // 乐观换位只为跟手；权威顺序随 state:changed 回流（后端按 site_order 重排快照），失败即拉快照纠偏
+  state.sites.splice(0, state.sites.length, ...list)
+  const domains = list.map((s) => s.domain)
+  if (!hasBackend()) return
+  reorderSites(domains).catch((err: unknown) => {
+    toast(backendMsg(String(err)), 'err', 4600)
+    void syncState()
+  })
 }
 // 点路径即在系统文件管理器里打开这个文件夹；打不开就把后端原话转达给用户
 function onOpenRoot(site: Site): void {
@@ -217,12 +252,25 @@ onBeforeUnmount(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="site in state.sites" :key="site.domain">
+            <tr
+              v-for="(site, i) in state.sites"
+              :key="site.domain"
+              class="site-row"
+              :class="{ dragging: dragIndex === i }"
+              draggable="true"
+              @dragstart="onSiteDragStart(i, $event)"
+              @dragover.prevent
+              @drop.prevent="onSiteDrop(i, $event)"
+              @dragend="dragIndex = -1"
+            >
               <td>
-                <a class="site-domain" :href="siteUrl(site)" :title="siteUrl(site)" @click.prevent="openSite(site)">
+                <a class="site-domain" :href="siteUrl(site)" :title="siteUrl(site)">
                   <span class="favicon">{{ site.domain.charAt(0).toUpperCase() }}</span>
-                  <span class="domain-text">{{ site.domain }}</span>
-                  <svg class="external-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><path d="M15 3h6v6M10 14 21 3" /></svg>
+                  <!-- 需求②：点域名（含图标以外的整块）在系统浏览器新标签页打开；需求①：小图标改为复制域名 -->
+                  <span class="domain-text" @click.prevent="openSite(site)">{{ site.domain }}</span>
+                  <button class="copy-domain" type="button" :title="t('sites.copyDomain')" :aria-label="t('sites.copyDomain')" @click.prevent.stop="copyDomain(site.domain)">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+                  </button>
                 </a>
               </td>
               <td class="col-port">

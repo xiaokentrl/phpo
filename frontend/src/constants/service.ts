@@ -29,9 +29,11 @@ export const NAV: Array<{ section: string } | { id: ServiceKind | 'sites' | 'bac
 ]
 
 // versionCard 目录行：[子目录, i18n 标签键]
+// nginx 的 www/sites 不是版本子目录——是全局路径（WWW_ROOT / NGINX_SITES_ROOT），dirPath 有同名特例；
+// 顺序即展示顺序（需求）：站点源码 → vhost 目录 → 配置目录 → 日志目录。
 export const DIR_ROWS: Record<ServiceKind, Array<[string, string]>> = {
   php: [['conf', 'svc.confDir'], ['logs', 'svc.logDir']],
-  nginx: [['conf', 'svc.confDir'], ['logs', 'svc.logDir']],
+  nginx: [['www', 'svc.wwwDir'], ['sites', 'svc.sitesDir'], ['conf', 'svc.confDir'], ['logs', 'svc.logDir']],
   mysql: [['conf', 'svc.confDir'], ['data', 'svc.dataDir'], ['logs', 'svc.logDir'], ['initdb', 'svc.initdbDir']],
   pgsql: [['conf', 'svc.confDir'], ['data', 'svc.dataDir'], ['logs', 'svc.logDir'], ['initdb', 'svc.initdbDir']],
   redis: [['conf', 'svc.confDir'], ['data', 'svc.dataDir'], ['logs', 'svc.logDir']],

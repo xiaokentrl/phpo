@@ -89,3 +89,8 @@ export function addSiteHosts(domain: string): Promise<string> {
 export function openSiteFolder(path: string): Promise<void> {
   return app.OpenFolder(path)
 }
+
+// reorderSites 持久化站点展示顺序（拖拽排序）：纯配置写（config.yaml site_order），快照按新序回流
+export function reorderSites(domains: string[]): Promise<void> {
+  return app.SiteReorder(domains)
+}

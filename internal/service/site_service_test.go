@@ -21,6 +21,7 @@ import (
 
 // fakeSiteStore 实现 SiteStore（内存权威）
 type fakeSiteStore struct {
+	siteOrder  []string
 	sites      []model.Site
 	trash      []store.TrashItem
 	snap       *model.Snapshot
@@ -66,6 +67,12 @@ func (f *fakeSiteStore) AddTrashItem(it store.TrashItem) (int64, error) {
 func (f *fakeSiteStore) BuildSnapshot() (*model.Snapshot, error) {
 	f.snap.Sites = append([]model.Site{}, f.sites...)
 	return f.snap, nil
+}
+
+// SetSiteOrder 站点展示顺序的桩（内存记录，供断言）
+func (f *fakeSiteStore) SetSiteOrder(domains []string) error {
+	f.siteOrder = domains
+	return nil
 }
 
 // SetSitePortBlocks 写降级表（内存权威，不落库，与真库同口径）

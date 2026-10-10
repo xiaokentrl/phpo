@@ -427,6 +427,14 @@ func (a *App) SiteAddHosts(ctx context.Context, domain string) (string, error) {
 	return a.container.SiteService.AddHosts(ctx, domain)
 }
 
+// SiteReorder 持久化站点展示顺序（拖拽排序）：纯配置写（config.yaml site_order），与镜像源保存同类。
+func (a *App) SiteReorder(domains []string) error {
+	if a.container.SiteService == nil {
+		return errNotReady
+	}
+	return a.container.SiteService.ReorderSites(domains)
+}
+
 // OpenFolder 在系统文件管理器里打开这个文件夹（站点列表「点路径开目录」）。只读：不落库、不建任务、不发事件
 func (a *App) OpenFolder(path string) error {
 	abs, err := config.ValidateRootPath(path) // 硬红线 3：路径穿越在这里裁决

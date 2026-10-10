@@ -6,6 +6,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"sort"
 
 	"phpo/internal/model"
 )
@@ -60,6 +61,7 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	if snap.Sites, err = s.ListSites(); err != nil {
 		return nil, err
 	}
+	applySiteOrder(snap.Sites, s.env)
 	s.enrichSites(snap)
 	snap.PHPExtensions = map[string][]string{}
 	extRows, err := db.Query(`SELECT version, ext FROM php_extensions ORDER BY rowid`)
@@ -101,6 +103,40 @@ func normalizeCollections(snap *model.Snapshot) {
 }
 
 // env / dirReady 已迁出：配置真相与就绪判定唯一来自 ConfigStore（internal/config，YAML）；SQLite 不再持有 env 表与 dir_ready 表。
+
+// applySiteOrder 按用户拖拽持久化的顺序（config.yaml site_order）原地重排站点：
+// 顺序里缺席的（新站点、未拖拽过的）按原序（域名序）排在已排序的后面，SliceStable 保证不动相对位置。
+// provider 未注入（单测/首启）或顺序为空时原样返回——展示顺序的缺省仍是域名序。
+func applySiteOrder(sites []model.Site, env EnvProvider) {
+	if env == nil || len(sites) == 0 {
+		return
+	}
+	order := env.SiteOrder()
+	if len(order) == 0 {
+		return
+	}
+	rank := make(map[string]int, len(order))
+	for i, d := range order {
+		rank[d] = i
+	}
+	sort.SliceStable(sites, func(i, j int) bool {
+		ri, oki := rank[sites[i].Domain]
+		rj, okj := rank[sites[j].Domain]
+		if oki != okj {
+			return oki // 已排过序的在前
+		}
+		return oki && ri < rj // 都排过序的按拖拽顺序；都没排过的保持原序
+	})
+}
+
+// SetSiteOrder 持久化站点展示顺序（拖拽排序的持久层写点；顺序真相同 config.yaml）。
+// provider 未注入（单测）时静默成功——排序是展示偏好，不值得为它打断调用方。
+func (s *Store) SetSiteOrder(domains []string) error {
+	if s.env == nil {
+		return nil
+	}
+	return s.env.SetSiteOrder(domains)
+}
 
 // enrichSites 在快照出口逐站点补齐展示用运行态（health/hosts）。
 // 硬红线 4：这两列只由后端按宿主真值给出，前端不得自行推断；BuildSnapshot 是全部 state:changed

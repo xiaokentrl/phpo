@@ -65,6 +65,33 @@ type FileConfig struct {
 	DockerSources []string                         `yaml:"docker_sources,omitempty"` // Docker 镜像源主机名；空即不改写镜像名（直连官方）
 	UpdateSources []UpdateSource                   `yaml:"update_sources,omitempty"` // 全部并发探测，顺序只作并列版本的裁决与点名次序
 	Services      map[string]map[string]SvcSetting `yaml:"services,omitempty"`       // kind -> version -> 设置
+	SiteOrder     []string                         `yaml:"site_order,omitempty"`     // 站点域名展示顺序（拖拽排序持久化）：快照按此排序，缺席的域名按原序排在末尾
+}
+
+// SiteOrder 返回站点的展示顺序（未拖拽过为空切片）。
+func (c *ConfigStore) SiteOrder() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fc.SiteOrder
+}
+
+// SetSiteOrder 持久化站点展示顺序：拖拽排序的唯一写点。规范化为去空白去重；
+// 顺序里缺席的域名在快照侧按原序排在末尾，删除站点后的残留条目无副作用。
+func (c *ConfigStore) SetSiteOrder(domains []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(domains))
+	seen := make(map[string]bool, len(domains))
+	for _, d := range domains {
+		d = strings.TrimSpace(d)
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	c.fc.SiteOrder = out
+	return c.save()
 }
 
 // ConfigStore 配置唯一读写门面：内存缓存 FileConfig + 原子落盘（0777，phpo 产出物统一权限）；写操作在任务串行下调用，加锁仅作兜底。

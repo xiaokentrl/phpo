@@ -33,6 +33,7 @@ type SiteStore interface {
 	AddTrashItem(store.TrashItem) (int64, error)
 	BuildSnapshot() (*model.Snapshot, error)
 	SetSitePortBlocks(map[string]string)
+	SetSiteOrder(domains []string) error
 }
 
 // SiteService 组合 vhost/hosts/回收站/任务引擎，落地站点生命周期
@@ -522,6 +523,15 @@ func (s *SiteService) commitRemove(ctx context.Context, domain, origRoot, trashP
 	s.vhosts.Remove(domain)
 	s.vhosts.Sync(mustSites(s.store))
 	s.refreshPortBlocks(ctx)
+	return s.emit()
+}
+
+// ReorderSites 持久化站点展示顺序（拖拽排序）：顺序落 config.yaml（与镜像源保存同类——纯配置写，
+// 不动 Docker 状态，不走任务队列），成功后广播 state:changed 让快照按新序回流。
+func (s *SiteService) ReorderSites(domains []string) error {
+	if err := s.store.SetSiteOrder(domains); err != nil {
+		return err
+	}
 	return s.emit()
 }
 

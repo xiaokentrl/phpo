@@ -69,9 +69,11 @@ type fakeEnv struct {
 	home, www bool
 }
 
-func (f fakeEnv) FlatEnv() map[string]string { return f.m }
-func (f fakeEnv) RootsPersisted() bool       { return f.persisted }
-func (f fakeEnv) RootsReady() (bool, bool)   { return f.home, f.www }
+func (f fakeEnv) FlatEnv() map[string]string  { return f.m }
+func (f fakeEnv) RootsPersisted() bool        { return f.persisted }
+func (f fakeEnv) RootsReady() (bool, bool)    { return f.home, f.www }
+func (f fakeEnv) SiteOrder() []string         { return nil }
+func (f fakeEnv) SetSiteOrder([]string) error { return nil }
 
 // env 表已迁出 SQLite：迁移不应再建 env 表；BuildSnapshot.env 唯一来自注入的 EnvProvider
 func TestEnvMigratedOutAndSnapshotUsesProvider(t *testing.T) {
@@ -269,9 +271,11 @@ type lazyEnv struct {
 	home, www bool
 }
 
-func (e *lazyEnv) FlatEnv() map[string]string { return e.m }
-func (e *lazyEnv) RootsPersisted() bool       { return e.persisted }
-func (e *lazyEnv) RootsReady() (bool, bool)   { return e.home, e.www }
+func (e *lazyEnv) FlatEnv() map[string]string  { return e.m }
+func (e *lazyEnv) RootsPersisted() bool        { return e.persisted }
+func (e *lazyEnv) RootsReady() (bool, bool)    { return e.home, e.www }
+func (e *lazyEnv) SiteOrder() []string         { return nil }
+func (e *lazyEnv) SetSiteOrder([]string) error { return nil }
 
 // 方案B 首启门禁：两根未写入 config.yaml 前，运行态存储不得在用户数据目录留下任何文件；
 // 向导落地后首次访问即「建目录 → 建库 → 迁移」，无需重启。
