@@ -3,9 +3,11 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +19,11 @@ import (
 // defaultDockerHost 与 docker CLI 的默认端点一致；所有候选都不在盘上时回落它，
 // 让报错点名规范位置而不是一个凭空的猜测路径。
 const defaultDockerHost = "unix:///var/run/docker.sock"
+
+// windowsDefaultDockerHost Windows 没有 unix socket：Docker Desktop 与 podman machine 全走 named pipe。
+// Docker Desktop 的权威管道是 docker_engine；无候选可言（管道不 stat 出 socket 类型），直接用默认端点，
+// 缺席由拨号归类（未运行），与 docker CLI 在 Windows 上的行为一致。
+const windowsDefaultDockerHost = "npipe:////./pipe/docker_engine"
 
 // EngineKind 容器引擎种类（v2.9.16，§5.25）：同一套 Client 代码经「端点 + 方言」服务两种引擎。
 type EngineKind string
@@ -40,10 +47,32 @@ type Client struct {
 // New 构造客户端。DOCKER_HOST 已由用户显式设置时原样尊重（含 tcp/ssh 与 TLS 环境变量）；
 // 未设置时按候选路径挑盘上真实存在的 socket——从 .desktop 启动的进程拿不到用户 shell 里
 // export 的 DOCKER_HOST，rootless / Docker Desktop on Linux 因此会被误判成「未装/未运行」。
+// 候选之外再扫一轮「非规范位置」的真实部署形态（colima 其他实例 / lima / docker context 指到的端点），
+// 排在规范候选之后；裁决仍是拨号 + Ping（§5.25：发现只是找端点，不是判存活的依据）。
 // 惰性：不拨号，Docker 缺席亦不报错。
 func New() (*Client, error) {
-	return newAtEndpoint(pickEndpoint(os.Getenv("DOCKER_HOST"), xdgRuntimeDir(), os.Getuid(),
-		os.Getenv("HOME"), socketExists))
+	goos := runtime.GOOS
+	home := os.Getenv("HOME")
+	cands := candidateSockets(goos, xdgRuntimeDir(), os.Getuid(), home)
+	cands = append(cands, discoverExtraSockets(goos, home, socketExists)...)
+	fallback := defaultDockerHost
+	if goos == "windows" {
+		fallback = windowsDefaultDockerHost
+	}
+	// 显式 DOCKER_HOST 永远排第一（唯一候选，不混任何发现）；Windows 直接给默认管道
+	cands = append(dockerHostFirst(goos, os.Getenv("DOCKER_HOST")), cands...)
+	return newAtEndpoint(pickFromCandidates(cands, socketExists, fallback))
+}
+
+// dockerHostFirst 显式 DOCKER_HOST 存在时只拨它（不混入任何候选）。
+func dockerHostFirst(goos, dockerHost string) []string {
+	if dockerHost != "" {
+		return []string{dockerHost}
+	}
+	if goos == "windows" {
+		return []string{windowsDefaultDockerHost}
+	}
+	return nil
 }
 
 func newAtEndpoint(host string) (*Client, error) {
@@ -123,8 +152,17 @@ func (c *Client) engineKind() EngineKind {
 // candidateSockets 按优先级给出候选端点：Docker 家族全部候选在前（Docker 优先仲裁，§5.25）→
 // Podman 家族（rootless 在前——phpo 以用户身份运行，rootless 是开发场景常态；rootful socket 通常
 // 需要组权限，排后面仅作 rootful-only 机器的兜底）。
-// xdgRuntime/home 为空、uid < 0（Windows）时不产生对应候选。
-func candidateSockets(xdgRuntime string, uid int, home string) []string {
+// xdgRuntime/home 为空、uid < 0 时不产生对应候选。Windows 没有 unix socket：三平台引擎全走
+// named pipe（Docker Desktop 两根管道 + podman machine 默认管道），顺序仍 docker 在前。
+// goos 参数化只为可测——生产恒传 runtime.GOOS。
+func candidateSockets(goos, xdgRuntime string, uid int, home string) []string {
+	if goos == "windows" {
+		return []string{
+			`npipe:////./pipe/docker_engine`,            // Docker Desktop（Windows 权威管道，docker CLI 同款默认）
+			`npipe:////./pipe/dockerDesktopLinuxEngine`, // Docker Desktop 的 WSL 引擎管道
+			`npipe:////./pipe/podman-machine-default`,   // podman machine 默认实例
+		}
+	}
 	cands := []string{"/var/run/docker.sock", "/run/docker.sock"}
 	if xdgRuntime != "" {
 		cands = append(cands, filepath.Join(xdgRuntime, "docker.sock"))
@@ -133,14 +171,18 @@ func candidateSockets(xdgRuntime string, uid int, home string) []string {
 		cands = append(cands, filepath.Join("/run/user", strconv.Itoa(uid), "docker.sock"))
 	}
 	if home != "" {
-		cands = append(cands, filepath.Join(home, ".docker", "run", "docker.sock"))
+		cands = append(cands, filepath.Join(home, ".docker", "run", "docker.sock"))     // Docker Desktop（macOS/Linux）
+		cands = append(cands, filepath.Join(home, ".colima", "default", "docker.sock")) // colima 默认实例（apt/docker-ce 之外最常见的 Docker 形态）
 	}
-	// Podman 候选（v2.9.16）：rootless（XDG_RUNTIME_DIR 与 /run/user/<uid>）→ rootful
+	// Podman 候选（v2.9.16）：rootless（XDG_RUNTIME_DIR 与 /run/user/<uid>）→ machine 稳定入口 → rootful
 	if xdgRuntime != "" {
 		cands = append(cands, filepath.Join(xdgRuntime, "podman", "podman.sock"))
 	}
 	if uid >= 0 {
 		cands = append(cands, filepath.Join("/run/user", strconv.Itoa(uid), "podman", "podman.sock"))
+	}
+	if home != "" {
+		cands = append(cands, filepath.Join(home, ".podman", "podman.sock")) // podman machine 当前实例的稳定符号链接（macOS 主路径）
 	}
 	cands = append(cands, "/run/podman/podman.sock")
 	out := make([]string, 0, len(cands))
@@ -154,22 +196,102 @@ func candidateSockets(xdgRuntime string, uid int, home string) []string {
 	return out
 }
 
-// pickEndpoint 决定拨哪个端点：显式 DOCKER_HOST 原样胜出；否则取第一个「socket 确实在盘上」的
-// 候选（转成 unix:// 形式）；一个都不在即回落默认端点。
-func pickEndpoint(dockerHost, xdgRuntime string, uid int, home string, exists func(string) bool) string {
+// pickEndpoint 决定拨哪个端点：显式 DOCKER_HOST 原样胜出；Windows 无 unix socket、
+// 管道也不可 stat 出 socket 类型，直接用系统默认管道（缺席由拨号归类）；其余取第一个
+// 「socket 确实在盘上」的候选（转成 unix:// 形式），一个都不在即回落默认端点。
+func pickEndpoint(goos, dockerHost, xdgRuntime string, uid int, home string, exists func(string) bool) string {
 	if dockerHost != "" {
 		return dockerHost
 	}
-	for _, p := range candidateSockets(xdgRuntime, uid, home) {
+	if goos == "windows" {
+		return windowsDefaultDockerHost
+	}
+	return pickFromCandidates(candidateSockets(goos, xdgRuntime, uid, home), exists, defaultDockerHost)
+}
+
+// pickFromCandidates 取第一个可用候选：裸路径经 exists 校验后转 unix://；
+// 带 scheme 的端点（tcp:// / npipe:// / ssh://，来自 DOCKER_HOST 或 Windows 管道）无法 stat，
+// 原样放行——裁决交给拨号。全不命中回落调用方给的该平台默认端点。
+func pickFromCandidates(cands []string, exists func(string) bool, fallback string) string {
+	seen := map[string]bool{}
+	for _, p := range cands {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		if strings.Contains(p, "://") {
+			return p
+		}
 		if exists(p) {
 			return "unix://" + p
 		}
 	}
-	return defaultDockerHost
+	return fallback
 }
 
 // xdgRuntimeDir 取 XDG_RUNTIME_DIR（rootless daemon socket 的规范位置）
 func xdgRuntimeDir() string { return os.Getenv("XDG_RUNTIME_DIR") }
+
+// discoverExtraSockets 扫三类「不在规范位置」的真实部署形态：colima 的其他实例、lima 转发的
+// docker socket、docker context 指到的任意 unix 端点。只做「发现」——找到的路径仍经 exists 过滤、
+// 拨号 + Ping 裁决（§5.25）；解析不出、目录缺失一律静默跳过，绝不因此报错。
+func discoverExtraSockets(goos, home string, exists func(string) bool) []string {
+	if goos == "windows" || home == "" {
+		return nil
+	}
+	var found []string
+	for _, pat := range []string{
+		filepath.Join(home, ".colima", "*", "docker.sock"),       // colima 多实例（default 已在规范候选表里）
+		filepath.Join(home, ".lima", "*", "sock", "docker.sock"), // lima 转发端点
+	} {
+		m, _ := filepath.Glob(pat)
+		found = append(found, m...)
+	}
+	found = append(found, dockerContextSockets(home)...)
+	out := make([]string, 0, len(found))
+	seen := map[string]bool{}
+	for _, p := range found {
+		if p == "" || seen[p] || !exists(p) {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+// dockerContextSockets 解析 ~/.docker/contexts/meta/*/meta.json 里 docker 端点指向的 unix socket：
+// 用 docker context 切过多端点的用户，规范位置可能一个 socket 都没有，真相只在这里。
+func dockerContextSockets(home string) []string {
+	entries, err := os.ReadDir(filepath.Join(home, ".docker", "contexts", "meta"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(home, ".docker", "contexts", "meta", e.Name(), "meta.json"))
+		if err != nil {
+			continue
+		}
+		var meta struct {
+			Endpoints struct {
+				Docker struct {
+					Host string `json:"Host"`
+				} `json:"docker"`
+			} `json:"Endpoints"`
+		}
+		if json.Unmarshal(b, &meta) != nil {
+			continue
+		}
+		if h := meta.Endpoints.Docker.Host; strings.HasPrefix(h, "unix://") {
+			out = append(out, strings.TrimPrefix(h, "unix://"))
+		}
+	}
+	return out
+}
 
 // socketExists 路径存在且是 unix socket（普通文件残留不算，避免把误配的路径当端点）
 func socketExists(path string) bool {
