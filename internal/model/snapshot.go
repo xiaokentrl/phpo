@@ -23,6 +23,7 @@ type Snapshot struct {
 	Gaps          []ServiceGap        `json:"gaps"`          // 已被外部删除的容器/镜像点名项（§5.19；不落库，由同步状态现取）
 	Discovered    []DiscoveredService `json:"discovered"`    // Docker 上此刻实际存在的服务容器（含已停止的；不落库，由同步状态现取）
 	Engine        *EngineInfo         `json:"engine"`        // 容器引擎检测结果（v2.9.16；不落库，由装配层启动探测派生）
+	Flatpak       bool                `json:"flatpak"`       // 本进程跑在 Flatpak 沙箱里（FLATPAK_ID 或 /.flatpak-info 判定）：引导用户放行宿主 socket
 }
 
 func NewSnapshot() *Snapshot {

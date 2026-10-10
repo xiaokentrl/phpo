@@ -257,6 +257,16 @@ func wipeTaskLedger(dbPath string, st *store.Store) {
 	_ = st.ClearOperations()
 }
 
+// isFlatpakSandbox 判定本进程是否跑在 Flatpak 沙箱里：FLATPAK_ID 环境变量非空，或 /.flatpak-info 存在
+// （两者都是 flatpak 运行时的标准标记）。快照 flatpak 字段的数据源，DockerGate 据此给沙箱放行引导。
+func isFlatpakSandbox() bool {
+	if os.Getenv("FLATPAK_ID") != "" {
+		return true
+	}
+	_, err := os.Stat("/.flatpak-info")
+	return err == nil
+}
+
 // buildObjectGraph 按已载入的配置构造（重绑时重建）整棵运行期对象图。
 // env 两份：原始值供展示与快照，展开值供真实文件 IO 与容器挂载。
 // calibrate=false 跳过启动校准：重绑只为换根，此刻库里没有任何「已装」记录，校准会把旧根下遗留的
@@ -289,6 +299,7 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	dcancel()
 	c.engineInfo = model.EngineInfo{Kind: string(engKind), Version: engVer, Endpoint: cli.DockerHost(), Rootless: cli.Rootless()}
 	st.SetEngineProvider(func() model.EngineInfo { return c.engineInfo })
+	st.SetFlatpakProvider(isFlatpakSandbox)
 	tm := task.NewManager(c.Emitter)
 	// 任务实时反馈三接线（硬红线 4：状态唯一权威在后端）：
 	// 队列详情进快照（store 不反向依赖 task，注入 provider）；终态落账本；队列变化重发 state:changed。

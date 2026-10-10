@@ -54,6 +54,26 @@ const showHint = computed(() => !!app.docker.hint && app.docker.status !== 'not_
 const dockerCmds = computed<string[]>(() => [t('engine.installDockerCmd')])
 const podmanCmds = computed<string[]>(() => t('engine.installPodmanCmd').split('\n'))
 
+// Flatpak 沙箱放行卡（需求）：沙箱默认看不到宿主机 socket，检测不到 ≠ 没装。
+// 命令是宿主机终端语义（flatpak override 在沙箱内跑不了）；$(id -u) 原样给出，用户终端里现算。
+const showFlatpakCard = computed(() => app.flatpak && app.docker.checked && app.docker.status !== 'ok')
+const APP_ID = 'io.github.xiaokentrl.phpo'
+const flatpakSteps = computed(() => [
+  { label: t('engine.flatpakStep1'), cmds: ['systemctl --user enable --now podman.socket'] },
+  {
+    label: t('engine.flatpakStep2'),
+    cmds: [
+      `flatpak override --user --filesystem=xdg-run/podman ${APP_ID}`,
+      `flatpak override --user --env=DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock ${APP_ID}`,
+    ],
+  },
+])
+// rootful Docker 变体（折叠）：放行 /var/run/docker.sock（客户端默认端点即它，无需 DOCKER_HOST 也通，仍显式给全）
+const flatpakDockerCmds = computed(() => [
+  `flatpak override --user --filesystem=/var/run/docker.sock ${APP_ID}`,
+  `flatpak override --user --env=DOCKER_HOST=unix:///var/run/docker.sock ${APP_ID}`,
+])
+
 async function copyCmd(text: string): Promise<void> {
   if (!text) return
   try {
@@ -102,6 +122,59 @@ async function copyCmd(text: string): Promise<void> {
       <section v-if="showHint" class="gate-hint">
         <span class="gate-hint-icon">💡</span>
         <span>{{ app.docker.hint }}</span>
+      </section>
+
+      <!-- ============ Flatpak 沙箱放行（检测不到 ≠ 没装：先放行，再谈安装） ============ -->
+      <section v-if="showFlatpakCard" class="gate-flatpak">
+        <div class="gate-flatpak-title">📦 {{ t('engine.flatpakTitle') }}</div>
+        <p class="gate-flatpak-desc">{{ t('engine.flatpakDesc') }}</p>
+        <template v-for="step in flatpakSteps" :key="step.label">
+          <div class="gate-flatpak-step">{{ step.label }}</div>
+          <div class="gate-cmds">
+            <div v-for="cmd in step.cmds" :key="cmd" class="gate-cmd">
+              <code>{{ cmd }}</code>
+              <button
+                class="gate-cmd-copy"
+                :class="{ copied: copiedCmd === cmd }"
+                type="button"
+                :aria-label="copiedCmd === cmd ? t('docker.copied') : t('docker.copyCmd')"
+                @click="copyCmd(cmd)"
+              >
+                <svg v-if="copiedCmd !== cmd" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </template>
+        <p class="gate-flatpak-note">{{ t('engine.flatpakRestartNote') }}</p>
+        <details class="gate-detail">
+          <summary>{{ t('engine.flatpakDockerMore') }}</summary>
+          <div class="gate-cmds">
+            <div v-for="cmd in flatpakDockerCmds" :key="cmd" class="gate-cmd">
+              <code>{{ cmd }}</code>
+              <button
+                class="gate-cmd-copy"
+                :class="{ copied: copiedCmd === cmd }"
+                type="button"
+                :aria-label="copiedCmd === cmd ? t('docker.copied') : t('docker.copyCmd')"
+                @click="copyCmd(cmd)"
+              >
+                <svg v-if="copiedCmd !== cmd" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </details>
       </section>
 
       <!-- ============ 安装引导 ============ -->
@@ -343,6 +416,39 @@ async function copyCmd(text: string): Promise<void> {
   word-break: break-word;
 }
 .gate-hint-icon { flex: none; }
+
+/* ---------- Flatpak 沙箱放行 ---------- */
+.gate-flatpak {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--g-accent, var(--g-line));
+  background: var(--g-surface-2);
+}
+.gate-flatpak-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--g-text);
+}
+.gate-flatpak-desc {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--g-text-2);
+  word-break: break-word;
+}
+.gate-flatpak-step {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g-text);
+  margin-top: 4px;
+}
+.gate-flatpak-note {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--g-text-2);
+}
 
 /* ---------- 安装引导 ---------- */
 .gate-install {

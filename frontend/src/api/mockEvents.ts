@@ -23,6 +23,7 @@ const MOCK_SNAPSHOT: StateSnapshot = {
   discovered: [],
   // engine：演示通道无真实引擎，给未识别（kind 空）——引擎徽章/引导的空态由界面处理
   engine: { kind: '', version: '', endpoint: '', rootless: false },
+  flatpak: false,
   tasks: { running: { id: 't-1', label: 'mock · php 8.5 安装', type: 'install', step: 2, total: 6, startedAt: '2026-09-21T10:00:00Z' }, pending: [] },
 }
 

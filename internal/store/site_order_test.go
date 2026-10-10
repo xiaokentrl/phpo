@@ -75,3 +75,15 @@ func TestSiteOrder_EmptyKeepsDomainOrder(t *testing.T) {
 		t.Fatalf("无排序时快照顺序 = %v，应域名序 %v", got, want)
 	}
 }
+
+func TestFlatpakFlag_StampedIntoSnapshot(t *testing.T) {
+	s := openStore(t)
+	s.SetFlatpakProvider(func() bool { return true })
+	snap, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snap.Flatpak {
+		t.Fatal("provider 注入后快照 flatpak 应为 true")
+	}
+}

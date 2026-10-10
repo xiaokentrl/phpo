@@ -270,6 +270,7 @@ export interface StateSnapshot {
   gaps: ServiceGap[]
   discovered: DiscoveredService[]
   engine: EngineInfo | null
+  flatpak: boolean // 本进程跑在 Flatpak 沙箱里：DockerGate 据此给沙箱放行引导
 }
 
 // DockerStatus 与后端 model.DockerStatus（internal/model/dto.go）JSON 逐字对齐；

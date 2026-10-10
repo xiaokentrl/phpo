@@ -31,13 +31,14 @@ type EnvProvider interface {
 }
 
 type Store struct {
-	mu    sync.Mutex // 保护 db 的一次性打开（多任务并发访问）
-	path  string     // phpo.db 绝对路径（延迟打开用）
-	db    *sql.DB    // nil 表示尚未打开
-	env   EnvProvider
-	hosts HostsProbe
-	board TaskBoardProvider
-	eng   EngineProvider
+	mu        sync.Mutex // 保护 db 的一次性打开（多任务并发访问）
+	path      string     // phpo.db 绝对路径（延迟打开用）
+	db        *sql.DB    // nil 表示尚未打开
+	env       EnvProvider
+	hosts     HostsProbe
+	board     TaskBoardProvider
+	eng       EngineProvider
+	flatpakFn func() bool // Flatpak 沙箱识别（装配层注入）：快照 flatpak 字段唯一来源
 
 	gapsMu sync.RWMutex       // 保护 gaps：同步状态在任务线写、快照在事件线读
 	gaps   []model.ServiceGap // 最近一次全量同步点名的缺失项（派生态，不落库）
@@ -75,6 +76,10 @@ type EngineProvider func() model.EngineInfo
 
 // SetEngineProvider 注入引擎 provider（装配期一次性调用）
 func (s *Store) SetEngineProvider(p EngineProvider) { s.eng = p }
+
+// SetFlatpakProvider 注入 Flatpak 沙箱识别（装配期一次性调用）：快照 flatpak 字段的唯一来源。
+// 判据在装配层（FLATPAK_ID env / /.flatpak-info），store 不做文件系统探测。
+func (s *Store) SetFlatpakProvider(p func() bool) { s.flatpakFn = p }
 
 // SetGaps 记下最近一次全量同步点名的缺失项（§5.19）。
 // 它是派生态而非权威态：不落库（重启后由启动校准重新现取），也不改动 installed / running 任何一行。

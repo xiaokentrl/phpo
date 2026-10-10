@@ -104,6 +104,10 @@ export const useAppState = defineStore('appState', () => {
   // kind 空 = 尚未识别（拨号失败/未装配）；派生态不落库（硬红线 4：只由快照落地）。
   const engine = ref<EngineInfo | null>(null)
 
+  // flatpak：本进程跑在 Flatpak 沙箱里（后端 FLATPAK_ID / /.flatpak-info 判定，随快照落地）。
+  // DockerGate 据此把「检测不到引擎」的引导切换成沙箱放行三步（放行用户级 podman socket + override）。
+  const flatpak = ref(false)
+
   // gaps：缺失态点名项（§5.19）——库里记着已安装、宿主上却被第三方工具删掉的容器/镜像/扩展固化镜像。
   // 只由权威快照落地（硬红线 4）：不落库、不自动改 installed，界面据它把服务卡片标成「已被外部删除」。
   const gaps = reactive<ServiceGap[]>([])
@@ -162,6 +166,7 @@ export const useAppState = defineStore('appState', () => {
     gaps.splice(0, gaps.length, ...(s.gaps ?? []))
     discovered.splice(0, discovered.length, ...(s.discovered ?? []))
     engine.value = s.engine ?? null
+    flatpak.value = !!s.flatpak
     applyTaskBoard(s.tasks)
   }
 
@@ -200,5 +205,5 @@ export const useAppState = defineStore('appState', () => {
 
   const phpVersions = computed(() => installed.php)
 
-  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, engine, tasks, gaps, discovered, isServiceRunning, gapOf, discoveredOf, applySnapshot, applyTaskBoard, enterRealHost, setServiceRunning, setBackups, setDocker, phpVersions }
+  return { installed, stopped, sites, backups, offline, phpExtensions, env, configs, dirReady, homeReady, docker, engine, flatpak, tasks, gaps, discovered, isServiceRunning, gapOf, discoveredOf, applySnapshot, applyTaskBoard, enterRealHost, setServiceRunning, setBackups, setDocker, phpVersions }
 })

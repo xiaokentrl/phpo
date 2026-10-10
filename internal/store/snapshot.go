@@ -28,6 +28,9 @@ func (s *Store) BuildSnapshot() (*model.Snapshot, error) {
 	// 必须在建库之前就给出——首启还没建库时服务页也要看得见 Docker 的真实情况。
 	snap.Discovered = s.Discovered()
 	// 引擎结论（v2.9.16，§5.25）：装配层启动时拨号识别一次；provider 未注入（单测）或识别失败时给空对象
+	if s.flatpakFn != nil {
+		snap.Flatpak = s.flatpakFn()
+	}
 	if s.eng != nil {
 		e := s.eng()
 		snap.Engine = &e
