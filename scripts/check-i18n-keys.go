@@ -5,6 +5,7 @@
 //  1. zh-CN.ts 与 en-US.ts 键集合完全相等（切语言无缺键）；
 //  2. 每条键的占位符集合（{name} 记号）两侧相等——英文把 {n} 写成 {count} 这类漂移在这里拦下，
 //     否则英文界面渲染时 {n} 原样漏出、参数悄悄丢掉。
+//
 // 运行：go run scripts/check-i18n-keys.go
 package main
 
