@@ -1158,7 +1158,7 @@ const messages: Record<string, string> = {
   "err.notInstalled": "目标服务/版本未安装",
   "err.isRunning": "服务正在运行，请先停止",
   "err.notRunning": "服务未运行",
-  "err.taskQueued": "任务已在队列中：{label}",
+  "err.taskQueued": "同一操作已在任务队列中：{label}",
   "err.hasDependents": "存在依赖该服务的站点，无法继续",
   "err.backupMissing": "备份归档不存在",
   "err.offlineMissing": "离线缓存条目不存在",

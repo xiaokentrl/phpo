@@ -15,6 +15,8 @@ import { VERSION_SUBDIRS } from '@/constants/service'
 import { REWRITE_PRESETS } from '@/constants/rewrite'
 import { toast } from '@/composables/useToast'
 import { t as i18nT } from '@/composables/useI18n'
+import { msgText } from '@/utils/msgText'
+import { registerParamResolver } from '@/utils/backendMsg'
 import type { Env, Operation, ServiceKind, TaskBoard, TaskBrief } from '@/types'
 
 export type TaskStatus = 'running' | 'success' | 'failed' | 'cancelled'
@@ -315,6 +317,18 @@ export const useTaskStore = defineStore('task', () => {
   let demoSeq = 0
 
   const task = computed<TaskRecord | null>(() => records.value.find((r) => r.id === activeId.value) ?? null)
+
+  // backendMsg 参数反查注册：错误串（如「同一操作已在任务队列中：重建 phpo-mysql-5.7」）里嵌的任务标签
+  // 是后端的中文 fallback，界面语言不是中文时那半句也得跟着换。这里按 fallback label 反查记录池，
+  // 命中带码记录就用它的消息码渲染当前语言；查不到（任务已被清出）原样保留，退回中文显示。
+  registerParamResolver((_code, params) => {
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(params)) {
+      const hit = records.value.find((r) => r.label === v && r.labelCode)
+      if (hit?.labelCode) out[k] = msgText(v, hit.labelCode, hit.labelParams)
+    }
+    return out
+  })
   // displayOf：§5.6.1 显示态的唯一映射出口。队列归属认后端权威 ID（Running / Pending 分区），
   // 绝不认记录内部的 status 字段——排队项的记录只是占位，其 status 从未被裁决过。
   function displayOf(r: TaskRecord | null | undefined): TaskDisplayStatus {

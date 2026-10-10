@@ -314,6 +314,32 @@ const FRAGMENTS: ReadonlyArray<readonly [string, string]> = [
 
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+// Wails v3 把 Go service 调用的 error 包成 RuntimeError 抛给 JS，String(err) 就是
+// 「RuntimeError: <后端原句>」——不剥前缀，锚定整行的形状匹配永远打不中，上面这张表等于白登记。
+// 只在匹配时剥；认不出时仍返回原行，前缀不丢（它是调用栈信息，不是要隐藏的东西）。
+const WAILS_ERR_PREFIX = /^(?:RuntimeError|Error):\s*/
+
+// resolveParams：参数值里嵌着「另一条消息」时把它翻成当前语言（如错误串里的任务标签
+// 「重建 phpo-mysql-5.7」——「重建」这个词也得跟着界面语言走）。反查逻辑由 taskStore 注册
+// 进来（只有它知道队列里有哪些任务、各自的消息码）；没注册或查不到就原样保留，
+// 退回中文原文显示——绝不空着、绝不显示成键名。
+type ParamResolver = (code: string, params: MsgParams) => MsgParams
+
+let paramResolver: ParamResolver | null = null
+
+export function registerParamResolver(fn: ParamResolver): void {
+  paramResolver = fn
+}
+
+function resolveParams(code: string, params: MsgParams): MsgParams {
+  if (!paramResolver) return params
+  try {
+    return { ...params, ...paramResolver(code, params) }
+  } catch {
+    return params
+  }
+}
+
 interface Compiled {
   re: RegExp
   code: string
@@ -361,13 +387,14 @@ function renderParams(params: MsgParams): MsgParams {
 function matchLine(line: string): string {
   if (!HAN.test(line)) return line
   for (const e of TABLE) {
-    const m = e.re.exec(line)
+    const stripped = line.replace(WAILS_ERR_PREFIX, '')
+    const m = e.re.exec(line) ?? (stripped !== line ? e.re.exec(stripped) : null)
     if (!m) continue
     const params: MsgParams = {}
     e.keys.forEach((k, i) => {
       params[k] = m[i + 1]
     })
-    return msgText(line, e.code, renderParams(params))
+    return msgText(line, e.code, renderParams(resolveParams(e.code, params)))
   }
   return line
 }
