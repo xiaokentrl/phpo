@@ -13,6 +13,7 @@ import { toast } from '@/composables/useToast'
 import { copyText } from '@/utils/str'
 import { msgText } from '@/utils/msgText'
 import { backendMsg } from '@/utils/backendMsg'
+import { taskLabel as briefLabel } from '@/utils/taskLabel'
 import type { TaskLine } from '@/stores/taskStore'
 import type { ServiceKind } from '@/types'
 
@@ -152,11 +153,7 @@ function onSplitterDown(e: PointerEvent): void {
   window.addEventListener('pointerup', onUp)
 }
 
-// briefLabel：有 labelCode 时走 i18n 渲染（v2.9.16 多语言），否则回落原始 label
-function briefLabel(r: { label: string; labelCode?: string; labelParams?: Record<string, string> }): string {
-  if (r.labelCode) return t(r.labelCode, r.labelParams || {})
-  return r.label
-}
+// briefLabel：有 labelCode 时走 i18n 渲染（v2.9.16 多语言），否则回落原始 label（见顶部导入的共享助手）
 
 // copyLog：复制当前可见日志正文；无任务时提示暂无日志
 async function copyLog(): Promise<void> {

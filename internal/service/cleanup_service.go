@@ -37,6 +37,7 @@ type CleanupStore interface {
 	ExpiredTrash(now time.Time) ([]store.TrashItem, error)
 	AppendOperation(model.Operation) error
 	ListOperations(limit int) ([]model.Operation, error)
+	ClearOperations() error
 }
 
 // CleanupTrash 回收站文件动作（*engine.Trash 满足）
@@ -250,6 +251,12 @@ func (s *CleanupService) EmptyExpired(ctx context.Context) (int, error) {
 // ListOperations 最近审计（UI 历史查询，走 operations 表；文件权威见 operations.log）
 func (s *CleanupService) ListOperations(limit int) ([]model.Operation, error) {
 	return s.store.ListOperations(limit)
+}
+
+// ClearOperations 清空操作账本：抽屉「清空日志」按钮的真删路径——任务队列历史与任务日志
+// 的唯一持久层 operations 表整表删除。运行中任务不受影响（它的记录只在内存，账本记的是终态）。
+func (s *CleanupService) ClearOperations() error {
+	return s.store.ClearOperations()
 }
 
 // ---- 内部助手 ----

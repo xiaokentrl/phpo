@@ -9,6 +9,7 @@ import { useTaskStore } from '@/stores/taskStore'
 import { useModals } from '@/composables/useModals'
 import { toast } from '@/composables/useToast'
 import { backendMsg } from '@/utils/backendMsg'
+import { taskLabel } from '@/utils/taskLabel'
 import { quitApp as nativeQuit } from '@/api/state'
 import { THEMES } from '@/constants/themes'
 import { onEvent, UI_COMMAND, UICmd } from '@/api/events'
@@ -152,7 +153,7 @@ onBeforeUnmount(() => {
       <div class="tray-menu-sep"></div>
       <div class="tray-menu-item">
         <span>{{ task.task.status === 'success' ? '✓' : '⚠' }}</span>
-        <span>{{ task.task.label }}</span>
+        <span>{{ taskLabel(task.task) }}</span>
       </div>
     </template>
 

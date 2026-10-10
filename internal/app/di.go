@@ -248,22 +248,13 @@ func (c *Container) ProbeDockerSources(ctx context.Context, raw []string) []mode
 	return out
 }
 
-// pruneHistoryOnUpgrade：覆盖安装（运行版本 ≠ config.yaml 记的 last_run_version）后把任务账本
-// 连根清空——任务队列历史与任务日志都只落在 SQLite 的 operations 表，清表即双双归零。
-// 记号由 ConfigStore 在每次落盘时盖当前版本戳；这里清表成功后再立即落一次盘把戳写死，
-// 不等用户下一次改配置——否则本进程崩溃后下次启动会把本版刚产生的记录也误清。
-// 首启（两根未落盘）整段跳过：config.yaml 与 phpo.db 都还不存在，首启用户数据目录零落盘原则不动；
-// 账本不存在（配置过但从未产生任务）只补戳、不借机建库。清表失败记号留旧值，下次启动重试。
-func (c *Container) pruneHistoryOnUpgrade(cfg *config.ConfigStore, st *store.Store, dbPath string) {
-	if !cfg.RootsPersisted() || cfg.LastRunVersion() == c.CurrentVersion {
+// wipeTaskLedger 账本文件存在才清空 operations 表（不借机建库）；启动与退出两条路径共用。
+// 失败静默（返回值只有 error 一档，清不掉就留给下次），绝不阻断启动/退出。
+func wipeTaskLedger(dbPath string, st *store.Store) {
+	if _, err := os.Stat(dbPath); err != nil {
 		return
 	}
-	if _, err := os.Stat(dbPath); err == nil {
-		if err := st.ClearOperations(); err != nil {
-			return
-		}
-	}
-	_ = cfg.StampRunVersion()
+	_ = st.ClearOperations()
 }
 
 // buildObjectGraph 按已载入的配置构造（重绑时重建）整棵运行期对象图。
@@ -281,11 +272,11 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	}
 	st := store.New(dbPath)
 	st.SetEnvProvider(cfg)
-	// 本进程运行版本注入 ConfigStore：此后每次落盘自动盖 last_run_version 戳（覆盖安装识别的记号来源）
-	cfg.SetRunVersion(c.CurrentVersion)
-	// 覆盖安装后清账本（需求）：运行版本 ≠ config.yaml 记的 last_run_version → 任务队列历史与
-	// 任务日志记录全部作废，新版首屏从零开始。任何失败只跳过本轮、下次启动重试，不阻断启动。
-	c.pruneHistoryOnUpgrade(cfg, st, dbPath)
+	// 每次启动彻底清空任务账本（需求）：任务队列历史与任务日志的持久层只有 operations 表，删表即双双归零。
+	// 账本文件不存在（首启）跳过——零落盘原则不碰，也没有历史可清；删除失败不阻断启动，
+	// 退出清空与下次启动再清兜底。虽只是一个 DELETE，但放在装配钩子里、先于界面加载完成：
+	// 用户无感（启动本就要等装配），且 loadHistory 绝无可能读到清空前的残影——真 goroutine 反而留下这个竞态。
+	wipeTaskLedger(dbPath, st)
 	cli, err := engine.New() // 惰性：不拨号，Docker 缺席亦不报错
 	if err != nil {
 		_ = st.Close()
@@ -445,6 +436,9 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 		}()
 	}
 	c.graphCleanup = func(ctx context.Context) error {
+		// 每次退出彻底清空任务账本（需求）：进程生命周期即账本生命周期，退出前抹零；
+		// 强杀/崩溃场景由下次启动的清空兜底。此刻界面已关，同秒级的 DELETE 用户不可感知。
+		wipeTaskLedger(dbPath, st)
 		_ = cli.Close()
 		return st.Close()
 	}

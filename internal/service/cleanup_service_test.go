@@ -87,6 +87,7 @@ func (s *clStore) AppendOperation(op model.Operation) error {
 	return nil
 }
 func (s *clStore) ListOperations(int) ([]model.Operation, error) { return s.ops, nil }
+func (s *clStore) ClearOperations() error                        { s.ops = nil; return nil }
 
 type clTrash struct {
 	restored [][2]string

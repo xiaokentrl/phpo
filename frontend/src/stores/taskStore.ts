@@ -8,6 +8,7 @@ import { computed, ref } from 'vue'
 import { useAppState } from '@/stores/appState'
 import { hasBackend } from '@/api/site'
 import { cancelRunning, withdrawQueued, listTaskHistory } from '@/api/task'
+import { clearOperations } from '@/api/cleanup'
 import { verRoot, hostToContainer } from '@/utils/path'
 import { resolveMounts, MOUNTS } from '@/constants/mounts'
 import { getDefaultFiles } from '@/constants/configs'
@@ -148,7 +149,8 @@ function buildScript(args: string[], meta: TaskMeta): TaskLine[] {
     lines.push({ t: 'ok', s: '  ✓ nginx -t passed' })
     lines.push({ t: 'ok', s: `✓ ${kind} ${version} running` })
   } else if (meta?.type === 'update-config' && kind && version) {
-    lines.push({ t: 'meta', s: `Update ${kind} ${version} ${meta.field}` })
+    // field 缺席（如 rebuild 走同分支）不得把字面量 undefined 拼进日志
+    lines.push({ t: 'meta', s: `Update ${kind} ${version}${meta.field ? ' ' + meta.field : ''}` })
     if (meta.field === 'port') lines.push({ t: 'ok', s: `  ✓ port ${meta.oldValue} → ${meta.newValue}` })
     else if (meta.field === 'password') lines.push({ t: 'ok', s: `  ✓ password updated (****${String(meta.newValue).slice(-4) || 'empty'})` })
     lines.push({ t: 'meta', s: 'Write config.yaml' })
@@ -606,6 +608,9 @@ export const useTaskStore = defineStore('task', () => {
       ''
     const pending = (app.tasks.pending ?? []).filter((p) => p.id !== keepId)
     await Promise.all(pending.map((p) => p.id !== keepId ? withdrawQueued(p.id).catch(() => false) : Promise.resolve(false)))
+    // 真删持久层：operations 表整表清空（任务队列历史 + 任务日志的唯一来源）。
+    // 失败不拦本地清屏——LS 时间戳那层滤镜兜底，避免已清的日志在下次 loadHistory 又回填。
+    await clearOperations().catch(() => undefined)
     for (const r of records.value) {
       if (r.id === keepId || r.live) continue
       r.cancelled = true

@@ -58,22 +58,20 @@ func DefaultUpdateSources() []UpdateSource {
 // 其余派生路径（PHP_ROOT/…）不落盘、由 DerivePaths 现算，杜绝不同步。
 // 自定义根与默认根互斥且唯一：非空即完全取代 ./offline、./backups。
 type FileConfig struct {
-	PHPOHome       string                           `yaml:"phpo_home,omitempty"`
-	WWWRoot        string                           `yaml:"www_root,omitempty"`
-	OfflineRoot    string                           `yaml:"offline_root,omitempty"`
-	BackupRoot     string                           `yaml:"backup_root,omitempty"`
-	DockerSources  []string                         `yaml:"docker_sources,omitempty"`   // Docker 镜像源主机名；空即不改写镜像名（直连官方）
-	UpdateSources  []UpdateSource                   `yaml:"update_sources,omitempty"`   // 全部并发探测，顺序只作并列版本的裁决与点名次序
-	Services       map[string]map[string]SvcSetting `yaml:"services,omitempty"`         // kind -> version -> 设置
-	LastRunVersion string                           `yaml:"last_run_version,omitempty"` // 最后一次落盘时的运行版本（内部记号，非用户可写面）：启动时与之不等即视为覆盖安装，清空任务账本
+	PHPOHome      string                           `yaml:"phpo_home,omitempty"`
+	WWWRoot       string                           `yaml:"www_root,omitempty"`
+	OfflineRoot   string                           `yaml:"offline_root,omitempty"`
+	BackupRoot    string                           `yaml:"backup_root,omitempty"`
+	DockerSources []string                         `yaml:"docker_sources,omitempty"` // Docker 镜像源主机名；空即不改写镜像名（直连官方）
+	UpdateSources []UpdateSource                   `yaml:"update_sources,omitempty"` // 全部并发探测，顺序只作并列版本的裁决与点名次序
+	Services      map[string]map[string]SvcSetting `yaml:"services,omitempty"`       // kind -> version -> 设置
 }
 
 // ConfigStore 配置唯一读写门面：内存缓存 FileConfig + 原子落盘（0777，phpo 产出物统一权限）；写操作在任务串行下调用，加锁仅作兜底。
 type ConfigStore struct {
-	mu         sync.Mutex
-	path       string
-	fc         FileConfig
-	runVersion string // 本进程的运行版本（di 注入）：每次落盘盖进 LastRunVersion，供下次启动识别覆盖安装
+	mu   sync.Mutex
+	path string
+	fc   FileConfig
 }
 
 // ConfigPath 返回 config.yaml 的绝对路径（位于 XDG 用户配置目录内的 phpo 子目录）
@@ -382,36 +380,7 @@ func (c *ConfigStore) FlatEnv() map[string]string {
 }
 
 // save 原子写盘（明文密码，权限归一到 util.FilePerm，见总纲「文件权限策略」；Windows 由 NTFS ACL 决定）；调用方须已持锁。
-// SetRunVersion 注入本进程运行版本（di 启动期调用一次）；此后每次落盘都把它盖进 last_run_version。
-func (c *ConfigStore) SetRunVersion(v string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.runVersion = v
-}
-
-// LastRunVersion 返回磁盘上记的上次运行版本（未记过为空串）。
-func (c *ConfigStore) LastRunVersion() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.fc.LastRunVersion
-}
-
-// StampRunVersion 立即把当前运行版本盖上并落盘（清账本后调用，防本进程崩溃丢戳、下次启动误清）。
-func (c *ConfigStore) StampRunVersion() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.runVersion == "" {
-		return nil
-	}
-	c.fc.LastRunVersion = c.runVersion
-	return c.save()
-}
-
-// save 落盘唯一收口：盖运行版本戳 + 原子写（先写 .tmp 再 rename）。
 func (c *ConfigStore) save() error {
-	if c.runVersion != "" {
-		c.fc.LastRunVersion = c.runVersion
-	}
 	b, err := yaml.Marshal(&c.fc)
 	if err != nil {
 		return err

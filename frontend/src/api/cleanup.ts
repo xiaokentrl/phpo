@@ -71,3 +71,10 @@ export async function listOperations(limit: number): Promise<Operation[] | null>
     taskId: x.taskId, label: x.label, logs: x.logs,
   }))
 }
+
+// clearOperations 清空操作账本（任务队列历史 + 任务日志真删）：抽屉「清空日志」的持久层动作。
+// 无宿主（demo 通道）本就没有账本，静默跳过。
+export async function clearOperations(): Promise<void> {
+  if (!hasBackend()) return
+  await app.OperationClear()
+}

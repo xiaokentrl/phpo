@@ -789,6 +789,15 @@ func (a *App) OperationList(limit int) ([]model.Operation, error) {
 	return a.container.CleanupService.ListOperations(limit)
 }
 
+// OperationClear 清空操作账本：抽屉「清空日志」的真删路径——任务队列历史与任务日志的
+// 唯一持久层 operations 表整表删除。运行中任务不受影响（它的记录只在内存，账本记的是终态）。
+func (a *App) OperationClear() error {
+	if a.container.CleanupService == nil {
+		return errNotReady
+	}
+	return a.container.CleanupService.ClearOperations()
+}
+
 // ---- Docker 全量资源清理绑定：60 行清单 + 逐项预览 + 一次彻底清空（总览页底部面板）----
 
 // DockerCleanScan 数一遍 60 行。deep=false 只问 Docker（快）；deep=true 再去读宿主上的文件，
