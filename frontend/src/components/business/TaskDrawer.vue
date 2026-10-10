@@ -230,7 +230,7 @@ async function onClear(): Promise<void> {
              头部三区不动（§5.6.1 左区恒为「服务」二字），故标题落在日志栏内。
              标题行右侧三颗：复制本条任务全部日志、⬆️ 锚到首行、⬇️ 锚到末行。 -->
         <div v-if="task" class="drawer-title-row">
-          <div class="drawer-task-title" :title="task.label">{{ briefLabel(task) }}</div>
+          <div class="drawer-task-title" :title="briefLabel(task)">{{ briefLabel(task) }}</div>
           <button class="icon-btn" :title="t('drawer.copyTitle')" @click="copyLog">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
           </button>
