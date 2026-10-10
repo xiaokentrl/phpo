@@ -210,7 +210,10 @@ func Extract(src, dstDir string) (int, error) {
 	return count, nil
 }
 
-// TopLevel 列举归档内的顶层前缀（首段路径），去重保序，供 items 计数。只读头不解压内容。
+// TopLevel 列举归档内的顶层前缀（首段路径），去重保序，供 items 计数。
+// 代价警告：gzip 流没有 seek——tar 推进到任何条目都要顺序解压途中的全部字节，「只读头」是做不到的，
+// 实际代价与归档体积成正比。调用方必须缓存（按 size+mtime），别对着同一份归档反复调。
+// 跳过条目时不读取其内容字节（io.Copy(io.Discard) 由 tar.Reader 内部完成，不落内存）。
 func TopLevel(src string) ([]string, error) {
 	f, err := os.Open(src)
 	if err != nil {

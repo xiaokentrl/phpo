@@ -24,6 +24,9 @@ import (
 	"phpo/internal/util"
 	"phpo/pkg/archive"
 	"phpo/pkg/dockerutil"
+
+	"runtime"
+	"sync"
 )
 
 // BackupStore 备份所需持久子集（*store.Store 满足）：快照导出 / 读取 / 全量逻辑重放
@@ -81,6 +84,45 @@ type BackupService struct {
 	cfg   BackupConfig // config.yaml：随包携带、恢复落回并热重载
 	tasks *task.Manager
 	seq   atomic.Uint64
+
+	// items 记忆化：归档创建后不可变，(size, mtime) 不变即复用顶层条目数。
+	// TopLevel 是顺序解压（gzip 无 seek，跳过条目也要解压其字节），代价与归档体积成正比——
+	// 没有这层缓存，每次进备份页都对每个归档全量 gunzip 一遍（用户真机取证：风扇狂转）。
+	itemsMu sync.Mutex
+	items   map[string]backupItems
+	// countTopLevel 可注入（测试用）；生产即 archive.TopLevel
+	countTopLevel func(src string) ([]string, error)
+}
+
+// backupItems 一条记忆化结果
+type backupItems struct {
+	size, mtime int64
+	n           int
+}
+
+// countItems 记忆化包装：命中直接返回，未命中解压并落缓存
+func (s *BackupService) countItems(path string, size, mtime int64) int {
+	s.itemsMu.Lock()
+	if s.items == nil {
+		s.items = map[string]backupItems{}
+	}
+	if it, ok := s.items[path]; ok && it.size == size && it.mtime == mtime {
+		s.itemsMu.Unlock()
+		return it.n
+	}
+	s.itemsMu.Unlock()
+	counter := s.countTopLevel
+	if counter == nil {
+		counter = archive.TopLevel
+	}
+	n := 0
+	if tops, err := counter(path); err == nil {
+		n = len(tops)
+	} // 解析失败按 0 处理（List 原行为），下次重试
+	s.itemsMu.Lock()
+	s.items[path] = backupItems{size: size, mtime: mtime, n: n}
+	s.itemsMu.Unlock()
+	return n
 }
 
 func NewBackupService(store BackupStore, lc BackupLifecycle, imgs BackupImages, dock BackupDocker, open SnapshotOpener, em Emitter, env config.Env, cfg BackupConfig, tm *task.Manager) *BackupService {
@@ -106,7 +148,11 @@ func (s *BackupService) List() ([]model.BackupFile, error) {
 		}
 		return nil, err
 	}
-	var out []model.BackupFile
+	type row struct {
+		name           string
+		size, mtimeSec int64
+	}
+	var rows []row
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "backup-") || !strings.HasSuffix(e.Name(), ".tar.gz") {
 			continue
@@ -115,15 +161,52 @@ func (s *BackupService) List() ([]model.BackupFile, error) {
 		if err != nil {
 			continue
 		}
-		items := 0
-		if tops, err := archive.TopLevel(filepath.Join(s.env.BackupRoot, e.Name())); err == nil {
-			items = len(tops)
+		rows = append(rows, row{name: e.Name(), size: info.Size(), mtimeSec: info.ModTime().Unix()})
+	}
+	// 缓存未命中的归档并发解压（有限并发）：首次入页耗时 ≈ 最大单档而非逐个累加；命中后零解压。
+	type counted struct {
+		idx   int
+		items int
+	}
+	miss := make(chan int)
+	res := make(chan counted, len(rows))
+	workers := runtime.NumCPU()
+	if workers > 4 {
+		workers = 4
+	}
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range miss {
+				r := rows[i]
+				res <- counted{idx: i, items: s.countItems(filepath.Join(s.env.BackupRoot, r.name), r.size, r.mtimeSec)}
+			}
+		}()
+	}
+	go func() {
+		for i := range rows {
+			miss <- i
 		}
+		close(miss)
+	}()
+	itemsBy := make([]int, len(rows))
+	go func() {
+		wg.Wait()
+		close(res)
+	}()
+	for c := range res {
+		itemsBy[c.idx] = c.items
+	}
+
+	out := make([]model.BackupFile, 0, len(rows))
+	for i, r := range rows {
 		out = append(out, model.BackupFile{
-			File:  e.Name(),
-			Size:  humanSize(info.Size()),
-			At:    info.ModTime().Format("2006-01-02 15:04"),
-			Items: items,
+			File:  r.name,
+			Size:  humanSize(r.size),
+			At:    time.Unix(r.mtimeSec, 0).Format("2006-01-02 15:04"),
+			Items: itemsBy[i],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].File > out[j].File }) // 文件名含时间戳，倒序即新在前

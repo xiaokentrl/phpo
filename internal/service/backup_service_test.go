@@ -6,6 +6,9 @@
 package service
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -522,5 +525,66 @@ func TestBackup_Restore_ArchiveWithoutSQLiteSnapshot(t *testing.T) {
 	}
 	if len(st.applied) != 0 {
 		t.Fatalf("不得将空快照重放进运行态库，实得 %+v", st.applied)
+	}
+}
+
+// ---- List items 记忆化（入页烧 CPU 的修复）----
+
+func TestBackup_List_ItemsMemoized(t *testing.T) {
+	svc, _, _, _, _, _, env, _ := newBackupSvc(t)
+	// 造一个真实 tar.gz（两个顶层目录）
+	archivePath := filepath.Join(env.BackupRoot, "backup-20260101-000000.tar.gz")
+	buildTarGz(t, archivePath, map[string]string{
+		"dump/mysql/dump.sql": "SELECT 1;",
+		"conf/mysql/my.cnf":   "[mysqld]",
+	})
+
+	calls := 0
+	svc.countTopLevel = func(src string) ([]string, error) {
+		calls++
+		return archive.TopLevel(src)
+	}
+
+	first, err := svc.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].Items != 2 {
+		t.Fatalf("首次应解压计数 items=2，got=%+v", first)
+	}
+	second, err := svc.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("第二次 List 应走缓存不再解压，TopLevel 调用 %d 次", calls)
+	}
+	if second[0].Items != 2 {
+		t.Fatalf("缓存回填 items 应一致，got=%+v", second)
+	}
+}
+
+// buildTarGz 构造最小归档（两顶层目录各一文件）
+func buildTarGz(t *testing.T, dst string, files map[string]string) {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(content))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
