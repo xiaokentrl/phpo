@@ -1207,6 +1207,7 @@ const messages: Record<string, string> = {
   "err.extDisableFailed": "扩展 {name} 停用失败，本次扩展集未应用",
   "err.extInstallFailedDeps": "扩展 {name} 安装失败（缺系统开发包 {pkgs}），本次扩展集未应用",
   "err.extDisableFailedDeps": "扩展 {name} 停用失败（缺系统开发包 {pkgs}），本次扩展集未应用",
+  "err.extSysPkgGuide": "phpo 不代装系统包：先在正在运行的这个 php 容器里装上上面这些包（Debian 基座 apt-get install -y、Alpine 基座 apk add），再点一次「应用并重建」——装进容器的那一份会随扩展镜像一起固化，下次不用再装。",
   "err.execExit": "容器内命令失败（退出码 {code}）",
   "err.execReadOutput": "读取 exec 输出失败",
   "err.commitFailed": "docker commit 失败",

@@ -8,6 +8,7 @@
 //   @消息码?参数=值&参数2=值2|中文原文
 // 值用 encodeURIComponent 过；竖线后面那份中文原文就是这一段的回退显示。
 import { t, te } from '@/composables/useI18n'
+import { matchShape, FRAGMENT_CODES, HAN } from './errShapes'
 
 export type MsgParams = Record<string, string>
 
@@ -47,10 +48,33 @@ function nested(ref: string): string {
   return out === code ? fallback : out
 }
 
-function resolve(params?: MsgParams): MsgParams {
+// 参数值的三种身份：
+//   ① @ 开头 = 嵌套消息（步骤名/任务标签），交给 nested 现译；
+//   ② 整段命中形状表 = 后端把一句已知的中文错误当参数塞了进来（任务框架行 log.stepFail 的
+//      reason 就是 err 原文，如「扩展 curl 安装失败（缺系统开发包 …）」）——现译成当前语言；
+//   ③ 其余 = 数据（容器名/路径/容器原话），原样保留——数据不是句子，不硬翻。
+function resolve(params?: MsgParams, depth = 0): MsgParams {
   const out: MsgParams = {}
-  for (const [k, v] of Object.entries(params ?? {})) out[k] = v.startsWith('@') ? nested(v.slice(1)) : v
+  for (const [k, v] of Object.entries(params ?? {})) {
+    if (v.startsWith('@')) out[k] = nested(v.slice(1))
+    else out[k] = translateValue(v, depth)
+  }
   return out
+}
+
+// 深度护栏：形状的参数里理论上还能再嵌形状（实际不会成环），3 层封顶。
+function translateValue(v: string, depth: number): string {
+  const frag = FRAGMENT_CODES.get(v)
+  if (frag) return msgText(v, frag)
+  if (depth > 3 || !HAN.test(v)) return v
+  return v
+    .split('\n')
+    .map((line) => {
+      const hit = matchShape(line)
+      if (!hit) return line
+      return msgText(line, hit.code, resolve(hit.params, depth + 1))
+    })
+    .join('\n')
 }
 
 // msgText：按当前语言渲染一行文本。码缺席、或这条语言没有对应文案 → 回落原文。

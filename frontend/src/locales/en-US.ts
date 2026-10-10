@@ -1207,6 +1207,7 @@ const messages: Record<string, string> = {
   "err.extDisableFailed": "Extension {name} failed to disable, so the extension set for this run was not applied",
   "err.extInstallFailedDeps": "Extension {name} failed to install (missing system development package {pkgs}), so the extension set for this run was not applied",
   "err.extDisableFailedDeps": "Extension {name} failed to disable (missing system development package {pkgs}), so the extension set for this run was not applied",
+  "err.extSysPkgGuide": "phpo does not install system packages for you: install the packages listed above inside the running PHP container (Debian base: apt-get install -y, Alpine base: apk add), then click Apply & rebuild again — what you install in the container is baked into the extension image, so you won't need to do this next time.",
   "err.execExit": "Command inside the container failed (exit code {code})",
   "err.execReadOutput": "Could not read the exec output",
   "err.commitFailed": "docker commit failed",
