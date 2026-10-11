@@ -59,6 +59,14 @@ jobs:
           go run ./scripts/check-cache-manifest.go
           go run ./scripts/check-ext-catalog.go
 
+      # 与 Taskfile 的 check 任务同一口径：纯 Go 那批包先按 windows / darwin 各编一遍。
+      # 平台专属 API（如只有类 Unix 有的 syscall.Kill）在 Linux 上恒绿，红了要在云端才看见就太晚了
+      # ——v0.1.115 的 windows 出包作业就是这么挂的。不含 import Wails 的 internal/app、internal/ui。
+      - name: Cross-compile (windows / darwin, pure-Go packages)
+        run: |
+          GOOS=windows GOARCH=amd64 go build ./internal/engine/ ./internal/service/ ./internal/model/ ./internal/config/ ./internal/task/... ./pkg/...
+          GOOS=darwin GOARCH=arm64 go build ./internal/engine/ ./internal/service/ ./internal/model/ ./internal/config/ ./internal/task/... ./pkg/...
+
   # 说明：本作业与 go 作业共用同一构建口径（wails3 task），且必须先有 TS 绑定。
   # frontend/bindings/ 是 wails3 生成物且被 gitignore（§4.1），全新 checkout 里并不存在，
   # 而 vue-tsc --noEmit 静态导入它——直接 pnpm build 会因 20 处 TS2307 恒红。

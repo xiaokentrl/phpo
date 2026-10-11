@@ -24,7 +24,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"phpo/internal/model"
@@ -1575,38 +1574,6 @@ func inUserRuntimeDir(p string) bool {
 // liveNode 认一个套接字或命名管道——两者都是进程间通信的活对象，不是落在磁盘上的内容。
 func liveNode(mode fs.FileMode) bool {
 	return mode&(fs.ModeSocket|fs.ModeNamedPipe) != 0
-}
-
-// pidFileLike 认「这个文件名像是装进程号的」：运行时目录底下就是这几类
-// （`conmon.pid`、`pidfile`、`pause.pid`）。名字不像的不去看内容，免得把普通文件当探针读。
-func pidFileLike(name string) bool {
-	return name == "pidfile" || strings.HasSuffix(name, ".pid") || strings.HasSuffix(name, ".pidfile")
-}
-
-// livePidIn 读一个 pid 文件，那个号还活着就交出号，否则交 0（= 不拦）。
-//
-// 为什么只认 pid 文件名：正在跑的容器在盘上留下的**唯一**通用痕迹就是这一份进程号——
-// 它的挂载点在容器自己的挂载命名空间里，宿主这边看不到（实测：容器在跑时 `/run/user/<uid>/containers`
-// 底下一条挂载都没有）。只看套接字会把这些目录当成残骸放行。
-//
-// EPERM 也算活着：`kill(pid, 0)` 对别人的进程回 EPERM，那正好证明进程在世。
-// 号读不出来、文件读不动、号 ≤ 1 都交 0——空头的 pid 文件是容器退出后留下的残骸，本来就该删。
-func livePidIn(path string) int {
-	if !pidFileLike(filepath.Base(path)) {
-		return 0
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return 0
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(strings.SplitN(string(b), "\n", 2)[0]))
-	if err != nil || pid <= 1 {
-		return 0
-	}
-	if err := syscall.Kill(pid, 0); err == nil || errors.Is(err, syscall.EPERM) {
-		return pid
-	}
-	return 0
 }
 
 // liveInside 看一眼 p 自己或它下面有没有引擎正在用的活东西，有就交出一句给用户看的「为什么不能删」。

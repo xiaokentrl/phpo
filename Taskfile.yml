@@ -151,10 +151,15 @@ tasks:
       - go vet ./...
 
   check:
-    desc: 工程规范校验脚本全量（i18n/模板/命名/缓存清单/扩展目录）
+    desc: 工程规范校验脚本全量（i18n/模板/命名/缓存清单/扩展目录）+ 三平台交叉编译自证
     cmds:
       - go run ./scripts/check-i18n-keys.go
       - go run ./scripts/check-templates.go
       - go run ./scripts/check-docker-naming.go
       - go run ./scripts/check-cache-manifest.go
       - go run ./scripts/check-ext-catalog.go
+      # 平台专属 API 在 Linux 上一路绿，推到云端才红：v0.1.115 就是 `syscall.Kill`（只有类 Unix 有）
+      # 把 windows 出包作业打挂的。这里先把纯 Go 的那批包按两个平台编一遍——不含 import Wails 的
+      # internal/app、internal/ui，那两个在 Linux 上交叉编译本来就缺 objc/GTK，编不动不是我们的问题。
+      - GOOS=windows GOARCH=amd64 go build ./internal/engine/ ./internal/service/ ./internal/model/ ./internal/config/ ./internal/task/... ./pkg/...
+      - GOOS=darwin GOARCH=arm64 go build ./internal/engine/ ./internal/service/ ./internal/model/ ./internal/config/ ./internal/task/... ./pkg/...
