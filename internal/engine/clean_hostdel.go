@@ -163,12 +163,20 @@ func resolveHostPath(row, ref string, roots []string) (string, error) {
 
 // checkHostPath 是宿主删除的安全门（硬红线 3）。
 //
-// 五道判定，从「形状对不对」一路收到「位置准不准」：
+// 六道判定，从「形状对不对」一路收到「位置准不准」再到「现在是不是还在用」：
 // 非空 → 无空字节 → 必须是绝对路径 → Clean 之后不动点（说明它已经归一，没有藏 `..`）
 // → 不等于任何一圈灾难根 → **必须真的落在这一行自己的某个根目录之下，且不等于那个根本身**。
-// 最后一道是最要紧的：它把 `/var/lib/docker` 整份、`/run/docker` 整份、`/var/log` 整份
+// 第五道是最要紧的：它把 `/var/lib/docker` 整份、`/run/docker` 整份、`/var/log` 整份
 // 这类「扫出来确实会有一条叫这个」的情况挡在外面，同时不挡 `/etc/cni/net.d/00-x.conflist`
 // 这种合法条目。分类用的 matchRoot 与提权读取那边是同一个函数，两路口径不会漂。
+//
+// 最后一道只管**用户运行时目录**底下那一片（`$XDG_RUNTIME_DIR`，rootless 引擎放活对象的地方）：
+// 那里躺着的可能是当前容器的挂载点、rootlessport 正在监听的套接字、conmon/aardvark 的进程号。
+// 这些条目照常进数字（它们确实占着位置），但删之前要现查一次「它自己或它下面还有没有挂载点、
+// 套接字/管道、还活着的 pid 文件」，有就拒这一项并说清为什么。
+// 第三判是实测补上的：容器 rootfs 挂在容器自己的挂载命名空间里，宿主这边的 `/proc/mounts` 一条都看不到，
+// 只查挂载点与套接字会把 9 个在跑的容器的运行时目录当成残骸放行。为什么要在删除时现查而不是扫描时就剔掉：扫描到点删除之间
+// 引擎可能正好起一个容器，那一刻的状态才是要保护的状态。
 //
 // 这道门是**纵深防御**：界面上勾出去的每一条 ID 都由服务层先比对过那份当场扫出来的清单，
 // 到这儿不该再有东西被拦；被拦即说明上面漏了，宁可这一项失败。
@@ -188,6 +196,11 @@ func checkHostPath(p string, roots []string) error {
 	rel, ok := matchRoot(p, roots)
 	if !ok || rel == "." {
 		return fmt.Errorf("路径 %q 不在这一行扫描过的目录之下，或就是那个目录本身，拒绝删除", p)
+	}
+	if inUserRuntimeDir(p) {
+		if why := liveInside(p); why != "" {
+			return fmt.Errorf("%s，拒绝删除", why)
+		}
 	}
 	return nil
 }
@@ -252,12 +265,15 @@ func classifyHostOp(op DeleteOp, info DaemonInfo) (DeleteOp, error) {
 		return op, nil
 
 	case rowNetworkNetns:
-		name, err := linkNameOf(op.Ref, dirNetns, op.Row)
-		if err != nil {
-			return DeleteOp{}, err
+		// 两个根各有各的删法，不能一刀切：
+		// `/var/run/netns`（rootful）里的那一份交给 `ip netns delete <名字>`，它会顺手把挂载拆干净；
+		// rootless 引擎放在用户运行时目录底下的那一份 `ip netns` 根本不认（它只翻 /var/run/netns），
+		// 所以只能按普通文件走路径门删。认不出接口名就走第二条，两条都过不去才算这一项失败。
+		if name, err := linkNameOf(op.Ref, dirNetns, op.Row); err == nil {
+			op.Kind, op.Ref = DelHostNetns, name
+			return op, nil
 		}
-		op.Kind, op.Ref = DelHostNetns, name
-		return op, nil
+		return hostPathTarget(op, info, DelHostPath)
 
 	case rowNetworkCni:
 		if name, err := linkNameOf(op.Ref, dirSysNet, op.Row); err == nil {

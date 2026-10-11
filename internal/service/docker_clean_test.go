@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -805,6 +806,55 @@ func TestCleanHostRowKeysMatchEngine(t *testing.T) {
 		if !want[k] {
 			t.Fatalf("服务层多登记了这一行，引擎并不去读：%s", k)
 		}
+	}
+}
+
+// TestCleanScan_EveryHostRowShowsUpAndZeroHasNoButton 锁的是「全行必出 + 0 项不给按钮」这一对。
+//
+// 上一版的形状是「数到东西的行才出现」，干净机器上深扫一遍有十九行整行不见了——界面把
+// 「查过了、这里没有」和「根本没查」画成同一个样子，规则 41 不收这种形状。
+// 行都出场之后，「0 项不给按钮」不能再靠「行不见了」间接成立，得自己写明：
+// 否则用户看到一排点了没反应的删除按钮。
+func TestCleanScan_EveryHostRowShowsUpAndZeroHasNoButton(t *testing.T) {
+	var rows []engine.HostRow
+	for _, k := range engine.HostRowKeys() {
+		// 全是「读过了、这台机器上确实没有」的行：状态 OK，数字 0。
+		rows = append(rows, engine.HostRow{Key: k, Status: model.RowOK, ScannedAt: time.Now()})
+	}
+	eng := &dcEngine{
+		info: engine.DaemonInfo{OK: true, Rootless: true, Root: t.TempDir()},
+		invs: []engine.DockerInventory{{}},
+		host: engine.HostScanResult{Rows: rows},
+	}
+	svc, _, _, _ := dcSvc(t, eng, &dcUninst{})
+
+	rep, err := svc.Scan(context.Background(), true)
+	if err != nil {
+		t.Fatalf("深扫失败: %v", err)
+	}
+	if len(rep.Rows) != len(model.AllCleanRows) {
+		t.Fatalf("60 行一行不能少，实得 %d 行", len(rep.Rows))
+	}
+
+	var withButton, missing []string
+	seen := map[string]bool{}
+	for _, r := range rep.Rows {
+		seen[r.Key] = true
+		if r.Deletable {
+			withButton = append(withButton, r.Key)
+		}
+	}
+	for k := range cleanHostRowKeys {
+		if !seen[k] {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Fatalf("深扫之后这些宿主行仍不在界面上：%v", missing)
+	}
+	if len(withButton) > 0 {
+		t.Fatalf("这台机器上一项都没数到，却给了删除按钮：%v", withButton)
 	}
 }
 

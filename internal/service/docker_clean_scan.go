@@ -173,9 +173,11 @@ func cleanRowFromHost(h engine.HostRow) model.CleanRow {
 }
 
 // cleanDecide 收尾那颗「能不能删」的闸门：第三档（没有安全删法）永远不给按钮，
-// 数不到东西的行也不给——按钮点了没东西可删，比不给按钮更扰人。
+// 一项没数到的行也不给——按钮点了没东西可删，比不给按钮更扰人。
+// 后半句以前是靠「零结果的行整行不出现」间接成立的；现在每一行都照常出，
+// 这道判定就得自己写明白，否则界面上会冒出一排点了没反应的删除按钮。
 func cleanDecide(r model.CleanRow) model.CleanRow {
-	r.Deletable = r.Tier != model.TierInfo && r.Status == model.RowOK
+	r.Deletable = r.Tier != model.TierInfo && r.Status == model.RowOK && r.Count > 0
 	return r
 }
 

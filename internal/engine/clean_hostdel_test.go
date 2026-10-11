@@ -296,20 +296,25 @@ func TestHostResolvePath_BareNameNeedsExactlyOneRoot(t *testing.T) {
 // 两处共用同一份 hostSources，所以这里也是那张表的对账用例。
 func TestHostRowRootsCountsPerRow(t *testing.T) {
 	root := t.TempDir()
+	// 固定住 rootless 运行时目录，让 netns 那两条根在任何机器上都数得出同样的个数。
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(root, "runtime"))
 	info := DaemonInfo{Root: root, OK: true, Rootless: true}
 
-	single := []string{rowVolumeData, rowVolumeDriver, rowContainerCheckpoint, rowContainerMeta,
-		rowLogContainer, rowLogRotate, rowSystemTmp, rowPluginConfig, rowPluginData,
-		rowContainerCgroup, rowNetworkBridge, rowNetworkVeth, rowNetworkNetns,
+	single := []string{rowVolumeData, rowVolumeDriver,
+		rowPluginConfig, rowPluginData,
+		rowContainerCgroup, rowNetworkBridge, rowNetworkVeth,
 		rowLogDaemon, rowSystemContainerd}
 	for _, row := range single {
 		if got := hostRowRoots(row, info); len(got) != 1 {
 			t.Fatalf("%s 该只有 1 个候选目录，实得 %d 个：%v", row, len(got), got)
 		}
 	}
-	// 两个候选目录的行：日志同时看 /var/log 与 journal，CNI 既可能是网卡也可能是配置，
-	// system.config 双引擎各一套配置目录（/etc/docker 与 /etc/containers）。
-	for _, row := range []string{rowNetworkCni, rowLogJournald, rowSystemBuilder, rowSystemRoot, rowSystemConfig} {
+	// 两个候选目录的行：日志同时看 /var/log 与 journal，system.config 双引擎各一套（/etc/docker、/etc/containers），
+	// 容器的档案 Docker 放 <root>/containers、Podman 放 <root>/overlay-containers，
+	// 命名空间 rootful 放 /var/run/netns、rootless 放用户运行时目录底下，
+	// system.root 是数据目录 + containerd 两处。
+	for _, row := range []string{rowContainerCheckpoint, rowContainerMeta, rowLogContainer, rowLogRotate,
+		rowNetworkNetns, rowLogJournald, rowSystemRoot, rowSystemConfig} {
 		if got := hostRowRoots(row, info); len(got) != 2 {
 			t.Fatalf("%s 该有 2 个候选目录，实得 %d 个：%v", row, len(got), got)
 		}
@@ -320,22 +325,82 @@ func TestHostRowRootsCountsPerRow(t *testing.T) {
 			t.Fatalf("%s 不该有任何候选目录（它问的是命令），实得 %v", row, got)
 		}
 	}
+	// 三个候选目录的行：容器引擎的结果缓存散在三处（rootless 的数据目录、用户缓存目录、rootful 的系统缓存）；
+	// network.cni 的东西可能是网卡（/sys/class/net）、可能是 CNI 配置（/etc/cni/net.d）、
+	// 也可能是 Podman 那套等价物（<root>/networks 里的 netavark 网络定义）；
+	// system.tmp 是 Docker 的 <root>/tmp 加上 rootless Podman 放在用户运行时目录底下的两处（libpod/tmp、containers）；
+	// system.builder 是 <root>/buildkit、rootful 的 /run/docker 与 rootless 的 <运行时目录>/docker。
+	// other.cache 是第三档、界面不给按钮（服务层在勾选那一步就拒），落点表照样登记只因为两张表同源，不允许各写一份。
+	for _, row := range []string{rowOtherCache, rowNetworkCni, rowSystemTmp, rowSystemBuilder} {
+		if got := hostRowRoots(row, info); len(got) != 3 {
+			t.Fatalf("%s 该有 3 个候选目录，实得 %d 个：%v", row, len(got), got)
+		}
+	}
 
 	// 唯一出口的落点必须真的挂在数据目录下面，不能写死成 ~/phpo 那一套。
 	if got := hostRowRoots(rowVolumeData, info); len(got) != 1 || got[0] != filepath.Join(root, "volumes") {
 		t.Fatalf("volume.data 的根应是 %s，实得 %v", filepath.Join(root, "volumes"), hostRowRoots(rowVolumeData, info))
 	}
 
-	// 守护进程报不出数据目录时：挂它下面的行降到 0 个候选，写死的常量路径不受影响。
+	// 守护进程报不出数据目录时：挂它下面的行降到 0 个候选，写死的常量路径不受影响；
+	// system.tmp 与 system.builder 各剩「用户运行时目录底下那两处 / /run/docker + 运行时目录那一处」，
+	// 因为 rootless 的落点不依赖守护进程答回来的数据目录。
 	empty := map[string]int{
-		rowVolumeData: 0, rowSystemTmp: 0, rowPluginConfig: 0, rowContainerCheckpoint: 0,
-		rowSystemBuilder: 1, rowSystemRoot: 1, rowNetworkCni: 2, rowLogJournald: 2,
-		rowNetworkNetns: 1, rowContainerCgroup: 1, rowSystemGroup: 0,
+		rowVolumeData: 0, rowSystemTmp: 2, rowPluginConfig: 0, rowContainerCheckpoint: 0,
+		rowContainerMeta: 0, rowLogContainer: 0, rowLogRotate: 0,
+		rowSystemBuilder: 2, rowSystemRoot: 1, rowNetworkCni: 2, rowLogJournald: 2,
+		rowNetworkNetns: 2, rowContainerCgroup: 1, rowSystemGroup: 0,
 	}
 	for row, want := range empty {
 		if got := hostRowRoots(row, DaemonInfo{}); len(got) != want {
 			t.Fatalf("无数据目录时 %s 该有 %d 个候选目录，实得 %d 个：%v", row, want, len(got), got)
 		}
+	}
+}
+
+// TestHostClassify_NetnsTwoRoots 说的是「netns 的两个根各有各的删法」。
+//
+// /var/run/netns 是 rootful 的位置，`ip netns delete` 只认它，它会顺手把挂载拆干净；
+// rootless 引擎把自己那一份放在用户运行时目录底下（本机实测：/var/run/netns 空着，
+// /run/user/<uid>/netns 里躺着 9 个 0 字节普通文件），`ip netns` 根本看不见那儿。
+// 拿错删法的症状不是报错，是「删了个寂寞」——命令跑成功、文件还在，界面却说删完了。
+func TestHostClassify_NetnsTwoRoots(t *testing.T) {
+	hdOnlyLinux(t)
+	root := t.TempDir()
+	xdg := filepath.Join(root, "runtime")
+	t.Setenv("XDG_RUNTIME_DIR", xdg)
+	info := DaemonInfo{Root: root, OK: true, Rootless: true}
+
+	got, err := classifyHostOp(DeleteOp{Row: rowNetworkNetns, Ref: filepath.Join(dirNetns, "cni-7f3a")}, info)
+	if err != nil || got.Kind != DelHostNetns || got.Ref != "cni-7f3a" {
+		t.Fatalf("rootful 那一份该交给 ip netns delete，实得 %+v / %v", got, err)
+	}
+
+	rootless := filepath.Join(xdg, "netns", "cni-9b2c")
+	got, err = classifyHostOp(DeleteOp{Row: rowNetworkNetns, Ref: rootless}, info)
+	if err != nil || got.Kind != DelHostPath || got.Ref != rootless {
+		t.Fatalf("rootless 那一份该按路径门删文件，实得 %+v / %v", got, err)
+	}
+
+	// 两个根都不挨着的路径：既不归 ip netns，也过不了路径门，只能拒。
+	if _, err := classifyHostOp(DeleteOp{Row: rowNetworkNetns, Ref: filepath.Join(root, "elsewhere", "x")}, info); err == nil {
+		t.Fatal("这一条不在 netns 登记过的任何一个根之下，不该分类成功")
+	}
+}
+
+// TestHostClassify_PodmanContainerMetaPath 锁的是「扫得到也删得掉」这一对。
+//
+// 采集层把 Podman 的容器档案记成 <数据目录>/overlay-containers/<id>/userdata，
+// 删除侧的落点表与它是同一份 hostSources 出来的：两处不同源就会出现扫描点名这条路径、
+// 真删的时候却被路径门判成「不在这一行扫描过的目录之下」。
+func TestHostClassify_PodmanContainerMetaPath(t *testing.T) {
+	root := t.TempDir()
+	info := DaemonInfo{Root: root, OK: true, Rootless: true}
+
+	target := filepath.Join(root, "overlay-containers", "abc", "userdata")
+	got, err := classifyHostOp(DeleteOp{Row: rowContainerMeta, Ref: target}, info)
+	if err != nil || got.Kind != DelHostPath || got.Ref != target {
+		t.Fatalf("Podman 容器档案该按路径门删 %s，实得 %+v / %v", target, got, err)
 	}
 }
 
@@ -402,7 +467,7 @@ func TestHostClassify_KindsAndOverrides(t *testing.T) {
 		{"网卡名下还有一层", DeleteOp{Row: rowNetworkVeth, Ref: "/sys/class/net/a/b"}, "不是一个接口名"},
 		{"网卡名是相对路径", DeleteOp{Row: rowNetworkVeth, Ref: "veth42"}, "不是绝对路径"},
 		{"组名以 - 开头", DeleteOp{Row: rowSystemGroup, Ref: "-d"}, "条目不安全"},
-		// 认不出的行也必须过路径门：这一行在扫描表里没有落点，任何路径都不该被它带走。
+		// 认不出的路径也必须过路径门：条目在这一行的落点之外，就不该被这一行带走。
 		{"这一行没有扫过的目录", DeleteOp{Row: rowOtherCache, Ref: filepath.Join(root, "x")}, "不在这一行扫描过的目录之下"},
 	}
 	for _, c := range bad {

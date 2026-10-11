@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"phpo/internal/model"
@@ -36,22 +37,30 @@ import (
 // 服务层拿到这个错也不能因此把整片留空——结果里已经是 not_supported 的行，直接用。
 var ErrHostNotSupported = errors.New("当前平台够不着 Docker 的宿主目录")
 
+// hostOS 是「这台机器是什么系统」的**可注入**版本：判「这一行的落点在不在 Linux 上」一律问它，不问 runtime.GOOS。
+//
+// 为什么要多这一层：CI 只有 Linux runner，非 Linux 那一条分支（容器引擎跑在虚拟机里、宿主够不着那些目录）
+// 平时一行都跑不到，改坏了没人拦得住。做成包级变量后，测试能在同一台 Linux 上假装自己是 macOS，
+// 把那条分支的**形状**锁死——每一行都要出一行、每一行都要带得出一句原因。
+var hostOS = runtime.GOOS
+
 // Docker 在 Linux 上写死的几个位置。
 // 说清一件事：这些路径**不是 phpo 的产出物**，也不跟着 PHPO_HOME 走，所以不适用总纲 §0.1.1 的 `./` 记法——
 // 它们是 Docker 自己的固定落点，写死是准确的，不是偷懒。
 const (
-	dirContainerd    = "/var/lib/containerd"
-	dirEtcDocker     = "/etc/docker"
-	dirEtcContainers = "/etc/containers" // podman / containers-common 的配置目录
-	dirCniConf       = "/etc/cni/net.d"
-	dirNetns         = "/var/run/netns"
-	dirSysCgroup     = "/sys/fs/cgroup"
-	dirSysNet        = "/sys/class/net"
-	dirVarLog        = "/var/log"
-	dirJournal       = "/var/log/journal"
-	dirRunJournal    = "/run/log/journal"
-	dirEtcGroup      = "/etc/group"
-	dotDocker        = ".docker" // 用户主目录下的 Docker 配置目录
+	dirContainerd         = "/var/lib/containerd"
+	dirEtcDocker          = "/etc/docker"
+	dirEtcContainers      = "/etc/containers" // podman / containers-common 的配置目录
+	dirCniConf            = "/etc/cni/net.d"
+	dirNetns              = "/var/run/netns"
+	dirSysCgroup          = "/sys/fs/cgroup"
+	dirSysNet             = "/sys/class/net"
+	dirVarLog             = "/var/log"
+	dirJournal            = "/var/log/journal"
+	dirRunJournal         = "/run/log/journal"
+	dirEtcGroup           = "/etc/group"
+	dirVarCacheContainers = "/var/cache/containers" // rootful 安装下 containers 引擎的系统级缓存目录
+	dotDocker             = ".docker"               // 用户主目录下的 Docker 配置目录
 )
 
 // 宿主侧进度阶段文案（人话）。服务层用既有 docker:cleanup 事件逐行广播，界面进度条 = 已报到 / 总数，
@@ -75,8 +84,9 @@ const (
 	StageHostDiskRoot    = "正在统计：Docker 数据目录的总占用（这一项跨整个目录，最慢）"
 	StageHostIptables    = "正在统计：防火墙里 Docker 写下的规则"
 	StageHostGroup       = "正在统计：docker 用户组的成员"
+	StageHostEngineCache = "正在统计：容器引擎放在宿主上的结果缓存"
 	StageHostElevate     = "正在读取需要管理员授权的目录"
-	hostStageCountOffset = 1 // 上面那 18 段之外还要报「提权读取」这一段，进度总数才不致于对不上
+	hostStageCountOffset = 1 // 上面那 19 段之外还要报「提权读取」这一段，进度总数才不致于对不上
 )
 
 // 每行清单位于宿主上的哪一类落点。行名（key）与 model.AllCleanRows 那份静态表一字不差。
@@ -117,19 +127,25 @@ const (
 	MsgNoPerm  = "无权读取（需要管理员授权）"
 	MsgPartial = "部分目录读不动，数字可能偏小（要完整结果请点该行的重试）"
 	MsgVMRoot  = "Docker 的数据目录不在这台机器上（跑在虚拟机里），够不着"
-	MsgNoRoot  = "这台机器上没有这个目录"
-	MsgCancel  = "这次扫描被中断，这一项没数完"
+	// MsgNoRoot 得把两种可能都说出来：这一句在 Linux 上也会用到，而 Linux 上引擎同样可能跑在
+	// 虚拟机里（Docker Desktop / colima / lima），那时那份数据落在虚拟机的磁盘文件里，宿主这边
+	// 确实没有这个目录——只说「这台机器上没有这个目录」会把第二种可能说成「这里本来就是空的」。
+	MsgNoRoot = "这台机器上没有这个目录：要么本机确实没建过，要么容器引擎跑在虚拟机里，那份数据在虚拟机的磁盘里，宿主这边够不着"
+	MsgCancel = "这次扫描被中断，这一项没数完"
 
-	// 四行「说不清数字」的清单：它们要的落点在 Docker 这儿从来不存在，所以只给人话原因，不给数字（需求 ㉘ 不得编造）。
+	// 界面这一行的说明：数不到东西时交出去的那句话（需求 ㉘ 不得编造数字）。
+	// 前三行要的落点在 Docker 这儿从来不存在，只给人话原因、不给数字；
+	// other.cache 不同——它真能数到 Podman 落在宿主上的那一份结果缓存，数到了就报数字，
+	// 数不到（引擎是 Docker，或这台机器上没有那几个目录）才报下面这句。
 	MsgLogBuild    = "构建日志就放在 buildkit 目录里，那份占用已经算进「构建器与运行时目录」这一行，这里不再重复计一遍"
 	MsgOtherEvents = "Docker 的事件只在内存里留一小段时间，默认不落盘成文件，所以这里没有可数的东西"
-	MsgOtherCache  = "没有一份可以单独清掉的「Docker 本机结果缓存」；~/.docker 里的东西已经分别算进对应那几行"
+	MsgOtherCache  = "这一行数的是容器引擎放在宿主上的结果缓存，只有 Podman 有这一份（~/.local/share/containers/cache、~/.cache/containers）；Docker 不落这么一份，引擎是 Docker 或这台机器上没有那两个目录时就数不到东西"
 	MsgImageSign   = "镜像签名跟着层文件一起走，Docker 没有单独存放签名的目录；要清掉签名只能删镜像本身"
 )
 
 // 一次宿主扫描报出的进度段数（也是界面进度条的分母）。
 // 这个数字必须与 ScanHost 实际报出去的次数完全相等，否则进度条永远差一两格。
-const hostStagesTotal = 18 + hostStageCountOffset
+const hostStagesTotal = 19 + hostStageCountOffset
 
 // hostPathCap 限制一行往外带多少个具体路径。
 // 真机上 `/var/lib/docker/volumes` 动辄上千个目录，全铺给确认弹框等于让界面卡住；
@@ -248,7 +264,7 @@ type HostPathFact struct {
 // hostSource 说清「要数哪一行，就去哪个目录走一趟」。
 //
 // 这张表是 PlanHostScan 与 ScanHost **共用**的唯一来源：进度段数、要走的目录、每行落在哪个目录，
-// 全部只在这里写一遍。分两处写迟早漂移成「进度条说 18 段、实际报出 17 段」。
+// 全部只在这里写一遍。分两处写迟早漂移成「进度条说 19 段、实际报出 18 段」。
 type hostSource struct {
 	id        string
 	stage     string
@@ -261,18 +277,27 @@ type hostSource struct {
 	rows      []string
 }
 
-// hostSources 列出宿主侧全部 18 个统计段。info.Root 为空时 rootDep 那几条的根就是空串，
+// hostSources 列出宿主侧全部 19 个统计段。info.Root 为空时 rootDep 那几条的根就是空串，
 // 由 walkSource 统一判成「无从数起」，不在这里做分支。
 func hostSources(info DaemonInfo) []hostSource {
 	root := info.Root
 	home, homeErr := os.UserHomeDir()
 	var userDir, podmanUserDir string
+	var engineCacheRoots []string
 	if homeErr == nil && home != "" {
 		userDir = filepath.Join(home, dotDocker)
 		podmanUserDir = filepath.Join(home, ".config", "containers") // podman rootless 的用户配置（containers.conf 等）
+		engineCacheRoots = []string{
+			filepath.Join(home, ".local", "share", "containers", "cache"), // podman rootless 的 blob 信息缓存
+			filepath.Join(home, ".cache", "containers"),                   // 短名别名表那类用户级缓存
+		}
 	}
+	engineCacheRoots = dedupe(append(engineCacheRoots, dirVarCacheContainers)) // rootful 安装的系统级缓存
 	return []hostSource{
-		{id: "containers", stage: StageHostContainers, roots: []string{joinRoot(root, "containers")},
+		// 每个容器在宿主上的「档案」目录。两个引擎放的地方不一样：Docker 是 <root>/containers/<id>/，
+		// Podman 是 <root>/overlay-containers/<id>/userdata/。两个都认才数得全，缺哪个另一个就整行报 0。
+		{id: "containers", stage: StageHostContainers,
+			roots:   dedupe([]string{joinRoot(root, "containers"), joinRoot(root, "overlay-containers")}),
 			rootDep: true, rows: []string{rowContainerCheckpoint, rowContainerMeta, rowLogContainer, rowLogRotate}},
 
 		{id: "volumes", stage: StageHostVolumes, roots: []string{joinRoot(root, "volumes")},
@@ -287,10 +312,21 @@ func hostSources(info DaemonInfo) []hostSource {
 		{id: "plugins", stage: StageHostPlugins, roots: []string{joinRoot(root, "plugins")},
 			rootDep: true, rows: []string{rowPluginConfig, rowPluginData}},
 
-		{id: "tmp", stage: StageHostTmp, roots: []string{joinRoot(root, "tmp")},
+		// 引擎的临时/运行时目录。三个根按引擎分：Docker rootful 是 <数据目录>/tmp；
+		// rootless Podman 把自己此刻正在用的那一片放在 <运行时目录>/libpod/tmp（rootlessport 的
+		// 套接字与就绪管道、pause.pid、exits/、persist/）与 <运行时目录>/containers（overlay 与
+		// overlay-containers 的挂载点树、netavark 的运行期文件）；这两处以前一个都没认，
+		// 于是这一行在 rootless Podman 机器上永远报「这台机器上没有这个目录」。
+		// 活对象不删：落在用户运行时目录底下的候选项在删除那侧要过 userRuntimeGuard，
+		// 挂载点、套接字、命名管道照常计数，但动不得（见 clean_hostdel.go 的 checkHostPath）。
+		{id: "tmp", stage: StageHostTmp,
+			roots:   dedupe([]string{joinRoot(root, "tmp"), runUserDir("libpod/tmp"), runUserDir("containers")}),
 			rootDep: true, rows: []string{rowSystemTmp}},
 
-		{id: "builder", stage: StageHostBuilder, roots: []string{joinRoot(root, "buildkit"), "/run/docker"},
+		// 构建器与运行时留下的目录。<运行时目录>/docker 是 rootless dockerd 的那一份，
+		// 与上面写死的 /run/docker（rootful 那一份）是同一件事的两种落点，缺一个就有一种引擎数不到。
+		{id: "builder", stage: StageHostBuilder,
+			roots:   dedupe([]string{joinRoot(root, "buildkit"), "/run/docker", runUserDir("docker")}),
 			rootDep: true, rows: []string{rowSystemBuilder}},
 
 		{id: "trust", stage: StageHostTrust,
@@ -301,6 +337,12 @@ func hostSources(info DaemonInfo) []hostSource {
 		// 注意它**不是** linuxOnly：macOS / Windows 上这个目录就在宿主上，读得到，不该跟着一起说「够不着」。
 		{id: "userconfig", stage: StageHostUserConfig, roots: dedupe([]string{userDir, podmanUserDir}),
 			rows: []string{rowSystemUser}},
+
+		// 容器引擎放在宿主上的结果缓存：只有 Podman 有这一份（blob 信息缓存 sqlite、短名别名表），
+		// Docker 不落这么独立的一处。三个根都缺席时这一行不消失——由 rowFor 退回那句人话。
+		// 只数不删：这一行是第三档（TierInfo），界面不给按钮。
+		{id: "engine-cache", stage: StageHostEngineCache, roots: engineCacheRoots,
+			rows: []string{rowOtherCache}},
 
 		{id: "containerd", stage: StageHostContainerd, roots: []string{dirContainerd},
 			linuxOnly: true, rows: []string{rowSystemContainerd}},
@@ -322,10 +364,14 @@ func hostSources(info DaemonInfo) []hostSource {
 		{id: "net-devices", stage: StageHostNetDevices, roots: []string{dirSysNet}, maxDepth: 2,
 			linuxOnly: true, rows: []string{rowNetworkBridge, rowNetworkVeth, rowNetworkCni}},
 
-		{id: "netns", stage: StageHostNetns, roots: []string{dirNetns},
+		{id: "netns", stage: StageHostNetns,
+			roots:     dedupe([]string{dirNetns, runUserNetns()}),
 			linuxOnly: true, rows: []string{rowNetworkNetns}},
 
-		{id: "cni-conf", stage: StageHostCniConf, roots: []string{dirCniConf},
+		// CNI 的配置目录，加上 Podman 那一套等价物：<root>/networks（netavark 的网络定义）。
+		// 引擎是 rootless Podman 时 /etc/cni/net.d 常常根本不存在，只认它就等于这一行永远数不到。
+		{id: "cni-conf", stage: StageHostCniConf,
+			roots:     dedupe([]string{dirCniConf, joinRoot(root, "networks")}),
 			linuxOnly: true, rows: []string{rowNetworkCni}},
 
 		{id: "daemon-log", stage: StageHostDaemonLog, roots: []string{dirVarLog}, maxDepth: 1,
@@ -351,7 +397,7 @@ func HostRowKeys() []string {
 	for _, s := range hostSources(DaemonInfo{Root: "/var/lib/docker"}) {
 		out = append(out, s.rows...)
 	}
-	for _, r := range reasonRows() { // 那四行不落磁盘、只给人话原因，但它同样是宿主扫描交回来的行
+	for _, r := range reasonRows() { // 那几行不落磁盘、只给人话原因，但它同样是宿主扫描交回来的行
 		out = append(out, r.Key)
 	}
 	return dedupe(out)
@@ -360,7 +406,7 @@ func HostRowKeys() []string {
 // PlanHostScan 在动手之前把「会报几段进度、走哪些目录」说出来，供界面画准确的进度条（需求 ㉓/㉔）。
 func PlanHostScan(info DaemonInfo) HostScanPlan {
 	srcs := hostSources(info)
-	plan := HostScanPlan{Stages: len(srcs) + hostStageCountOffset, Supported: runtime.GOOS == "linux"}
+	plan := HostScanPlan{Stages: len(srcs) + hostStageCountOffset, Supported: hostOS == "linux"}
 	for _, s := range srcs {
 		plan.Sources = append(plan.Sources, s.stage)
 	}
@@ -498,6 +544,7 @@ var byteRows = map[string]bool{
 	rowLogContainer: true, rowLogDaemon: true, rowLogJournald: true, rowLogRotate: true,
 	rowSystemContainerd: true, rowSystemTmp: true, rowSystemBuilder: true,
 	rowSystemTrust: true, rowSystemConfig: true, rowSystemUser: true, rowSystemRoot: true,
+	rowOtherCache: true,
 }
 
 // aggregateRows 标出「加总行」：服务层算总占用时必须排除，否则与逐行数字双倍。
@@ -519,21 +566,13 @@ var hostRowSources = func() map[string][]string {
 //
 // 两段式的取舍：一上来就弹授权框太打扰（多数机器上 Docker 的数据目录 711 但里面的子目录可读）；
 // 完全不提权又会让几行永远显示「无权读取」。所以先自己读、读到拒绝为止，再提权补那一小块。
+//
+// 非 Linux 平台不再整片早退。以前这里一进门就 return，只交出「Linux 才有落点」的那几行，
+// 于是数据目录底下那十几行连「为什么是 —」都没送出去——把「没查」和「查了这里没有」画成同一个样子，
+// 规则 41 不收这种形状。现在按段分岔：Linux 才有的段落逐段标够不着（原因照给），
+// 宿主上本来就读得到的段落（~/.docker、引擎放在宿主上的结果缓存）照常数，
+// 数据目录那几段走磁盘时自然落到「这台机器上没有这个目录」那句原因上。
 func (c *Client) ScanHost(ctx context.Context, info DaemonInfo, onStage StageFn) (HostScanResult, error) {
-	if runtime.GOOS != "linux" {
-		res := HostScanResult{ScannedAt: time.Now(), Warnings: []string{MsgVMRoot}}
-		for _, s := range hostSources(info) {
-			if !s.linuxOnly {
-				continue
-			}
-			for _, key := range s.rows {
-				res.Rows = append(res.Rows, notSupportedRow(key, s.linuxOnly))
-			}
-		}
-		res.Rows = append(res.Rows, reasonRows()...)
-		sort.Slice(res.Rows, func(i, j int) bool { return res.Rows[i].Key < res.Rows[j].Key })
-		return res, fmt.Errorf("%w: %s", ErrHostNotSupported, MsgVMRoot)
-	}
 	h := newHostScan()
 	scanHostSources(ctx, h, info, nil, onStage)
 	res := HostScanResult{
@@ -542,6 +581,10 @@ func (c *Client) ScanHost(ctx context.Context, info DaemonInfo, onStage StageFn)
 		Elevated:    h.elevate,
 		ScannedAt:   h.now,
 		Warnings:    h.warn,
+	}
+	if hostOS != "linux" {
+		res.Warnings = append([]string{MsgVMRoot}, res.Warnings...)
+		return res, fmt.Errorf("%w: %s", ErrHostNotSupported, MsgVMRoot)
 	}
 	return res, nil
 }
@@ -586,7 +629,7 @@ func scanHostSources(ctx context.Context, h *hostScan, info DaemonInfo, want map
 			h.mark(s.id, srcStateNoRootDep, info.Reason)
 			continue
 		}
-		if runtime.GOOS != "linux" && s.linuxOnly {
+		if hostOS != "linux" && s.linuxOnly {
 			h.mark(s.id, srcStateAbsent, MsgVMRoot)
 			continue
 		}
@@ -603,7 +646,9 @@ func scanHostSources(ctx context.Context, h *hostScan, info DaemonInfo, want map
 		h.walkSource(ctx, s)
 	}
 	onStage.report(StageHostElevate)
-	if want == nil || len(pending) > 0 {
+	// 非 Linux 不提权：宿主上读不动的那一小块留给用户自己处理，
+	// 这一趟的产出是「每一行都有数、都有原因」，不是「多弹一次授权框」。
+	if hostOS == "linux" && (want == nil || len(pending) > 0) {
 		h.elevateDenied(ctx, pending)
 	}
 }
@@ -752,6 +797,14 @@ func (h *hostScan) classify(e hostEntry) {
 			a.count++
 			a.path(e.path)
 		}
+	case "engine-cache":
+		// 只数不删：这一行是第三档（没有安全删法，界面不给按钮），数的是引擎自己会重建的缓存文件。
+		if !e.isDir {
+			a := h.row(rowOtherCache)
+			a.add(e)
+			a.count++
+			a.path(e.path)
+		}
 	case "containerd":
 		a := h.row(rowSystemContainerd)
 		a.add(e)
@@ -813,6 +866,15 @@ func (h *hostScan) classify(e hostEntry) {
 func (h *hostScan) entryContainers(e hostEntry, parts []string) {
 	if len(parts) < 2 {
 		return // 容器目录本身不落任何一行
+	}
+	// Podman 比 Docker 多一层：容器档案放在 overlay-containers/<id>/userdata/ 底下。
+	// 剥掉 userdata 这一层，下面这套「按容器目录里的顶层文件分类」的口径两个引擎就能共用一份，
+	// 不必为 Podman 另立一张表（两张表迟早对不上，症状是同一个容器被数两次或一次都不数）。
+	if parts[1] == "userdata" {
+		if len(parts) < 3 {
+			return // userdata 目录本身不是任何一行
+		}
+		parts = append([]string{parts[0]}, parts[2:]...)
 	}
 	id := parts[0]
 	// 检查点目录名以 checkpoint 开头（docker checkpoint 写出来的就是这个名字）。
@@ -1231,14 +1293,29 @@ func (h *hostScan) finalise(info DaemonInfo) []HostRow {
 	h.finishVolumes()
 	h.finishIfaces()
 
-	keys := make([]string, 0, len(h.acc)+4)
-	for k := range h.acc {
+	// 凡这一趟真的去读过的统计段，它所属的每一行都要出一行——**数出来是 0 也出**。
+	// 以前只发「数到东西的行」，于是任何零结果的行整行不出现，界面拿到的是一句没有原因的「读不到」；
+	// 那等于把「查过了、这里没有」和「根本没查」画成同一个样子，规则 41 不收这种形状。
+	keys := make([]string, 0, len(hostRowSources)+4)
+	seen := map[string]bool{}
+	addKey := func(k string) {
+		if seen[k] {
+			return
+		}
+		seen[k] = true
 		keys = append(keys, k)
 	}
-	for _, r := range reasonRows() {
-		if _, ok := h.acc[r.Key]; !ok {
-			keys = append(keys, r.Key)
+	for key := range hostRowSources {
+		if h.rowRead(key) {
+			addKey(key)
 		}
+	}
+	// 记到东西的行一定出场，即使它的统计段没被标过状态（外部注入台账的调用点就走这一路）。
+	for key := range h.acc {
+		addKey(key)
+	}
+	for _, r := range reasonRows() {
+		addKey(r.Key)
 	}
 	sort.Strings(keys)
 
@@ -1251,12 +1328,33 @@ func (h *hostScan) finalise(info DaemonInfo) []HostRow {
 	return rows
 }
 
+// rowRead 说清这一行所属的统计段这一趟是不是全都真去读过。
+//
+// 为什么要问这一句：界面上「重数一行」只走那几段（见 RescanHostRow 的 want），其余段这一趟没读。
+// 没读过的行不能报 0——那会把「没查」画成「这里没有」。
+func (h *hostScan) rowRead(key string) bool {
+	srcs, ok := hostRowSources[key]
+	if !ok || len(srcs) == 0 {
+		return false
+	}
+	for _, id := range srcs {
+		if _, visited := h.state[id]; !visited {
+			return false
+		}
+	}
+	return true
+}
+
 // rowFor 收出一行。statusOf 决定这次到底算不算数到了东西。
 func (h *hostScan) rowFor(key string, info DaemonInfo) HostRow {
-	if m := reasonRow(key); m.Key != "" {
-		return m
-	}
 	a := h.acc[key]
+	// 「说不清数字」那几行交人话原因，绝不交一个编出来的 0。other.cache 是唯一真能数到东西的一行
+	// （Podman 的宿主结果缓存）：数到了就报数字，数不到才退回那句解释。
+	if a == nil || a.count == 0 {
+		if m := reasonRow(key); m.Key != "" {
+			return m
+		}
+	}
 	srcs, ok := hostRowSources[key]
 	if !ok {
 		return HostRow{}
@@ -1383,7 +1481,9 @@ func sortedKeys[V any](m map[string]V) []string {
 	return out
 }
 
-// reasonRows 是那四行「Docker 这儿根本没有对应落点」的清单：只给人话原因，绝不给编造的数字。
+// reasonRows 是那几行「这一行数不出独立落点」的清单：只给人话原因，绝不给编造的数字。
+// 它们同时是**零数兜底**——宿主扫描数到东西时报数字（other.cache 就是这一档：Podman 才有那一份结果缓存），
+// 数不到才交这一句；其余三行在任何机器上都数不到，永远交这一句。
 func reasonRows() []HostRow {
 	return []HostRow{
 		{Key: rowLogBuild, Status: model.RowUnavailable, Message: MsgLogBuild, ScannedAt: time.Now()},
@@ -1400,18 +1500,6 @@ func reasonRow(key string) HostRow {
 		}
 	}
 	return HostRow{}
-}
-
-// notSupportedRow 用于非 Linux 平台：Linux 才有的那几行照样渲染，只是数字给「—」并说清为什么（需求 ⑮）。
-func notSupportedRow(key string, linuxOnly bool) HostRow {
-	r := HostRow{Key: key, Status: model.RowNotSupported, ScannedAt: time.Now()}
-	if linuxOnly {
-		r.Message = MsgVMRoot
-	}
-	if m := reasonRow(key); m.Key == key {
-		r.Message = m.Message
-	}
-	return r
 }
 
 // HostPathFacts 把一组宿主路径的当前情形查回来，供服务层判「这是遗留残骸还是正在用的挂载」。
@@ -1473,6 +1561,117 @@ func hostMountPoints() map[string]bool {
 	return m
 }
 
+// inUserRuntimeDir 判一个路径是不是落在「当前用户的运行时目录」底下。
+//
+// 为什么只盯这一片：rootless 容器引擎把**此刻正在用的活东西**放在这里（网络命名空间、
+// rootlessport 的套接字与就绪管道、容器 rootfs 的 overlay 挂载点），而数据目录底下那一片
+// 本来就是清理的对象——把整盘都按「先证明没在用」来要求，正常机器上会什么都删不掉。
+// 目录本身（rel == "."）不算：那是引擎的运行时目录，从来不是某一行能勾出去删的对象。
+func inUserRuntimeDir(p string) bool {
+	rel, ok := matchRoot(p, []string{userRuntimeDir()})
+	return ok && rel != "."
+}
+
+// liveNode 认一个套接字或命名管道——两者都是进程间通信的活对象，不是落在磁盘上的内容。
+func liveNode(mode fs.FileMode) bool {
+	return mode&(fs.ModeSocket|fs.ModeNamedPipe) != 0
+}
+
+// pidFileLike 认「这个文件名像是装进程号的」：运行时目录底下就是这几类
+// （`conmon.pid`、`pidfile`、`pause.pid`）。名字不像的不去看内容，免得把普通文件当探针读。
+func pidFileLike(name string) bool {
+	return name == "pidfile" || strings.HasSuffix(name, ".pid") || strings.HasSuffix(name, ".pidfile")
+}
+
+// livePidIn 读一个 pid 文件，那个号还活着就交出号，否则交 0（= 不拦）。
+//
+// 为什么只认 pid 文件名：正在跑的容器在盘上留下的**唯一**通用痕迹就是这一份进程号——
+// 它的挂载点在容器自己的挂载命名空间里，宿主这边看不到（实测：容器在跑时 `/run/user/<uid>/containers`
+// 底下一条挂载都没有）。只看套接字会把这些目录当成残骸放行。
+//
+// EPERM 也算活着：`kill(pid, 0)` 对别人的进程回 EPERM，那正好证明进程在世。
+// 号读不出来、文件读不动、号 ≤ 1 都交 0——空头的 pid 文件是容器退出后留下的残骸，本来就该删。
+func livePidIn(path string) int {
+	if !pidFileLike(filepath.Base(path)) {
+		return 0
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(strings.SplitN(string(b), "\n", 2)[0]))
+	if err != nil || pid <= 1 {
+		return 0
+	}
+	if err := syscall.Kill(pid, 0); err == nil || errors.Is(err, syscall.EPERM) {
+		return pid
+	}
+	return 0
+}
+
+// liveInside 看一眼 p 自己或它下面有没有引擎正在用的活东西，有就交出一句给用户看的「为什么不能删」。
+//
+// 为什么要往下看一层：界面上能勾出去的是运行时目录的**顶层条目**（`rootlessport1213137364/` 这样一个目录），
+// 而套接字藏在它里面（`.bp.sock`）。只判目录本身等于放行了「删这个目录」，
+// 实际动的却是引擎正在监听的那只套接字。
+//
+// 读不动一律算活的：这一路只在用户运行时目录底下走，证明不了它不是正在用的东西就不能删——
+// 界面上多一行「这次没删掉，因为读不动」比把正在跑的引擎踢掉便宜得多。
+func liveInside(p string) string {
+	mounts := hostMountPoints()
+	if mounts[p] {
+		return fmt.Sprintf("%s 是当前生效的挂载点", p)
+	}
+	for m := range mounts {
+		if strings.HasPrefix(m, p+"/") {
+			return fmt.Sprintf("%s 底下还挂载着 %s", p, m)
+		}
+	}
+	fi, err := os.Lstat(p)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// 本来就不在盘上：删除那一步是幂等的空操作，没有活对象会因此受伤。
+		return ""
+	case err != nil:
+		return fmt.Sprintf("%s 读不动（%v），不能确认它不是引擎正在用的东西", p, err)
+	case liveNode(fi.Mode()):
+		return fmt.Sprintf("%s 是引擎正在用的套接字或管道", p)
+	}
+	if !fi.IsDir() {
+		if pid := livePidIn(p); pid > 0 {
+			return fmt.Sprintf("%s 记着进程 %d，它还在跑——这是引擎此刻在用的运行时状态", p, pid)
+		}
+		return ""
+	}
+	reason := ""
+	_ = filepath.WalkDir(p, func(q string, d fs.DirEntry, wErr error) error {
+		if reason != "" {
+			return fs.SkipAll
+		}
+		if wErr != nil {
+			if errors.Is(wErr, fs.ErrNotExist) {
+				return nil // 走的这一趟里它刚消失：没有东西可删，也不算正在用
+			}
+			reason = fmt.Sprintf("%s 里面有一项读不动（%s：%v），不能确认它不是引擎正在用的东西", p, q, wErr)
+			return fs.SkipAll
+		}
+		if mounts[q] {
+			reason = fmt.Sprintf("%s 里面挂着 %s", p, q)
+			return fs.SkipAll
+		}
+		if liveNode(d.Type()) {
+			reason = fmt.Sprintf("%s 里面有引擎正在用的套接字或管道（%s）", p, q)
+			return fs.SkipAll
+		}
+		if pid := livePidIn(q); pid > 0 {
+			reason = fmt.Sprintf("%s 里面有引擎正在用的运行时状态（%s 记着进程 %d，它还在跑）", p, q, pid)
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return reason
+}
+
 // unescapeMountPath 还原 /proc/mounts 里的八进制转义：路径里有空格、制表符、换行或反斜杠时，
 // 内核写成 \040 \011 \012 \134。不还原就等于拿一个假路径去比对挂载点，正在挂载的目录会被误判成残骸。
 func unescapeMountPath(s string) string {
@@ -1498,6 +1697,32 @@ func joinRoot(root, sub string) string {
 		return ""
 	}
 	return filepath.Join(root, sub)
+}
+
+// userRuntimeDir 是当前用户的运行时目录：systemd 给的 XDG_RUNTIME_DIR，拿不到才按惯例拼 /run/user/<uid>。
+//
+// rootless 容器引擎把自己**此刻正在用**的那一片放在这里，而不是放在数据目录底下——
+// 网络命名空间、rootlessport 的套接字与就绪管道、overlay 的挂载点、rootless dockerd 的运行时目录。
+// 本机实测（rootless Podman）：数据目录里没有这些，/run/user/1000 底下有 netns、libpod/tmp、containers 三处。
+func userRuntimeDir() string {
+	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
+		return filepath.Clean(d)
+	}
+	return filepath.Join("/run/user", strconv.Itoa(os.Getuid()))
+}
+
+// runUserDir 是用户运行时目录底下的一个子目录。
+func runUserDir(sub string) string {
+	return filepath.Join(userRuntimeDir(), sub)
+}
+
+// runUserNetns 是 rootless 容器引擎放网络命名空间的那一个目录。
+//
+// 为什么不能只认 /var/run/netns：那是 rootful 的位置，rootless 引擎（含 rootless Podman）
+// 把自己的那一份放在当前用户的运行时目录底下。本机实测：/var/run/netns 是空的，
+// 而 /run/user/<uid>/netns 里有 9 个文件——只认前一个就等于这一行永远报 0。
+func runUserNetns() string {
+	return runUserDir("netns")
 }
 
 func dedupe(in []string) []string {
