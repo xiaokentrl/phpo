@@ -32,3 +32,7 @@
 .air/
 .gocache/
 coverage.out
+# AppImage 出包期缓存：钉死哈希的 appimagetool + type2 运行时（约 51M，重跑会按 sha256 复验），
+# 以及压包前的 AppDir 临时目录（脚本退出时自己清，异常中断留下的也一并忽略）
+/build/.tools/
+/build/.appimage-work.*/

@@ -104,8 +104,10 @@ jobs:
         if: matrix.target == 'linux'
         run: |
           sudo apt-get update
+          # squashfs-tools：AppImage 就是把 AppDir 压成 squashfs 再挂上前面的 runtime
+          # （scripts/make-appimage.sh 用 mksquashfs/unsquashfs，缺它直接不出包）
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev \
-            libglib2.0-dev libx11-dev build-essential pkg-config
+            libglib2.0-dev libx11-dev build-essential pkg-config squashfs-tools
 
       # 顺序要求：`go install …/cmd/wails3` 本身要编译 wails 的 Linux cgo 包
       # （internal/operatingsystem 的 webkit_linux.go 同样 pkg-config gtk4 webkitgtk-6.0），
@@ -172,6 +174,7 @@ jobs:
           path: |
             build/bin/*.deb
             build/bin/*.rpm
+            build/bin/*.AppImage
             build/bin/*.dmg
             build/bin/phpo-setup-x64.exe
           if-no-files-found: error

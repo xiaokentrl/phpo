@@ -61,7 +61,7 @@ tasks:
       - bash scripts/bump-version.sh
 
   release:local:
-    desc: 本机完整发版（Linux）：递增小版本号 → check → test → 构建+打 deb/rpm；产物版本号单调递增、可区分、可覆盖升级
+    desc: 本机完整发版（Linux）：递增小版本号 → check → test → 构建+打 deb/rpm/AppImage；产物版本号单调递增、可区分、可覆盖升级
     cmds:
       - task: version:bump
       - task: check
@@ -69,20 +69,24 @@ tasks:
       - task: package:linux
 
   package:
-    desc: 打包当前平台安装包（Linux→deb；win/darwin 见 package:windows / package:darwin，通常在各自 runner 上跑）
+    desc: 打包当前平台安装包（Linux→deb + AppImage；win/darwin 见 package:windows / package:darwin，通常在各自 runner 上跑）
     deps: [build]
     cmds:
       - wails3 tool package -format deb -name {{.BINARY}} -out build/bin -config build/linux/nfpm.yaml
       - mv -f build/bin/{{.BINARY}}.deb build/bin/{{.BINARY}}_$(bash scripts/version.sh)_amd64.deb
+      - bash scripts/make-appimage.sh
 
   package:linux:
-    desc: Linux 出包（deb + rpm），需本机有 dpkg-deb / rpmbuild
+    # AppImage 由 scripts/make-appimage.sh 出：Wails beta.23 的 tool package 没有 AppImage 这一档格式，
+    # 只能外挂 appimagetool。图形栈（GTK4/WebKitGTK）走宿主，原因见该脚本开头。
+    desc: Linux 出包（deb + rpm + AppImage），需本机有 dpkg-deb / rpmbuild / mksquashfs
     deps: [build]
     cmds:
       - wails3 tool package -format deb -name {{.BINARY}} -out build/bin -config build/linux/nfpm.yaml
       - mv -f build/bin/{{.BINARY}}.deb build/bin/{{.BINARY}}_$(bash scripts/version.sh)_amd64.deb
       - wails3 tool package -format rpm -name {{.BINARY}} -out build/bin -config build/linux/nfpm.yaml
       - mv -f build/bin/{{.BINARY}}.rpm build/bin/{{.BINARY}}-$(bash scripts/version.sh).x86_64.rpm
+      - bash scripts/make-appimage.sh
 
   package:windows:
     # 版本号取自环境变量 VERSION（task 的 GetEnviron 把它并入模板变量），不在这里跑 grep/管道：
