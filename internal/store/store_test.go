@@ -446,7 +446,7 @@ func TestSnapshotSitesEnriched(t *testing.T) {
 
 	s := New(filepath.Join(dir, "phpo.db"))
 	s.SetEnvProvider(fakeEnv{m: map[string]string{"NGINX_SITES_ROOT": sitesRoot, "WWW_ROOT": wwwRoot}, persisted: true, home: true, www: true})
-	s.SetHostsProbe(func(domain string) bool { return domain == "ok.test" })
+	s.SetHostsProbe(func() map[string]bool { return map[string]bool{"ok.test": true} })
 	t.Cleanup(func() { s.Close() })
 
 	for _, kind := range []struct {
@@ -532,6 +532,37 @@ func TestSnapshotSitesWithoutHostsProbe(t *testing.T) {
 	}
 	if snap.Sites[0].Health != model.HealthWarn {
 		t.Errorf("无 nginx、无 conf 应为降级，实得 %s", snap.Sites[0].Health)
+	}
+}
+
+// TestSnapshotHostsProbeCalledOnce 每次快照 hosts 探针只调一次（一次读全，逐站点查表）。
+// 探针旧签名是「按域名查」，站点列表每拍都重建快照 = 每站点把整份系统 hosts 读一遍；
+// 站点多时这一条就是进页面卡一下的来源之一。
+func TestSnapshotHostsProbeCalledOnce(t *testing.T) {
+	s := openStore(t)
+	s.SetEnvProvider(fakeEnv{persisted: true, home: true, www: true})
+	calls := 0
+	s.SetHostsProbe(func() map[string]bool {
+		calls++
+		return map[string]bool{"a.test": true, "b.test": true}
+	})
+	for _, d := range []string{"a.test", "b.test", "c.test"} {
+		if err := s.UpsertSite(model.Site{Domain: d, Port: 80, PHP: "8.4", Root: "/nope"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, err := s.BuildSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("每次快照 hosts 探针应只调 1 次，实得 %d", calls)
+	}
+	for _, st := range snap.Sites {
+		want := st.Domain != "c.test"
+		if st.Hosts != want {
+			t.Errorf("%s: hosts=%v，期望 %v", st.Domain, st.Hosts, want)
+		}
 	}
 }
 

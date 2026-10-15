@@ -107,8 +107,17 @@ func (c *Client) ManagedContainers(ctx context.Context) ([]ActualState, error) {
 	if err != nil {
 		return nil, err
 	}
+	return managedFrom(list), nil
+}
+
+// managedFrom 从一份容器清单里取出 phpo 托管服务的实际态（名称排序）。
+// CalibrateOnce 用它在全量清单上现过滤，与上面带服务端过滤的那次调用结果同口径。
+func managedFrom(list []container.Summary) []ActualState {
 	out := make([]ActualState, 0, len(list))
 	for _, cs := range list {
+		if !isPhpoManaged(cs.Labels) {
+			continue
+		}
 		kind, ver := cs.Labels["phpo.kind"], cs.Labels["phpo.version"]
 		if kind == "" || ver == "" {
 			continue
@@ -120,5 +129,5 @@ func (c *Client) ManagedContainers(ctx context.Context) ([]ActualState, error) {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ref.Name() < out[j].Ref.Name() })
-	return out, nil
+	return out
 }

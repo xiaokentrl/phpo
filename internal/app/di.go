@@ -360,10 +360,14 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	lc.SetNginxPortSource(c.SiteService)
 	// nginx 由停到起后补齐降级站点的 vhost 与端口发布（建站门禁在 preflight：nginx 未装即阻断）
 	c.AppService.SetSiteHealer(c.SiteService)
-	// 快照站点 hosts 真值探针（列表 Hosts 列）：store 不反向依赖 hosts 包，由装配层注入
-	st.SetHostsProbe(func(domain string) bool {
-		ok, err := hm.Has(domain)
-		return err == nil && ok
+	// 快照站点 hosts 真值探针（列表 Hosts 列）：store 不反向依赖 hosts 包，由装配层注入。
+	// 一次读全整份 hosts 交回域名集合，逐站点只在内存里查——不能每站点读一遍系统文件。
+	st.SetHostsProbe(func() map[string]bool {
+		m, err := hm.Mapped()
+		if err != nil {
+			return nil // 读不到 hosts：一律按未解析，不得虚报已解析
+		}
+		return m
 	})
 	// 队列变化（入队/移交/终态）即重发权威快照：排队详情与进度经 state:changed 实时可见，不新增事件名
 	tm.SetQueueWatcher(func() {
@@ -521,21 +525,23 @@ func rootsKey(cfg *config.ConfigStore) string {
 	return strings.Join(append(parts, dirs...), "\x00")
 }
 
-// nginxSnapshotter 取权威快照以现取 nginx 单例版本（*store.Store 满足）
-type nginxSnapshotter interface {
-	BuildSnapshot() (*model.Snapshot, error)
+// installedLister 只读装机表的某类版本清单（*store.Store 满足）——现取 nginx 版本用得上它，
+// 不需要整份快照。
+type installedLister interface {
+	InstalledVersions(kind string) ([]string, error)
 }
 
 // nginxContainerOf nginx 单例容器名解析器（供 vhost 的 nginx -t / reload 每次调用现取）。
 // 版本不可写死：nginx 版本由用户开放输入（§1.6，UI 建议表就含 alpine 之外的 1.25），
 // 装配期定死成 phpo-nginx-alpine 会让装了其他版本的机器把命令 exec 到不存在的容器上（硬红线 2 失效）。
-func nginxContainerOf(st nginxSnapshotter) vhost.ContainerFunc {
+// 取版本走装机表单查：这里每次 nginx 校验与重载都会调用，早期版本改成建整份快照，
+// 等于每回 `nginx -t` 都拨一次 Docker、读一遍 hosts、逐站点 stat 一遍目录。
+func nginxContainerOf(st installedLister) vhost.ContainerFunc {
 	return func() (string, error) {
-		snap, err := st.BuildSnapshot()
+		vers, err := st.InstalledVersions(string(model.KindNginx))
 		if err != nil {
 			return "", err
 		}
-		vers := snap.Installed[string(model.KindNginx)]
 		if len(vers) == 0 {
 			return "", errors.New("nginx 未安装，无法校验或重载 vhost")
 		}

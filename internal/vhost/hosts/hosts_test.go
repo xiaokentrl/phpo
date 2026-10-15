@@ -84,6 +84,38 @@ func TestManager_AddRemovePersist(t *testing.T) {
 	}
 }
 
+// TestMapped 一次解析出指向受管 IP 的全部域名：键小写（域名大小写不敏感，与 Has 的 EqualFold 同口径），
+// 注释行与其它 IP（::1、127.0.0.2）不计入。
+func TestMapped(t *testing.T) {
+	content := "# 127.0.0.1 commented.test\n127.0.0.1 localhost Demo.Test\n::1\tlocalhost\n127.0.0.2\tother.test\n"
+	got := Mapped(content, "127.0.0.1")
+	if len(got) != 2 || !got["localhost"] || !got["demo.test"] {
+		t.Fatalf("应只得 localhost 与 demo.test（小写键），实得 %+v", got)
+	}
+}
+
+// TestManagerMapped 管理器一次读全：混大小写的条目归一成小写键，文件缺席时给空集合而非报错
+func TestManagerMapped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte("127.0.0.1\ta.test B.test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewAt(path).Mapped()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got["a.test"] || !got["b.test"] {
+		t.Fatalf("域名集合不符: %+v", got)
+	}
+	missing, err := NewAt(filepath.Join(t.TempDir(), "hosts")).Mapped()
+	if err != nil {
+		t.Fatalf("hosts 文件不存在不应报错: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("hosts 文件不存在应给空集合，实得 %+v", missing)
+	}
+}
+
 // TestManager_MissingFileTreatedEmpty 文件不存在时视为空并成功创建
 func TestManager_MissingFileTreatedEmpty(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hosts")

@@ -44,8 +44,7 @@ func (m *Manager) ListEntries() ([]Entry, error) {
 			}
 			e := Entry{Kind: k.Name(), Version: v.Name()}
 			e.Dir = filepath.Join(root, k.Name(), v.Name())
-			e.Size = dirSize(e.Dir)
-			e.UpdatedAt = dirMTime(e.Dir)
+			e.Size, e.UpdatedAt = dirStat(e.Dir)
 			e.Corrupted = m.corrupted(e.Kind, e.Version)
 			out = append(out, e)
 		}
@@ -119,6 +118,8 @@ func (m *Manager) VerifyEntry(kind, version string) ([]string, error) {
 }
 
 // Stats 汇总缓存占用（OfflineView 用）
+// 这里一次都不做全文件 SHA256：概览每次进页都调它，而每份镜像 tar 动辄数百 MB，逐字节重哈希就是
+// 「一进页风扇狂转」（与 corrupted() 同判据；字节级校验仍由显式「校验」VerifyEntry/VerifyAll 负责）。
 func (m *Manager) Stats() (model.CacheStats, error) {
 	entries, err := m.ListEntries()
 	if err != nil {
@@ -131,22 +132,27 @@ func (m *Manager) Stats() (model.CacheStats, error) {
 		if e.Corrupted {
 			st.Corrupted++
 		}
-		if il, _ := m.LookupImage(e.Kind, e.Version); il.Hit || il.Corrupted {
+		if ok, _ := m.tarLightStat(e.Kind, e.Version, m.env.OfflineImageTar(e.Kind, e.Version), func(mf *model.CacheManifest) *model.ManifestImage {
+			return mf.Image
+		}); ok {
 			st.ImageCount++
 		} else if e.Kind == "php" {
 			// 只有固化镜像的条目（基座缓存被清掉/手工只导入过扩展镜像）同样占一份镜像缓存
-			if el, _ := m.LookupExtImage(e.Version); el.Hit || el.Corrupted {
+			if ok, _ := m.tarLightStat("php", e.Version, m.env.OfflineExtImageTar("php", e.Version), func(mf *model.CacheManifest) *model.ManifestImage {
+				return mf.ExtImage
+			}); ok {
 				st.ImageCount++
 			}
 		}
 	}
-	st.ExtCount = m.countExtPackages()
+	st.ExtCount = m.countExtPackages(entries)
 	return st, nil
 }
 
-func (m *Manager) countExtPackages() int {
+// countExtPackages 数 php 条目下的 apk/pecl 包文件。entries 由调用方给：
+// 它本来就是 ListEntries 走一遍目录的结果，再走一遍等于同一批目录扫两次。
+func (m *Manager) countExtPackages(entries []Entry) int {
 	n := 0
-	entries, _ := m.ListEntries()
 	for _, e := range entries {
 		if e.Kind != "php" {
 			continue
@@ -160,32 +166,26 @@ func (m *Manager) countExtPackages() int {
 
 // —— 文件系统小工具 ——
 
-func dirSize(path string) int64 {
-	var total int64
-	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if info, err := d.Info(); err == nil {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total
-}
-
-func dirMTime(path string) time.Time {
-	var latest time.Time
+// dirStat 一次遍历同时得到「目录内文件总大小」与「最新修改时间」。
+// 原来分 dirSize / dirMTime 各走一趟 WalkDir，同一批文件白扫一遍；条目多时进页就慢在磁盘遍历上。
+func dirStat(path string) (size int64, latest time.Time) {
 	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info, err := d.Info(); err == nil && info.ModTime().After(latest) {
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if info.ModTime().After(latest) {
 			latest = info.ModTime()
+		}
+		if !d.IsDir() {
+			size += info.Size()
 		}
 		return nil
 	})
-	return latest
+	return size, latest
 }
 
 func listFiles(dir string) []string {

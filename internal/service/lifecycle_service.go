@@ -29,7 +29,11 @@ type DockerOps interface {
 	ContainerRunning(ctx context.Context, name string) (bool, error)
 	ContainerExists(ctx context.Context, name string) bool
 	ImageExists(ctx context.Context, ref string) (bool, error)
-	DiscoverServices(ctx context.Context) (*engine.Discovery, error) // 数一遍 Docker 上此刻实际有哪些服务容器（含已停止的）
+	// CalibrateOnce 一次 ContainerList 同时给校准要的两份视图：phpo 托管容器的实际运行态，
+	// 以及这台机器此刻有哪些服务容器（含停着的、含 phpo 库里没记过的）。
+	// 校准每 12 秒一拍，早期分 ManagedContainers + DiscoverServices 两次拨，等于把这一拍的
+	// Docker 调用量翻倍，而两次问回来的是同一份清单。
+	CalibrateOnce(ctx context.Context) ([]engine.ActualState, *engine.Discovery, error)
 }
 
 // StateStore SQLite 权威视图读写子集（*store.Store 满足）
@@ -104,8 +108,8 @@ func (l *LifecycleService) Snapshot() (*model.Snapshot, error) {
 //
 // 存在性漂移（缺失/孤儿）仅随事件上报，不自动删建，避免误删用户数据（§5.13.13）。
 //
-// 本口径是「每任务后 / 启动」的轻量校准：容器存在性用已经取到的实际态判，
-// 再现数一次「这台机器的 Docker 此刻有哪些服务容器」（含停着的、含 phpo 库里没记过的）。
+// 本口径是「每任务后 / 启动」的轻量校准：托管容器实际态与「这台机器的 Docker 此刻有哪些服务容器」
+// （含停着的、含 phpo 库里没记过的）由一次 ContainerList 一起问回，不再分两趟拨。
 // 逐个版本核基座镜像与 php 扩展固化镜像还在不在本机，只在手动「同步状态」这条全量口径里做，见 SyncAll。
 func (l *LifecycleService) Calibrate(ctx context.Context) (*engine.CalibrateResult, error) {
 	return l.calibrate(ctx, false)
@@ -123,20 +127,16 @@ func (l *LifecycleService) calibrate(ctx context.Context, auditImages bool) (*en
 	if err != nil {
 		return nil, err
 	}
-	actual, err := l.docker.ManagedContainers(ctx)
+	// 一次 ContainerList 拿到两份视图：托管容器的实际态（比对用）与 Docker 上此刻的服务容器（发现态）。
+	// 服务列表要看得见真实存在的那些容器（含停着的、含 phpo 库里没记过的），每一档校准都现数一遍：
+	// 沿用上次数出来的那份，等于用户在 Docker 里停掉一个服务后界面照旧说它在跑，只能靠手点「同步状态」才回正。
+	// 真正贵的是逐个版本核镜像在不在本机（O(已安装版本数) 次调用），那仍然只在手动「同步状态」的全量档做（决策 28）。
+	actual, found, err := l.docker.CalibrateOnce(ctx)
 	if err != nil {
 		return nil, err
 	}
 	res := engine.Calibrate(refsOf(snap.Installed), refsOf(snap.Running), actual)
 	gaps, err := l.detectGaps(ctx, snap, actual, auditImages)
-	if err != nil {
-		return nil, err
-	}
-	// 服务列表要看得见 Docker 上此刻真实存在的那些容器（含停着的、含 phpo 库里没记过的）。
-	// 每一档校准都现数一遍：它就是一次 ContainerList{All:true}，和本次已经要拨的那几次 Docker 调用同量级。
-	// 沿用上次数出来的那份，等于用户在 Docker 里停掉一个服务后界面照旧说它在跑，只能靠手点「同步状态」才回正。
-	// 真正贵的是逐个版本核镜像在不在本机（O(已安装版本数) 次调用），那仍然只在手动「同步状态」的全量档做（决策 28）。
-	found, err := l.docker.DiscoverServices(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func discoveredOf(d *engine.Discovery) []model.DiscoveredService {
 	return out
 }
 
-// sameDiscovered 两次发现结果是否等价（DiscoverServices 按 kind/version/name 排序产出，故顺序稳定）
+// sameDiscovered 两次发现结果是否等价（发现态按 kind/version/name 排序产出，故顺序稳定）
 func sameDiscovered(a, b []model.DiscoveredService) bool {
 	if len(a) != len(b) {
 		return false

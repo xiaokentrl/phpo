@@ -56,9 +56,11 @@ func New(path string) *Store { return &Store{path: path} }
 // SetEnvProvider 注入配置真相源（装配期一次性调用，先于任何并发访问）
 func (s *Store) SetEnvProvider(p EnvProvider) { s.env = p }
 
-// HostsProbe 查询域名是否已被系统 hosts 解析到 127.0.0.1（快照 sites.hosts 的唯一来源）。
-// store 不得反向依赖 vhost/hosts 包，故由装配层注入实现（*hosts.Manager.Has）。未注入按未解析处理。
-type HostsProbe func(domain string) bool
+// HostsProbe 一次取回系统 hosts 里已映射到 127.0.0.1 的域名集合（快照 sites.hosts 的唯一来源），
+// 键小写。store 不得反向依赖 vhost/hosts 包，故由装配层注入实现（*hosts.Manager.Mapped）。
+// 逐站点回调的版本会每站点读一遍整份文件，站点多时每次快照都在重读同一个 hosts。
+// 未注入或读取失败按「全部未解析」处理，不得虚报已解析。
+type HostsProbe func() map[string]bool
 
 // SetHostsProbe 注入 hosts 探针（装配期一次性调用）
 func (s *Store) SetHostsProbe(p HostsProbe) { s.hosts = p }

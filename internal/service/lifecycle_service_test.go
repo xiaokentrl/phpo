@@ -18,18 +18,19 @@ import (
 
 // fakeDocker 内存容器世界（name -> running）+ 数据卷（卸载不得触碰）
 type fakeDocker struct {
-	containers    map[string]bool
-	volumes       map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
-	localImages   map[string]bool                 // 本机 Docker 镜像库（固化扩展镜像的判据）
-	lastSpec      map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
-	published     map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
-	createCalls   int                             // 建容器次数（「未变即不重建」的判据）
-	imageChecks   int                             // ImageExists 次数（轻量校准不得拨镜像探针的判据）
-	discoverCalls int                             // DiscoverServices 次数（每一档校准都要现数一次服务容器；全量档也不得多问）
-	createErr     error                           // 非空则 CreateServiceContainer 失败（模拟端口绑不上等建容器错误）
-	imageErr      error                           // 非空则 ImageExists 失败（模拟镜像库探针本身不可用）
-	discoverErr   error                           // 非空则 DiscoverServices 失败（模拟 Docker 这次没答上来）
-	discovery     *engine.Discovery               // DiscoverServices 要现数的那份答案（每档校准都问一次）
+	containers   map[string]bool
+	volumes      map[string]bool                 // 模拟绑定/命名卷；RemoveContainer 不应删除
+	localImages  map[string]bool                 // 本机 Docker 镜像库（固化扩展镜像的判据）
+	lastSpec     map[string]engine.ContainerSpec // 记录每容器最近一次创建 spec（端口发布断言用）
+	published    map[string][]int                // 容器当前已发布到宿主的端口（重建前实探的剔除依据）
+	createCalls  int                             // 建容器次数（「未变即不重建」的判据）
+	imageChecks  int                             // ImageExists 次数（轻量校准不得拨镜像探针的判据）
+	dials        int                             // CalibrateOnce 次数（一次校准只拨一遍 Docker 的判据）
+	managedCalls int                             // ManagedContainers 单独拨号次数（校准里应为 0）
+	createErr    error                           // 非空则 CreateServiceContainer 失败（模拟端口绑不上等建容器错误）
+	imageErr     error                           // 非空则 ImageExists 失败（模拟镜像库探针本身不可用）
+	discoverErr  error                           // 非空则 CalibrateOnce 失败（模拟 Docker 这次没答上来）
+	discovery    *engine.Discovery               // CalibrateOnce 要现数的那份答案（每档校准都问一次）
 }
 
 func newFakeDocker() *fakeDocker {
@@ -46,6 +47,12 @@ func (f *fakeDocker) ImageExists(_ context.Context, ref string) (bool, error) {
 }
 
 func (f *fakeDocker) ManagedContainers(context.Context) ([]engine.ActualState, error) {
+	f.managedCalls++
+	return f.actualStates(), nil
+}
+
+// actualStates 假世界的托管容器实际态（只认 phpo- 前缀）
+func (f *fakeDocker) actualStates() []engine.ActualState {
 	var out []engine.ActualState
 	for name, running := range f.containers {
 		kind, ver, ok := parseName(name)
@@ -54,7 +61,7 @@ func (f *fakeDocker) ManagedContainers(context.Context) ([]engine.ActualState, e
 		}
 		out = append(out, engine.ActualState{Ref: engine.ContainerRef{Kind: kind, Version: ver}, Running: running})
 	}
-	return out, nil
+	return out
 }
 
 func (f *fakeDocker) CreateServiceContainer(_ context.Context, _ config.Env, spec engine.ContainerSpec) (string, error) {
@@ -123,15 +130,16 @@ func (f *fakeDocker) ContainerExists(_ context.Context, name string) bool {
 	return ok
 }
 
-// DiscoverServices 数「Docker 上此刻实际有哪些服务容器」。假世界不现场推断，直接交出测试
-// 预先摆好的那份 discovery——它是外部容器的唯一可见通道：上面的 ManagedContainers 只认
-// phpo- 前缀，用户自己 docker run 起来的那几只在这里才会出现。
-func (f *fakeDocker) DiscoverServices(context.Context) (*engine.Discovery, error) {
-	f.discoverCalls++
+// CalibrateOnce 一次问全：托管容器实际态现场推断，服务容器清单直接交出测试预先摆好的那份 discovery。
+// 假世界的外部容器（phpo 库里没记过的那些）只能从 discovery 这条通道进来——
+// ManagedContainers 只认 phpo- 前缀，用户自己 docker run 起来的那只在这里才会出现。
+// dials 是「一次校准只拨一遍 Docker」的判据；ManagedContainers 那次单独拨号（managedCalls）必须为 0。
+func (f *fakeDocker) CalibrateOnce(context.Context) ([]engine.ActualState, *engine.Discovery, error) {
+	f.dials++
 	if f.discoverErr != nil {
-		return nil, f.discoverErr
+		return nil, nil, f.discoverErr
 	}
-	return f.discovery, nil
+	return f.actualStates(), f.discovery, nil
 }
 
 func parseName(name string) (kind, ver string, ok bool) {
@@ -484,8 +492,8 @@ func TestCalibrate_LightweightSkipsImageAudit(t *testing.T) {
 }
 
 // 轻量校准也必须现数一遍「这台机器的 Docker 此刻有哪些服务容器」：用户在 Docker 里停掉或删掉一颗
-// （含 phpo 库里没记过的外部容器），不该只有手点「同步状态」界面才回正。它就一次 ContainerList，
-// 与本次已经要拨的那几次 Docker 调用同量级。
+// （含 phpo 库里没记过的外部容器），不该只有手点「同步状态」界面才回正。
+// 这一份和托管态出自同一次 ContainerList——每 12 秒一拍，不得为它多拨一次 Docker。
 func TestCalibrate_LightweightRefreshesDiscovered(t *testing.T) {
 	l, d, s, em := newSvc()
 	_ = s.SetInstalled("php", "8.4", true)
@@ -502,8 +510,8 @@ func TestCalibrate_LightweightRefreshesDiscovered(t *testing.T) {
 	if _, err := l.Calibrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if d.discoverCalls != 1 {
-		t.Fatalf("轻量校准应现数一次服务容器，实得 %d 次", d.discoverCalls)
+	if d.dials != 1 || d.managedCalls != 0 {
+		t.Fatalf("轻量校准应一次 ContainerList 问全（托管态 + 服务容器清单），实得 CalibrateOnce=%d ManagedContainers=%d", d.dials, d.managedCalls)
 	}
 	if len(s.snap.Discovered) != 1 || s.snap.Discovered[0].Name != "phpo-php-8.4" {
 		t.Fatalf("发现态应换成这次数出来的那份，实得 %+v", s.snap.Discovered)
@@ -543,8 +551,8 @@ func TestSyncAll_CountsDiscoveryOnce(t *testing.T) {
 	if _, err := l.SyncAll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if d.discoverCalls != 1 {
-		t.Fatalf("发现态应一次问全，实得 %d 次", d.discoverCalls)
+	if d.dials != 1 || d.managedCalls != 0 {
+		t.Fatalf("全量档也应一次 ContainerList 问全，实得 CalibrateOnce=%d ManagedContainers=%d", d.dials, d.managedCalls)
 	}
 	if d.imageChecks == 0 {
 		t.Fatal("全量档仍要逐个版本核镜像")

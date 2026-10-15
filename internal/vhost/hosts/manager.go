@@ -64,6 +64,16 @@ func (m *Manager) Has(domain string) (bool, error) {
 	return Has(content, m.ip, domain), nil
 }
 
+// Mapped 一次读全 hosts，返回已映射到受管 IP 的域名集合（键小写）。
+// 与逐个 Has 相比读盘与解析各只做一次——站点列表每拍快照都走这一处。
+func (m *Manager) Mapped() (map[string]bool, error) {
+	content, err := m.read()
+	if err != nil {
+		return nil, err
+	}
+	return Mapped(content, m.ip), nil
+}
+
 // Add 幂等追加条目；不可写且无提权时返回 Warning（不报错）
 func (m *Manager) Add(domain string) (Result, error) {
 	return m.mutate(domain, true)

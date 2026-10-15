@@ -30,6 +30,22 @@ func Has(content, ip, domain string) bool {
 	return false
 }
 
+// Mapped 收集 content 里指向 ip 的全部域名，键一律小写（与 Has 的 EqualFold 口径一致）。
+// 快照逐站点判定时一次读全用这里，避免每站点把整份文件重读重解析一遍。
+func Mapped(content, ip string) map[string]bool {
+	out := map[string]bool{}
+	for _, line := range strings.Split(content, "\n") {
+		lip, names, ok := splitLine(line)
+		if !ok || lip != ip {
+			continue
+		}
+		for _, n := range names {
+			out[strings.ToLower(n)] = true
+		}
+	}
+	return out
+}
+
 // Add 追加 `ip domain`；已存在则原样返回、changed=false（幂等）
 func Add(content, ip, domain string) (string, bool) {
 	if Has(content, ip, domain) {

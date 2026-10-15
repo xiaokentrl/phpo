@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"phpo/internal/model"
 )
@@ -144,16 +145,21 @@ func (s *Store) SetSiteOrder(domains []string) error {
 // enrichSites 在快照出口逐站点补齐展示用运行态（health/hosts）。
 // 硬红线 4：这两列只由后端按宿主真值给出，前端不得自行推断；BuildSnapshot 是全部 state:changed
 // 与 GetState 的唯一快照来源，故在此一处落地即处处一致。
+// hosts 一次读全再逐站点查表：曾经每站点调一次探针 = 每次快照把整份系统 hosts 重读重解析 N 遍。
 func (s *Store) enrichSites(snap *model.Snapshot) {
 	if len(snap.Sites) == 0 {
 		return
+	}
+	var hosts map[string]bool
+	if s.hosts != nil {
+		hosts = s.hosts()
 	}
 	nginxUp := len(snap.Running["nginx"]) > 0
 	phpUp := snap.Running["php"]
 	sitesRoot := snap.Env["NGINX_SITES_ROOT"]
 	for i := range snap.Sites {
 		st := &snap.Sites[i]
-		st.Hosts = s.hosts != nil && s.hosts(st.Domain)
+		st.Hosts = hosts[strings.ToLower(st.Domain)]
 		st.Health = model.SiteRuntime{
 			NginxRunning: nginxUp,
 			VHostOnDisk:  sitesRoot != "" && pathExists(filepath.Join(sitesRoot, st.Domain+".conf")),
@@ -253,6 +259,34 @@ func (s *Store) SetRunning(kind, version string, running bool) error {
 	}
 	_, err = db.Exec(`UPDATE installed SET running=? WHERE kind=? AND version=?`, n, kind, version)
 	return err
+}
+
+// InstalledVersions 只读装机表的某类版本清单（与快照 Installed[kind] 同序）。
+// 给「只要一个版本号」的调用方用（如 nginx -t / reload 现取容器名）：那两处每次调用都要拿 nginx
+// 实际装的版本，但为它建整份快照不划算——快照要拨一次 Docker、读一次系统 hosts、逐个站点 stat
+// 站点目录与 vhost 文件。工作目录未落定时与快照同口径返回空清单（库里还没有装机数据）。
+func (s *Store) InstalledVersions(kind string) ([]string, error) {
+	if !s.mayOpen() {
+		return nil, nil
+	}
+	db, err := s.ensure()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	rows, err := db.Query(`SELECT version FROM installed WHERE kind=? ORDER BY rowid`, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // PHP 扩展（整组替换，幂等）

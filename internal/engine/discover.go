@@ -104,6 +104,27 @@ var imageKindByRepo = func() map[string]string {
 //
 // 出错直接上抛：一次 Docker 调用挂了不能当成「这台机器上没有服务」——那会让服务层把库存清空（§0.2 规则 41）。
 func (c *Client) DiscoverServices(ctx context.Context) (*Discovery, error) {
+	list, err := c.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return discoverFrom(list), nil
+}
+
+// CalibrateOnce 一次 ContainerList{All:true} 同时交出现状校准要的两份视图：
+// phpo 托管容器的实际运行态（ManagedContainers 的那份）与这台机器此刻有哪些服务容器（DiscoverServices 的那份）。
+// 分成两次拨是把每 12 秒一拍的轻量校准的 Docker 调用量翻倍，而两次问的是同一份清单——
+// 托管那份本来就是全量清单按归属标签过滤出来的子集。
+func (c *Client) CalibrateOnce(ctx context.Context) ([]ActualState, *Discovery, error) {
+	list, err := c.listAll(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return managedFrom(list), discoverFrom(list), nil
+}
+
+// listAll 一次问全 Docker 上的所有容器（含已停止的）；错误口径与 DiscoverServices 一致，直接上抛。
+func (c *Client) listAll(ctx context.Context) ([]container.Summary, error) {
 	if c == nil {
 		return nil, errors.New("尚未准备好 Docker 客户端")
 	}
@@ -111,7 +132,11 @@ func (c *Client) DiscoverServices(ctx context.Context) (*Discovery, error) {
 	if err != nil {
 		return nil, fmt.Errorf("列出 Docker 容器失败: %w", err)
 	}
+	return list, nil
+}
 
+// discoverFrom 把一份容器清单逐个分类成发现结果。不做任何 Docker 调用，纯内存判定。
+func discoverFrom(list []container.Summary) *Discovery {
 	// 先按容器名排序再分类：同一个 (kind, version) 上挤了几个容器时，「谁被认下、谁进差异」必须每次一样，
 	// 否则两次「同步状态」会把同一件事报成两个样子（clean_inventory 的稳定输出同一口径）。
 	sorted := make([]container.Summary, 0, len(list))
@@ -186,7 +211,7 @@ func (c *Client) DiscoverServices(ctx context.Context) (*Discovery, error) {
 	sort.SliceStable(d.Duplicates, func(i, j int) bool { return d.Duplicates[i].Name < d.Duplicates[j].Name })
 	d.Unrecognized = append(d.Unrecognized, swarmTasks...)
 	sort.SliceStable(d.Unrecognized, func(i, j int) bool { return d.Unrecognized[i].Name < d.Unrecognized[j].Name })
-	return d, nil
+	return d
 }
 
 // serviceAt 按索引找回已认下的那颗。索引与 Services 一一对应，找到即原地改。

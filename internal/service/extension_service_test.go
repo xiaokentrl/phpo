@@ -49,7 +49,7 @@ type fakeExtRuntime struct {
 	phpMErr    error
 	iniListErr error
 
-	discovery *engine.Discovery // DiscoverServices 要现数的那份答案；扩展链路不碰它，留 nil 即「没数过」
+	discovery *engine.Discovery // CalibrateOnce 要现数的那份服务容器清单；扩展链路不碰它，留 nil 即「没数过」
 }
 
 func newFakeExtRuntime() *fakeExtRuntime {
@@ -107,11 +107,11 @@ func (f *fakeExtRuntime) ContainerRunning(_ context.Context, name string) (bool,
 	return f.running[name], nil
 }
 
-// DiscoverServices 数「Docker 上此刻实际有哪些服务容器」。扩展链路从来不做这件事，
+// CalibrateOnce 数「Docker 上此刻实际有哪些服务容器」。扩展链路从来不做校准，
 // 所以这里直接把测试预先摆好的那份 discovery 交出去——它没被摆过就是 nil，
 // 一旦扩展用例误拨了这只探针，nil 会让它自己暴露出来而不是悄悄编出一份答案。
-func (f *fakeExtRuntime) DiscoverServices(context.Context) (*engine.Discovery, error) {
-	return f.discovery, nil
+func (f *fakeExtRuntime) CalibrateOnce(context.Context) ([]engine.ActualState, *engine.Discovery, error) {
+	return nil, f.discovery, nil
 }
 
 // ExecStream 将去帧后的 stdout/stderr 分别写进两个 writer；假件把 execOut 当 stdout、把命令行当 stderr，

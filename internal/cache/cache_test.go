@@ -452,6 +452,57 @@ func TestStatsCounts(t *testing.T) {
 	}
 }
 
+// TestStatsCountsUnreadableImage 锁「概览不重哈希」：Stats 数的是缓存里有没有这份镜像 tar，
+// 不是能不能把它逐字节读一遍。读不动的文件在「重哈希」口径下会当场失败并把这份镜像从统计里抹掉，
+// 界面于是显示「0 份镜像」而磁盘上它实打实占着几百 MB——那正是「把不知道画成没有」（规则 41 同一口径）。
+func TestStatsCountsUnreadableImage(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 读得动 000 文件，这条判据在它身上不成立")
+	}
+	m, env, _, _ := newMgr(t)
+	seedImage(t, m, env, "php", "8.4", []byte("IMG"))
+	tar := env.OfflineImageTar("php", "8.4")
+	if err := os.Chmod(tar, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(tar, 0o644) })
+	if _, err := FileSHA256(tar); err == nil {
+		t.Fatal("前提不成立：这颗文件本该读不动")
+	}
+	st, err := m.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.EntryCount != 1 || st.ImageCount != 1 {
+		t.Fatalf("读不动的镜像照样占一格缓存，应 1 条目 / 1 镜像，得 %+v", st)
+	}
+}
+
+// TestStatsLeavesByteCorruptionToVerify 锁两档分工：概览只轻判「清单记的 size 对不对得上」，
+// 同尺寸改写这种字节级坏留给显式「校验」（重哈希）去抓——否则每次进页都要为这一格判断重哈希全部 tar。
+func TestStatsLeavesByteCorruptionToVerify(t *testing.T) {
+	m, env, _, _ := newMgr(t)
+	seedImage(t, m, env, "php", "8.4", []byte("IMG"))
+	tar := env.OfflineImageTar("php", "8.4")
+	if err := os.WriteFile(tar, []byte("OMG"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, err := m.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ImageCount != 1 || st.Corrupted != 0 {
+		t.Fatalf("概览只轻判 size：同尺寸改写该照常计 1 份镜像、不报坏，得 %+v", st)
+	}
+	failed, err := m.VerifyEntry("php", "8.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failed) != 1 {
+		t.Fatalf("显式校验必须抓到这份同尺寸改写，得 %v", failed)
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, x := range list {
 		if x == s {
