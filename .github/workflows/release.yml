@@ -229,9 +229,20 @@ jobs:
             declared="${declared:-$expected}"
             tag="v$declared"
           fi
-          if [ "$declared" != "$expected" ]; then
-            echo "::error::版本不一致：$declared ≠ wails.json 的 productVersion $expected（二进制内嵌版本）"
-            echo "::error::请先用 scripts/bump-version.sh 定版再推标签，或让标签/dispatch 参数等于 $expected"
+          # 预览版标签可以在内嵌版本后带一段 -beta.N（v0.1.118-beta.1）。二进制内嵌版本仍是 wails.json
+          # 那个数（注入链路一字未动），所以比对时先剥掉后缀；只认 -beta.<数字>，别的形状一律拒。
+          base="${declared%%-*}"
+          suffix="${declared#"$base"}"
+          case "$suffix" in
+            "" | -beta.[0-9]*) ;;
+            *)
+              echo "::error::预发布后缀只认 -beta.N：$declared（后缀 $suffix）"
+              exit 1
+              ;;
+          esac
+          if [ "$base" != "$expected" ]; then
+            echo "::error::版本不一致：$declared（去掉后缀是 $base）≠ wails.json 的 productVersion $expected（二进制内嵌版本）"
+            echo "::error::请先用 scripts/bump-version.sh 定版再推标签，或让标签/dispatch 参数等于 $expected（预览版可写成 ${expected}-beta.1）"
             exit 1
           fi
           # 标签已存在但指向别的提交时，构件与 Release 会对不上（dispatch 从分支 HEAD 出包）。
@@ -245,6 +256,8 @@ jobs:
           fi
           echo "version=$expected" >>"$GITHUB_OUTPUT"
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          # 发布标题用标签上那串（预览版要看得见 -beta.N），清单与内嵌版本仍用去掉后缀的 $expected。
+          echo "label=$declared" >>"$GITHUB_OUTPUT"
           echo "发布 $tag（版本 $expected）"
 
       - name: Sign artifacts (Ed25519 → .sig)
@@ -275,12 +288,24 @@ jobs:
 
       # tag_name 用解析出的标签（push 事件即 github.ref_name；dispatch 事件是 v<版本>，因为那时
       # github.ref_name 只是分支名）。标签不存在时该动作会在本次构件所在的提交上创建它。
+      # 发布正文取仓库根的 release-notes.md（本版相对上一版的净变化，中英两段固定模板）。
+      # 由 scripts/gen-release-notes.sh 从 docs/CHANGELOG.md 的未发布段起草，发布前人工定稿并随版本一起提交。
+      # 缺文件即红：softprops 对不存在的 body_path 只会静默回落到默认正文，那等于发一份没有说明的 Release。
+      - name: Check release notes present
+        run: |
+          set -euo pipefail
+          if [ ! -s release-notes.md ]; then
+            echo "::error::仓库根没有 release-notes.md（或它是空文件），Release 正文会空。"
+            echo "::error::发布前跑 bash scripts/gen-release-notes.sh 起草，定稿后随版本号一起提交。"
+            exit 1
+          fi
+
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
-          name: phpo ${{ steps.ver.outputs.version }}
-          body_path: ${{ github.workspace }}/docs/CHANGELOG.md
+          name: phpo ${{ steps.ver.outputs.label }}
+          body_path: ${{ github.workspace }}/release-notes.md
           draft: false
           prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}
           files: |
