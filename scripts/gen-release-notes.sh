@@ -2,7 +2,7 @@
 # gen-release-notes.sh：生成 GitHub Release 的正文 release-notes.md。
 #
 # 干什么：把「本版相对上一版改了什么」排成中英双语、分类固定的说明，直接当 Release 正文。
-#        顺序是英文在前、中文在后（标题那一行也一样，中文段跟在英文段后面）。
+#        顺序是英文在前、中文在后：标题拆两行，英文那一行在前、中文那一行在后，正文同样先英文段后中文段。
 # 为什么要脚本排：标题、分类名、顺序、空行是固定契约，手写每次都会漂；只有条目内容是该轮现写的，
 #                 所以脚本把可变的那部分从一份条目清单读进来，其余照模板吐。
 #
@@ -71,7 +71,8 @@ block() { # $1=分类名 $2=条目（每行自带换行）
 }
 
 {
-  printf "# phpo %s What's Changed from %s to %s / %s 相比 %s 更新内容\n\n" "$ver" "$prev" "$ver" "$ver" "$prev"
+  printf "# phpo %s What's Changed from %s to %s\n" "$ver" "$prev" "$ver"
+  printf "# %s 相比 %s 更新内容\n\n" "$ver" "$prev"
   printf '**版本类型：%s**\n' "$kind"
   printf '\n## English\n'
   for i in 0 1 2 3; do block "${en_names[$i]}" "${EN[$i]}"; done
