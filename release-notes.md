@@ -1,27 +1,31 @@
-**版本类型：预览版**
+**版本类型：稳定版**
 
 ## English
 
-### phpo 0.1.117-beta.1 What's Changed from 0.1.116 to 0.1.117-beta.1
-
-**Added**
-
-- Add an AppImage single-file package for Linux
-- Generate release notes from a fixed template and accept -beta.N preview tags
+### phpo 0.1.118 What's Changed from 0.1.117 to 0.1.118
 
 **Changed**
 
-- Rewrite the README
+- Reorder release notes to English first and Chinese second, each title inside its own section
+
+**Fixed**
+
+- Stop re-hashing every cached image when opening the offline cache page
+- Read the system hosts file once per site list refresh instead of once per site
+- Stop building a full status snapshot just to resolve the nginx container name
+- Cut the 12-second background state calibration to a single Docker call per beat
 
 ## 中文
 
-### 0.1.117-beta.1 相比 0.1.116 更新内容
-
-**新增**
-
-- Linux 出包多一颗 AppImage 单文件安装包
-- 发布正文改由固定模板脚本生成，预览版标签支持 -beta.N 后缀
+### 0.1.118 相比 0.1.117 更新内容
 
 **修改**
 
-- 重写 README
+- 发布说明改成英文在前、中文在后，标题句各写进自己那一段
+
+**修复**
+
+- 进入离线缓存页不再把每份镜像逐字节重算一遍，风扇不再狂转
+- 刷新站点列表时系统 hosts 只读一次，不再逐个站点重读整份文件
+- 校验和重载 Nginx 配置不再为拿一个容器名重建整份状态快照
+- 每 12 秒一次的后台状态校准只问 Docker 一遍，界面响应更利索
