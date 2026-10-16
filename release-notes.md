@@ -1,21 +1,27 @@
 ## English
 
-### phpo 0.1.120 What's Changed from 0.1.119 to 0.1.120
+### phpo 0.1.121 What's Changed from 0.1.120 to 0.1.121
 
 **Version type: Stable**
 
 **Added**
 
-- Add a "Launch at login" toggle in Settings that writes the OS auto-start registration immediately, on Linux, Windows and macOS
-- Add a Traditional Chinese (Taiwan-style) interface language, derived from Simplified Chinese and selectable in Settings
+- Add Korean, French, German, Spanish and Turkish interface languages, switchable from Settings without restarting
+
+**Fixed**
+
+- Fix three Traditional Chinese strings that showed a literal backslash instead of a line break, so the registry mirror hint and the Podman install command can be copied as written
 
 ## 中文
 
-### 0.1.120 相比 0.1.119 更新内容
+### 0.1.121 相比 0.1.120 更新内容
 
 **版本类型：稳定版**
 
 **新增**
 
-- 设置页新增「开机自启动」开关：切换即写入系统自启动注册，Linux、Windows、macOS 全平台生效
-- 新增繁体中文界面（台湾用语）：由简体中文自动转换生成，设置页语言选择器即可切换
+- 界面语言新增韩语、法语、德语、西班牙语、土耳其语五种，设置页点一下就切换，不用重启
+
+**修复**
+
+- 繁体中文里三处换行显示成了字面的反斜杠，导致镜像源输入框提示和 Podman 安装命令照着抄进终端不能用
