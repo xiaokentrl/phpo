@@ -1054,6 +1054,7 @@ const messages: Record<string, string> = {
   "log.autoStartDone": "{name} per Autostart gestartet",
   "log.autoStartFail": "{name} konnte nicht starten: {reason}",
   "log.autoStartTimeout": "nach {wait}s war die Container-Engine immer noch nicht bereit - dieser Autostart wurde übersprungen: zuerst die Engine starten, dann auf der Dienstseite auf Starten klicken",
+  "log.stopNetnsWarn": "{name} ist bereits im Zielzustand - aber die Engine meldete beim Aufräumen einen Fehler: {reason}; wiederholt sich das, starten Sie die Engine mit systemctl --user restart podman selbst neu",
   "log.trashPurged": "abgelaufener Papierkorb geleert {rest}",
   "log.trashRegisterFail": "Papierkorbregistrierung fehlgeschlagen (die Dateien sind bereits im Papierkorbverzeichnis): {rest}",
   "log.trashRestored": "wiederhergestellt {rest}",

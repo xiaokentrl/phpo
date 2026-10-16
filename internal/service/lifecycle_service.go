@@ -468,26 +468,50 @@ func (l *LifecycleService) Start(ctx context.Context, kind model.ServiceKind, ve
 	return l.commit(ctx, kind, version, true, true)
 }
 
-// Stop 停止容器（幂等；保留数据，§5.13.7）
+// Stop 停止容器（幂等；保留数据，§5.13.7）。
+// 引擎报错但实测已经停下（Podman rootless 停完容器后清网络那句 permission denied）不按失败：
+// 照常落 running=false，把那句原文作为提醒上抛（engine.AsTolerated），由任务步骤落一行日志。
 func (l *LifecycleService) Stop(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
+	var warn error
 	op := engine.Op{
-		Name:       "stop " + name,
-		Execute:    func(ctx context.Context) error { return l.docker.StopContainer(ctx, name) },
+		Name: "stop " + name,
+		Execute: func(ctx context.Context) error {
+			if err := l.docker.StopContainer(ctx, name); err != nil {
+				if engine.AsTolerated(err) == nil {
+					return err
+				}
+				warn = err
+			}
+			return nil
+		},
 		PostVerify: func(ctx context.Context) error { return l.verifyRunning(ctx, kind, version, false) },
 	}
 	if err := op.Run(ctx); err != nil {
 		return err
 	}
-	return l.commit(ctx, kind, version, true, false)
+	if err := l.commit(ctx, kind, version, true, false); err != nil {
+		return err
+	}
+	return warn
 }
 
-// Remove 卸载：停 + 删容器，**保留数据卷/绑定目录**（§0.2 规则 20、§5.13.7），并置未安装
+// Remove 卸载：停 + 删容器，**保留数据卷/绑定目录**（§0.2 规则 20、§5.13.7），并置未安装。
+// 与 Stop 同一把尺子：报错后现读，容器真没了就按达成收尾（照常置未安装 + 回流快照）并上抛提醒。
 func (l *LifecycleService) Remove(ctx context.Context, kind model.ServiceKind, version string) error {
 	name := dockerutil.ContainerName(string(kind), version)
+	var warn error
 	op := engine.Op{
-		Name:       "remove " + name,
-		Execute:    func(ctx context.Context) error { return l.docker.RemoveContainer(ctx, name) },
+		Name: "remove " + name,
+		Execute: func(ctx context.Context) error {
+			if err := l.docker.RemoveContainer(ctx, name); err != nil {
+				if engine.AsTolerated(err) == nil {
+					return err
+				}
+				warn = err
+			}
+			return nil
+		},
 		PostVerify: func(ctx context.Context) error { return l.verifyRunning(ctx, kind, version, false) },
 		Rollback:   func(context.Context) error { return nil }, // 卸载为终结操作，无自动回滚
 	}
@@ -502,7 +526,7 @@ func (l *LifecycleService) Remove(ctx context.Context, kind model.ServiceKind, v
 		return err
 	}
 	l.emitter.Emit("state:changed", map[string]any{"snapshot": fresh})
-	return nil
+	return warn
 }
 
 // ---- 内部助手 ----

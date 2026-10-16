@@ -1054,6 +1054,7 @@ const messages: Record<string, string> = {
   "log.autoStartDone": "{name} démarré automatiquement",
   "log.autoStartFail": "échec du démarrage de {name} : {reason}",
   "log.autoStartTimeout": "attente de {wait}s terminée, le moteur de conteneurs n'est toujours pas prêt - ce démarrage automatique est ignoré : démarrez d'abord le moteur puis appuyez sur Démarrer dans la page du service",
+  "log.stopNetnsWarn": "{name} a déjà atteint l'état demandé, mais le moteur a signalé une erreur en finalisant : {reason}; si cela se répète, exécutez vous-même systemctl --user restart podman pour redémarrer le service du moteur",
   "log.trashPurged": "corbeille expirée vidée {rest}",
   "log.trashRegisterFail": "échec de l'enregistrement en corbeille (les fichiers sont déjà dans le répertoire de corbeille) : {rest}",
   "log.trashRestored": "restauré {rest}",

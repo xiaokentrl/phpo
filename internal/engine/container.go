@@ -34,7 +34,8 @@ func (c *Client) CreateServiceContainer(ctx context.Context, env config.Env, spe
 		return "", err
 	}
 	if c.ContainerExists(ctx, name) {
-		if err := c.RemoveContainer(ctx, name); err != nil {
+		// 清同名这一步只要「容器不在了」就算成：引擎报错但实测已没（Podman rootless 收尾那类）不该拦住装/重建
+		if err := ToleratedAsNil(c.RemoveContainer(ctx, name)); err != nil {
 			return "", err
 		}
 	}
@@ -188,7 +189,40 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// StopContainer 停止容器（幂等：已停/不存在视为已停止；restarting 视为仍需停止）
+// ToleratedError 引擎把这一步判成失败，但现读现场发现目标其实已经达成——最典型的是 Podman rootless：
+// 容器真的停了，报错来自停止之后的网络收尾（`rootless netns: kill network process: permission denied`）。
+// 这一类不该判死已经做成的工作（§1.2 规则 16：能警告不阻止）：调用方照常收尾，只把引擎原文落一行提醒。
+type ToleratedError struct {
+	Name string // 容器名
+	Op   string // 哪一步（stop / remove），只作诊断，不进文案
+	Msg  string // 引擎返回的原文，原样带出去给用户看
+}
+
+func (e *ToleratedError) Error() string { return e.Name + ": " + e.Msg }
+
+// AsTolerated 取出「实测已达成、引擎收尾报错」那一类错误；不是这一类返回 nil。
+// 用 errors.As 而非类型断言：调用方包装过一层（%w）也认得出来。
+func AsTolerated(err error) *ToleratedError {
+	var t *ToleratedError
+	if errors.As(err, &t) {
+		return t
+	}
+	return nil
+}
+
+// ToleratedAsNil 把「实测已达成、引擎收尾报错」那一类折成 nil，真失败原样返回。
+// 只用在拿不到步骤日志、也无从再提醒的幂等清理路（建容器前清同名、批量删除）；
+// 任务路径要用 AsTolerated 取出引擎原文落一行提醒，别用它把抱怨抹平。
+func ToleratedAsNil(err error) error {
+	if AsTolerated(err) != nil {
+		return nil
+	}
+	return err
+}
+
+// StopContainer 停止容器（幂等：已停/不存在视为已停止；restarting 视为仍需停止）。
+// 报错后现读一次容器状态：实测已停就按目标达成收尾（返回 *ToleratedError 带引擎原文），
+// 实测仍在跑（或现场问不出来）才判失败——不能拿收尾抱怨把一个已经停下的服务说成没停。
 func (c *Client) StopContainer(ctx context.Context, name string) error {
 	status, _, err := c.ContainerStatus(ctx, name)
 	if err != nil {
@@ -197,17 +231,32 @@ func (c *Client) StopContainer(ctx context.Context, name string) error {
 	if !needsStop(status) {
 		return nil
 	}
-	return c.cli.ContainerStop(ctx, name, container.StopOptions{})
+	if err := c.cli.ContainerStop(ctx, name, container.StopOptions{}); err != nil {
+		st, _, e := c.ContainerStatus(ctx, name)
+		if e == nil && !needsStop(st) {
+			return &ToleratedError{Name: name, Op: "stop", Msg: err.Error()}
+		}
+		return err
+	}
+	return nil
 }
 
 // RemoveContainer 删除容器（force 停删合一，幂等：不存在视为成功）。
 // 不带 removeVolumes：卸载/重装默认保留数据（§0.2 规则 20、§5.13.7），删卷只能走显式二次确认。
 // 本项目持久化全在宿主 bind 目录（§5.14.2 MOUNTS），容器不留卷，删卷只可能误伤镜像声明的匿名卷。
+// 与 StopContainer 同一把尺子：报错后现读一次现场，容器已经不在了就按达成收尾并带上引擎原文；
+// 现读问不出结果（引擎本身没答）或容器还在，一律原判失败——不把「看不见」当成「没了」。
 func (c *Client) RemoveContainer(ctx context.Context, name string) error {
 	if !c.ContainerExists(ctx, name) {
 		return nil
 	}
-	return c.cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true})
+	if err := c.cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil {
+		if st, _, e := c.ContainerStatus(ctx, name); e == nil && st == "" {
+			return &ToleratedError{Name: name, Op: "remove", Msg: err.Error()}
+		}
+		return err
+	}
+	return nil
 }
 
 func mergeLabels(base, extra map[string]string) map[string]string {

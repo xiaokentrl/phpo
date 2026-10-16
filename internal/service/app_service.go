@@ -213,16 +213,40 @@ func (s *AppService) Start(ctx context.Context, kind model.ServiceKind, version 
 		}, s.healStep(kind, opStart))
 }
 
-// Stop 停止容器（保留数据，§5.13.7）
+// Stop 停止容器（保留数据，§5.13.7）；引擎收尾报错但实测已停时按完成收尾并落一行提醒
 func (s *AppService) Stop(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one(serviceMeta(opStop, kind, version), "停止 "+dockerutil.ContainerName(string(kind), version), task.MsgTaskStop, map[string]string{"name": dockerutil.ContainerName(string(kind), version)},
-		func(ctx context.Context, _ task.StepLog) error { return s.lifecycle.Stop(ctx, kind, version) })
+	name := dockerutil.ContainerName(string(kind), version)
+	return s.one(serviceMeta(opStop, kind, version), "停止 "+name, task.MsgTaskStop, map[string]string{"name": name},
+		func(ctx context.Context, log task.StepLog) error {
+			return tolerateStop(log, s.lifecycle.Stop(ctx, kind, version))
+		})
 }
 
 // Remove 卸载容器（保留数据卷）；卸载数据服务会让出端口，被端口占用卡住的降级站点靠此补齐
 func (s *AppService) Remove(ctx context.Context, kind model.ServiceKind, version string) error {
-	return s.one(serviceMeta(opRemove, kind, version), "卸载 "+dockerutil.ContainerName(string(kind), version), task.MsgTaskRemove, map[string]string{"name": dockerutil.ContainerName(string(kind), version)},
-		func(ctx context.Context, _ task.StepLog) error { return s.lifecycle.Remove(ctx, kind, version) }, s.healStep(kind, opRemove))
+	name := dockerutil.ContainerName(string(kind), version)
+	return s.one(serviceMeta(opRemove, kind, version), "卸载 "+name, task.MsgTaskRemove, map[string]string{"name": name},
+		func(ctx context.Context, log task.StepLog) error {
+			return tolerateStop(log, s.lifecycle.Remove(ctx, kind, version))
+		}, s.healStep(kind, opRemove))
+}
+
+// logStopNetnsWarn 提醒行的消息码（中文原文只作 fallback，随码发出；见总纲 §5.15）。
+// 这一行的用处：告诉用户「这一步其实做成了，引擎在抱怨的是停止之后的收尾」，并给出自己能做的恢复。
+const logStopNetnsWarn = "log.stopNetnsWarn"
+
+// tolerateStop 把「引擎报错但实测已完成」那一类收成一个成功，并落一行提醒带引擎原文；
+// 真失败原样上抛。恢复那句只提示用户自己执行——phpo 不代起引擎服务（§5.13）。
+func tolerateStop(log task.StepLog, err error) error {
+	t := engine.AsTolerated(err)
+	if t == nil {
+		return err
+	}
+	logfCode(log, model.LogDim, logStopNetnsWarn,
+		map[string]string{"name": t.Name, "reason": t.Msg},
+		t.Name+" 这一步已经做成，但引擎收尾时报了错："+t.Msg+
+			"；若反复出现，可自行执行 systemctl --user restart podman 重启引擎服务")
+	return nil
 }
 
 // ---- 内部助手 ----

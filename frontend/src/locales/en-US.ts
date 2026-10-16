@@ -1056,6 +1056,7 @@ const messages: Record<string, string> = {
   "log.autoStartDone": "{name} started by auto-start",
   "log.autoStartFail": "{name} failed to start: {reason}",
   "log.autoStartTimeout": "waited {wait}s and the container engine still was not ready, so this auto-start was skipped: start the engine first, then press Start on the service page",
+  "log.stopNetnsWarn": "{name} already reached the requested state, but the engine reported an error while finishing up: {reason}; if this keeps happening, run systemctl --user restart podman yourself to restart the engine service",
   "log.trashPurged": "expired trash cleared {rest}",
   "log.trashRegisterFail": "trash registration failed (the files are already inside the trash directory): {rest}",
   "log.trashRestored": "restored {rest}",

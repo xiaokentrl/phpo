@@ -1040,6 +1040,7 @@ const messages: Record<string, string> = {
   "log.autoStartDone": "{name} 已開機自啟",
   "log.autoStartFail": "{name} 啟動失敗: {reason}",
   "log.autoStartTimeout": "等了 {wait} 秒，容器引擎仍未就緒，本次開機自啟已跳過：先啟動容器引擎，再到服務頁手動點「啟動」",
+  "log.stopNetnsWarn": "{name} 這一步已經做成，但引擎收尾時報了錯：{reason}；若反覆出現，可自行執行 systemctl --user restart podman 重啟引擎服務",
   "log.trashPurged": "清空到期回收站 {rest}",
   "log.trashRegisterFail": "回收站登記失敗（東西已經在回收站目錄裡）: {rest}",
   "log.trashRestored": "已恢復 {rest}",

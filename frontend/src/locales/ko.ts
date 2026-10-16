@@ -1054,6 +1054,7 @@ const messages: Record<string, string> = {
   "log.autoStartDone": "{name} 자동 시작됨",
   "log.autoStartFail": "{name} 시작 실패: {reason}",
   "log.autoStartTimeout": "{wait}초를 기다렸지만 컨테이너 엔진이 여전히 준비되지 않아 이번 자동 시작을 건너뛰었습니다: 컨테이너 엔진을 먼저 시작하고 서비스 페이지에서 시작을 누르세요",
+  "log.stopNetnsWarn": "{name} 단계는 이미 목표대로 끝났지만 엔진이 마무리 과정에서 오류를 보고했습니다: {reason}; 계속 발생한다면 systemctl --user restart podman 을 직접 실행해 엔진 서비스를 다시 시작하세요",
   "log.trashPurged": "만료 휴지통 비움 {rest}",
   "log.trashRegisterFail": "휴지통 등록 실패(파일은 이미 휴지통 디렉터리 안에 있습니다): {rest}",
   "log.trashRestored": "복원됨 {rest}",

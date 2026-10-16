@@ -141,7 +141,7 @@ func (c *Client) removeByKind(ctx context.Context, op DeleteOp) (int64, error) {
 	switch op.Kind {
 	case DelContainer:
 		// 复用既有实现：强制移除、不带 -v（卷里的数据必须由用户另外决定，§0.2 规则 20）
-		if err := c.RemoveContainer(ctx, op.Ref); err != nil {
+		if err := ToleratedAsNil(c.RemoveContainer(ctx, op.Ref)); err != nil {
 			return 0, err
 		}
 		return op.Size, nil

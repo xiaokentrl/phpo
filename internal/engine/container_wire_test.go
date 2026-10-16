@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,11 +20,13 @@ import (
 // fakeDaemon 记录 SDK 实际下发到守护进程的请求，并按脚本回放容器状态
 type fakeDaemon struct {
 	deleteQuery  string
-	started      int // POST /containers/{name}/start 次数
-	restarted    int // POST /containers/{name}/restart 次数
-	stopped      int // POST /containers/{name}/stop 次数
+	started      int    // POST /containers/{name}/start 次数
+	restarted    int    // POST /containers/{name}/restart 次数
+	stopped      int    // POST /containers/{name}/stop 次数
+	stopErr      string // 非空则 POST /stop 回 500 并带上这句（模拟引擎收尾抱怨）
+	deleteErr    string // 非空则 DELETE /containers/{name} 回 500 并带上这句
 	inspectState map[string]bool
-	statusSeq    map[string][]string // 逐次 inspect 吐出的状态；耗尽后沿用最后一个
+	statusSeq    map[string][]string // 逐次 inspect 吐出的状态；耗尽后沿用最后一个；"absent" 回 404
 	logBody      string              // GET /containers/{id}/logs 的响应体
 	t            *testing.T
 }
@@ -58,7 +62,14 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	case r.Method == http.MethodGet && strings.HasSuffix(path, "/json"):
-		status := f.nextStatus(strings.TrimSuffix(tail("/containers/"), "/json"))
+		name := strings.TrimSuffix(tail("/containers/"), "/json")
+		status := f.nextStatus(name)
+		// 哨兵值 "absent"：回放「库里已经没有这个容器」——SDK 侧即 errdefs IsNotFound
+		if status == "absent" {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "No such container: " + name})
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -71,14 +82,24 @@ func (f *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/start"):
 		f.started++
 		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && strings.HasSuffix(path, "/stop"):
+		f.stopped++
+		if f.stopErr != "" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": f.stopErr})
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodPost && strings.HasSuffix(path, "/restart"):
 		f.restarted++
 		w.WriteHeader(http.StatusNoContent)
-	case r.Method == http.MethodPost && strings.HasSuffix(path, "/stop"):
-		f.stopped++
-		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodDelete && strings.Contains(path, "/containers/"):
 		f.deleteQuery = r.URL.RawQuery
+		if f.deleteErr != "" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": f.deleteErr})
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		f.t.Fatalf("未预期的守护进程请求: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
@@ -207,5 +228,119 @@ func TestStopContainer_CrashLoopStillStops(t *testing.T) {
 	}
 	if d.stopped != 1 {
 		t.Fatalf("restarting 也要下发 stop，实得 %d", d.stopped)
+	}
+}
+
+// 真机取证（Podman 5.7 rootless）：容器确实已经停下，报错来自停止之后的网络收尾
+// `removing container <id> network: 1 error occurred: * rootless netns: kill network process: permission denied`。
+// 判据：报错后现读一次现场，实测已停＝目标达成，把引擎原文带走当提醒，不判死这一步。
+func TestStopContainer_EngineComplainsAfterAlreadyStopped(t *testing.T) {
+	netns := "Error response from daemon: removing container 5264afb582e5 network: " +
+		"1 error occurred:\n\t* rootless netns: kill network process: permission denied"
+	d := &fakeDaemon{t: t,
+		statusSeq: map[string][]string{"phpo-php-8.0": {"running", "exited"}},
+		stopErr:   netns,
+	}
+	c := newFakeClient(t, d)
+	err := c.StopContainer(context.Background(), "phpo-php-8.0")
+	if err == nil {
+		t.Fatal("引擎报错必须留痕，不能当没事发生")
+	}
+	tol := AsTolerated(err)
+	if tol == nil {
+		t.Fatalf("实测已停应判为「目标达成 + 提醒」，实得普通错误: %v", err)
+	}
+	if tol.Name != "phpo-php-8.0" || !strings.Contains(tol.Msg, "rootless netns") {
+		t.Fatalf("提醒要点名容器并带上引擎原文，实得 %+v", tol)
+	}
+	if d.stopped != 1 {
+		t.Fatalf("应下发一次 stop，实得 %d", d.stopped)
+	}
+}
+
+// 反向判据：报错后现读仍在跑＝真没停下，原判失败照旧，不能借「收尾抱怨」把停不下的服务说成停了
+func TestStopContainer_StillRunningAfterErrorIsFailure(t *testing.T) {
+	d := &fakeDaemon{t: t,
+		statusSeq: map[string][]string{"phpo-php-8.0": {"running", "running"}},
+		stopErr:   "permission denied",
+	}
+	c := newFakeClient(t, d)
+	err := c.StopContainer(context.Background(), "phpo-php-8.0")
+	if err == nil {
+		t.Fatal("容器还在跑必须判失败")
+	}
+	if AsTolerated(err) != nil {
+		t.Fatalf("实测仍在跑不得算达成，实得 %v", err)
+	}
+}
+
+// 现场问不出来（第二次 inspect 也报错）时保守判失败：不能把「看不见」当成「已停」
+func TestStopContainer_UnreadableStateIsFailure(t *testing.T) {
+	d := &fakeDaemon{t: t,
+		statusSeq: map[string][]string{"phpo-php-8.0": {"running", "running"}},
+		stopErr:   "connection refused",
+	}
+	c := newFakeClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/stop") {
+			d.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/json") && d.stopped > 0 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "cannot connect to podman"})
+			return
+		}
+		d.ServeHTTP(w, r)
+	}))
+	err := c.StopContainer(context.Background(), "phpo-php-8.0")
+	if err == nil || AsTolerated(err) != nil {
+		t.Fatalf("现场问不出来时应原样判失败，实得 %v", err)
+	}
+}
+
+// 删除侧同一把尺子：DELETE 报错但现读容器已经不在了＝目标达成，引擎原文作提醒
+func TestRemoveContainer_EngineComplainsAfterAlreadyGone(t *testing.T) {
+	d := &fakeDaemon{t: t,
+		statusSeq: map[string][]string{"phpo-php-8.0": {"running", "absent"}},
+		deleteErr: "rootless netns: kill network process: permission denied",
+	}
+	c := newFakeClient(t, d)
+	err := c.RemoveContainer(context.Background(), "phpo-php-8.0")
+	tol := AsTolerated(err)
+	if tol == nil {
+		t.Fatalf("容器真没了应判达成 + 提醒，实得 %v", err)
+	}
+	if tol.Op != "remove" || !strings.Contains(tol.Msg, "rootless netns") {
+		t.Fatalf("提醒要标出是哪一步并带上引擎原文，实得 %+v", tol)
+	}
+	if !strings.Contains(d.deleteQuery, "force=1") {
+		t.Fatalf("删除应带 force: %q", d.deleteQuery)
+	}
+}
+
+// 反向判据：DELETE 报错且容器还在库里＝真失败，不得折成达成
+func TestRemoveContainer_StillPresentAfterErrorIsFailure(t *testing.T) {
+	d := &fakeDaemon{t: t,
+		statusSeq: map[string][]string{"phpo-php-8.0": {"running", "running"}},
+		deleteErr: "device or resource busy",
+	}
+	c := newFakeClient(t, d)
+	err := c.RemoveContainer(context.Background(), "phpo-php-8.0")
+	if err == nil || AsTolerated(err) != nil {
+		t.Fatalf("容器还在时必须判失败，实得 %v", err)
+	}
+}
+
+// ToleratedAsNil 只折「实测已达成」那一类；真失败要原样上抛，别把提醒助手当成万能吞错
+func TestToleratedAsNil_KeepsRealFailures(t *testing.T) {
+	if err := ToleratedAsNil(&ToleratedError{Name: "phpo-php-8.0", Op: "stop", Msg: "收尾抱怨"}); err != nil {
+		t.Fatalf("已达成那一类应折成 nil，实得 %v", err)
+	}
+	boom := errors.New("真的失败")
+	if err := ToleratedAsNil(fmt.Errorf("停止容器: %w", boom)); err == nil {
+		t.Fatal("包装过的真失败不得被吞掉")
+	}
+	if AsTolerated(fmt.Errorf("停止容器: %w", &ToleratedError{Name: "x"})) == nil {
+		t.Fatal("包装过一层的容错错误也要认得出来")
 	}
 }

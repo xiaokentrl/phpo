@@ -333,6 +333,8 @@ func TestLocaleKeysCoverAllCodes(t *testing.T) {
 	want = append(want,
 		"log.autoStartSkipAbsent", "log.autoStartSkipRunning", "log.autoStartDone",
 		"log.autoStartFail", "log.autoStartTimeout")
+	// 停止/卸载「引擎报错但实测已完成」那一行同理：只在 service 构造点给码，这里核对两侧语言包。
+	want = append(want, "log.stopNetnsWarn")
 	var miss []string
 	for _, c := range want {
 		if _, ok := zh[c]; !ok {

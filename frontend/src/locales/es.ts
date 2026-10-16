@@ -1054,6 +1054,7 @@ const messages: Record<string, string> = {
   "log.autoStartDone": "{name} iniciado automáticamente",
   "log.autoStartFail": "fallo al iniciar {name}: {reason}",
   "log.autoStartTimeout": "tras esperar {wait}s el motor de contenedores seguía sin estar listo - este inicio automático se omitió: inicie primero el motor y pulse Iniciar en la página del servicio",
+  "log.stopNetnsWarn": "{name} ya está en el estado solicitado - pero el motor informó de un error al terminar: {reason}; si se repite, ejecute usted mismo systemctl --user restart podman para reiniciar el servicio del motor",
   "log.trashPurged": "papelera caducada vaciada {rest}",
   "log.trashRegisterFail": "fallo al registrar en la papelera (los ficheros ya están dentro del directorio de papelera): {rest}",
   "log.trashRestored": "restaurado {rest}",

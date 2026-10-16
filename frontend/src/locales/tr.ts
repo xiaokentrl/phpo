@@ -1054,6 +1054,7 @@ const messages: Record<string, string> = {
   "log.autoStartDone": "{name} otomatik olarak başlatıldı",
   "log.autoStartFail": "{name} başlatılamadı: {reason}",
   "log.autoStartTimeout": "{wait} saniye beklendi ama konteyner motoru henüz hazır değildi - bu otomatik başlatma atlandı: önce motoru başlatın, sonra hizmet sayfasında Başlat düğmesine basın",
+  "log.stopNetnsWarn": "{name} zaten istenen durumda - ancak motor işi toplarken bir hata bildirdi: {reason}; bu tekrarlanıyorsa motor hizmetini yeniden başlatmak için systemctl --user restart podman komutunu kendiniz çalıştırın",
   "log.trashPurged": "süresi geçen çöp kutusu boşaltıldı {rest}",
   "log.trashRegisterFail": "çöp kutusu kaydı başarısız (dosyalar zaten çöp kutusu dizininin içinde): {rest}",
   "log.trashRestored": "geri yüklendi {rest}",

@@ -265,7 +265,8 @@ func (s *CleanupService) ClearOperations() error {
 func (s *CleanupService) removeOne(ctx context.Context, r model.DockerResource) error {
 	switch r.Type {
 	case model.ResContainer:
-		return s.dock.RemoveContainer(ctx, r.Name)
+		// 实测容器已经不在了就算删成（Podman rootless 收尾报错那类）；其余错误原样上抛
+		return engine.ToleratedAsNil(s.dock.RemoveContainer(ctx, r.Name))
 	case model.ResVolume:
 		return s.dock.RemoveVolume(ctx, r.Name)
 	case model.ResNetwork:

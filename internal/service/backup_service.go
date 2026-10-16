@@ -565,7 +565,7 @@ func (s *BackupService) pauseStep(paused *[]engine.ContainerRef) *task.FuncStep 
 		for _, k := range dbKinds {
 			for _, v := range snap.Running[string(k)] {
 				log.Log(string(model.LogDim), "暂停 "+string(k)+" "+v)
-				if err := s.lc.Stop(ctx, k, v); err != nil {
+				if err := tolerateStop(log, s.lc.Stop(ctx, k, v)); err != nil {
 					return err
 				}
 				*paused = append(*paused, engine.ContainerRef{Kind: string(k), Version: v})
@@ -604,7 +604,8 @@ func (s *BackupService) clearNamespace(ctx context.Context) error {
 	for _, a := range actual {
 		name := a.Ref.Name()
 		_ = s.dock.StopContainer(ctx, name) // 未运行时停失败可忽略
-		if err := s.dock.RemoveContainer(ctx, name); err != nil {
+		// 容器实测已经不在了就算删成（Podman rootless 停完容器后清网络报错那类），别把已做成的判死
+		if err := engine.ToleratedAsNil(s.dock.RemoveContainer(ctx, name)); err != nil {
 			return err
 		}
 	}

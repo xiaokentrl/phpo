@@ -54,5 +54,5 @@ func (c *Client) PreCleanContainer(ctx context.Context, name string) error {
 	if classifyOwner(true, isPhpoManaged(labels)) == ownerForeign {
 		return fmt.Errorf("%w: %s", ErrNameConflict, name)
 	}
-	return c.RemoveContainer(ctx, name)
+	return ToleratedAsNil(c.RemoveContainer(ctx, name))
 }

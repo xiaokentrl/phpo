@@ -28,6 +28,8 @@ type fakeDocker struct {
 	dials        int                             // CalibrateOnce 次数（一次校准只拨一遍 Docker 的判据）
 	managedCalls int                             // ManagedContainers 单独拨号次数（校准里应为 0）
 	createErr    error                           // 非空则 CreateServiceContainer 失败（模拟端口绑不上等建容器错误）
+	stopErr      error                           // 非空则 StopContainer 报错（真机 Podman rootless 收尾报错那类）
+	removeErr    error                           // 非空则 RemoveContainer 报错（同上口径）
 	imageErr     error                           // 非空则 ImageExists 失败（模拟镜像库探针本身不可用）
 	discoverErr  error                           // 非空则 CalibrateOnce 失败（模拟 Docker 这次没答上来）
 	discovery    *engine.Discovery               // CalibrateOnce 要现数的那份答案（每档校准都问一次）
@@ -95,13 +97,25 @@ func (f *fakeDocker) StopContainer(_ context.Context, name string) error {
 	if _, ok := f.containers[name]; !ok {
 		return errors.New("no such container: " + name)
 	}
+	// 报错那两类各有各的现场，与真引擎同一口径：容错那一类＝现读实测已经停下，其余＝还在跑
+	if f.stopErr != nil {
+		if engine.AsTolerated(f.stopErr) == nil {
+			return f.stopErr
+		}
+		f.containers[name] = false
+		return f.stopErr
+	}
 	f.containers[name] = false
 	return nil
 }
 func (f *fakeDocker) RemoveContainer(_ context.Context, name string) error {
+	// 同一把尺子：真失败＝容器仍留在库里；容错那一类＝现读已经不在了
+	if f.removeErr != nil && engine.AsTolerated(f.removeErr) == nil {
+		return f.removeErr
+	}
 	delete(f.containers, name) // 只删容器；卷保留
 	delete(f.published, name)
-	return nil
+	return f.removeErr
 }
 func (f *fakeDocker) PreCleanContainer(_ context.Context, name string) error {
 	delete(f.containers, name)
