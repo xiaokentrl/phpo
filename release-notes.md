@@ -1,33 +1,25 @@
 ## English
 
-### phpo 0.1.118 What's Changed from 0.1.117 to 0.1.118
+### phpo 0.1.119 What's Changed from 0.1.118 to 0.1.119
 
 **Version type: Stable**
 
 **Changed**
 
-- Reorder release notes to English first and Chinese second, each title inside its own section
-
-**Fixed**
-
-- Stop re-hashing every cached image when opening the offline cache page
-- Read the system hosts file once per site list refresh instead of once per site
-- Stop building a full status snapshot just to resolve the nginx container name
-- Cut the 12-second background state calibration to a single Docker call per beat
+- Stop the three platform packaging jobs from cloning the whole repository history just to read the version number
+- Skip regenerating the frontend TypeScript bindings when no Go source has changed
+- Scan the main binary's library dependencies twice instead of four times when building the AppImage
+- Move the version type line into each language section of the release body, so English readers no longer see a Chinese-only line
 
 ## 中文
 
-### 0.1.118 相比 0.1.117 更新内容
+### 0.1.119 相比 0.1.118 更新内容
 
 **版本类型：稳定版**
 
 **修改**
 
-- 发布说明改成英文在前、中文在后，标题句各写进自己那一段
-
-**修复**
-
-- 进入离线缓存页不再把每份镜像逐字节重算一遍，风扇不再狂转
-- 刷新站点列表时系统 hosts 只读一次，不再逐个站点重读整份文件
-- 校验和重载 Nginx 配置不再为拿一个容器名重建整份状态快照
-- 每 12 秒一次的后台状态校准只问 Docker 一遍，界面响应更利索
+- 云端三个平台的出包作业不再为读一个版本号克隆整仓历史
+- 没改 Go 源码时不再重新生成前端 TypeScript 绑定
+- AppImage 打包时对主程序依赖库的扫描从四遍减到两遍
+- 发布正文里的版本类型那一行拆进中英两段各自的位置，英文读者不再只看到一句中文
