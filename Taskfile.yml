@@ -21,8 +21,29 @@ tasks:
     cmds:
       - wails3 dev -devserver "http://localhost:9245"
 
+  # 怎么判「要不要重跑」（本仓库用的是 wailsapp/task 分叉，它没写 method: 时默认走 checksum，
+  # 见分叉包 setup.go 的 `Method == "" → "checksum"`；不是按文件时间比新旧）：
+  #   1. 把 sources 匹配到的每颗文件「文件名 + 全文内容」压成一个 xxh3 哈希，跟 .task/checksum/<任务名> 里
+  #      上次记的那份比；不同就重跑，并在跑之前先把新哈希写进去（任务失败时 OnError 会把这条记录删掉，
+  #      所以下次一定重跑，不会留下「失败却判已最新」的假绿）。
+  #      → touch 改时间戳不算改动；只有内容真的变（含改文件名）才触发。
+  #   2. generates 只问「这些文件还在不在」，不比时间；一条 glob 匹配到 0 颗就直接判「要重跑」。
+  #
+  # 增量判定只加在本任务，不加在 frontend:build：
+  #   - 全新 checkout（CI / release runner）没有 .task/（下面的 ignore 规则），第 1 步拿到的旧哈希是空串，
+  #     必然与当前哈希不同 → 照常重新生成绑定，行为与改前逐字一致；本机实测「删掉整个 frontend/bindings
+  #     目录」也重跑（第 2 步匹配不到文件）。
+  #   - frontend:build 不能照做：frontend/dist/index.html 是**入库的占位文件**（§4.1），一旦挂上
+  #     sources/generates，占位文件永远「存在」，第 2 步过得去；只要某次检出的 .task 哈希与源内容凑巧一致，
+  #     pnpm build 就被判成「已是最新」而跳过，go:embed 打进去的 dist 只剩这份占位、没有任何带哈希的 JS 资源，
+  #     界面直接白屏。占位入库这一条决定了 dist 只能每次真构建。
   bindings:
-    desc: 重新生成前端 TS 绑定（禁止手改 frontend/bindings/）
+    desc: 重新生成前端 TS 绑定（禁止手改 frontend/bindings/；Go 侧与 wails.json 都没动就跳过）
+    sources:
+      - '**/*.go'
+      - 'wails.json'
+    generates:
+      - 'frontend/bindings/**/*.ts'
     cmds:
       - wails3 generate bindings -ts -clean
 

@@ -2,8 +2,9 @@
 # gen-release-notes.sh：生成 GitHub Release 的正文 release-notes.md。
 #
 # 干什么：把「本版相对上一版改了什么」排成中英双语、分类固定的说明，直接当 Release 正文。
-#        顺序是英文在前、中文在后；两种语言的标题句各写在自己那一段的开头（英文句进 `## English`，中文句进 `## 中文`），
-#        顶部不再有中英拼在一起的总标题。
+#        顺序是英文在前、中文在后；两种语言各自的小标题（英文句进 `## English`，中文句进 `## 中文`）
+#        和「版本类型」那一行都放在自己那一段里——英文段写 `**Version type: Stable｜Preview**`，
+#        中文段写 `**版本类型：稳定版｜预览版**`，顶部不再放任何中英混排的行。
 # 为什么要脚本排：标题、分类名、顺序、空行是固定契约，手写每次都会漂；只有条目内容是该轮现写的，
 #                 所以脚本把可变的那部分从一份条目清单读进来，其余照模板吐。
 #
@@ -35,7 +36,11 @@ prev="$( { git tag --list 'v[0-9]*' --format='%(refname:short)' | sed 's/^v//; s
         | awk -v cur="$base" '{ if ($0 == cur) { print prev; exit } prev = $0 }' )"
 [ -n "$prev" ] || { echo "本地标签里找不到比 $base 更早的版本，先 git fetch --tags" >&2; exit 1; }
 
-if [[ "$ver" == *-* ]]; then kind='预览版'; else kind='稳定版'; fi
+if [[ "$ver" == *-* ]]; then
+  kind_zh='预览版'; kind_en='Preview'
+else
+  kind_zh='稳定版'; kind_en='Stable'
+fi
 
 keys=(added changed fixed removed)
 zh_names=(新增 修改 修复 删除)
@@ -72,11 +77,10 @@ block() { # $1=分类名 $2=条目（每行自带换行）
 }
 
 {
-  printf '**版本类型：%s**\n' "$kind"
-  printf '\n## English\n\n### phpo %s What'"'"'s Changed from %s to %s\n' "$ver" "$prev" "$ver"
+  printf '## English\n\n### phpo %s What'"'"'s Changed from %s to %s\n\n**Version type: %s**\n' "$ver" "$prev" "$ver" "$kind_en"
   for i in 0 1 2 3; do block "${en_names[$i]}" "${EN[$i]}"; done
-  printf '\n## 中文\n\n### %s 相比 %s 更新内容\n' "$ver" "$prev"
+  printf '\n## 中文\n\n### %s 相比 %s 更新内容\n\n**版本类型：%s**\n' "$ver" "$prev" "$kind_zh"
   for i in 0 1 2 3; do block "${zh_names[$i]}" "${ZH[$i]}"; done
 } > release-notes.md
 
-echo "release-notes.md 已生成：$ver（相比 $prev，$kind）"
+echo "release-notes.md 已生成：$ver（相比 $prev，$kind_zh）"

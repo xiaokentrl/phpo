@@ -31,6 +31,9 @@
 # 工具缓存
 .air/
 .gocache/
+# wailsapp/task 的增量判定缓存（Taskfile 的 sources/generates 用它记上次源内容哈希，
+# 落在 .task/checksum/<任务名>）。纯本机派生态：删了最多下次多跑一遍，绝不能入库。
+.task/
 coverage.out
 # AppImage 出包期缓存：钉死哈希的 appimagetool + type2 运行时（约 51M，重跑会按 sha256 复验），
 # 以及压包前的 AppDir 临时目录（脚本退出时自己清，异常中断留下的也一并忽略）

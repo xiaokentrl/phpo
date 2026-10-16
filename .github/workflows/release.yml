@@ -81,9 +81,11 @@ jobs:
           - target: darwin
             os: macos-14
     steps:
+      # 这里刻意不写 fetch-depth: 0（本作业三步内没有任何 git 调用：版本号只由 scripts/version.sh
+      # 从 wails.json 里 grep 出来，产物也不落标签）。全量克隆会把 .git（本机实测 81M）在
+      # linux / windows / darwin 三台 runner 上各拉一遍，纯粹是出包前的等分钟。
+      # 下方 release 作业仍需 fetch-depth: 0，因为它的「Resolve version and tag」要现算标签指向哪个提交。
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-go@v6
         with:
@@ -187,6 +189,8 @@ jobs:
       # 提到 job 级 env：步骤 if 可读 env 上下文（secrets 上下文在 step if 不可用）。
       PHPO_SIGNING_KEY: ${{ secrets.PHPO_SIGNING_KEY }}
     steps:
+      # fetch-depth: 0 不能省：「Resolve version and tag」用 `git rev-parse` / `git rev-list -n1`
+      # 现算标签指向哪个提交，浅克隆里拿不到已存在标签的对象，守卫会变成恒过。
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0

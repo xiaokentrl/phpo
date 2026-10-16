@@ -138,21 +138,31 @@ chmod 0755 "$APPDIR/AppRun"
 HOST_KEEP='^(ld-linux|linux-vdso|libc\.so|libm\.so|libmvec\.so|libpthread\.so|libdl\.so|librt\.so|libresolv\.so|libnsl\.so|libutil\.so|libanl\.so|libgcc_s\.so|libstdc\+\+\.so|libGL\.so|libGLX\.so|libEGL\.so|libGLdispatch\.so|libglapi\.so|libgallium|libgbm\.so|libdrm\.so|libX|libxcb|libwayland|libnss_|libselinux|libsystemd|libudev|libapparmor)'
 GUI_ROOTS_RE='^(libgtk-4|libwebkitgtk-|libjavascriptcoregtk-|libsoup-3)'
 
-# 一条 soname→绝对路径：ldd 递归展开整条链，一趟就够
-ld_pairs() {
-  LD_LIBRARY_PATH="$LIBDIR" ldd "$@" 2>/dev/null | sed -n 's|^[[:space:]]*\([^[:space:]]\+\)[[:space:]]*=>[[:space:]]*\(/[^[:space:]]\+\).*|\1 \2|p'
+# 一条 soname→绝对路径：从已落盘的 ldd 输出里取，不再为同一颗二进制反复解析整条依赖链。
+# 改前主程序被递归 ldd 了四遍（认图形栈的根、拷包、核对理由、查 not found），
+# 每条 soname 又各起一对 `printf | grep` 子进程——本机实测 137 条 × 三遍，整脚本 user 时间 18.8s
+# 而 wall 只有 2.8s，差的全是 fork 出来的碎进程。
+ld_snapshot() { # $1=落点文件：递归 ldd 的整份输出（含 stderr，not found 也在里面）
+  LD_LIBRARY_PATH="$LIBDIR" ldd "$SRC_BIN" >"$1" 2>&1
 }
 
-# 先拿到主程序的完整闭包，再从这里认出图形栈的根，逐根展开它们自己的闭包合成「留给宿主」的黑名单。
+ld_pairs() { # $1=快照文件
+  sed -n 's|^[[:space:]]*\([^[:space:]]\+\)[[:space:]]*=>[[:space:]]*\(/[^[:space:]]\+\).*|\1 \2|p' "$1"
+}
+
+# 先拿到主程序的完整闭包（一趟，落盘复用），再从这里认出图形栈的根，逐根展开它们自己的闭包
+# 合成「留给宿主」的黑名单。
 # 按闭包减而不是按名字前缀减：图形栈下游有 cairo/pango/harfbuzz/gstreamer 一百多颗，点名表维护不住，
 # 而且一旦漏一颗就会把包内库和宿主库混成两套版本。
+LD_PRE="$WORK/ldd-pre-copy.txt"
+ld_snapshot "$LD_PRE"
 GUI_SONAMES=()
 declare -A GUI_PATH=()
 while read -r soname path; do
-  printf '%s\n' "$soname" | grep -Eq "$GUI_ROOTS_RE" || continue
+  [[ $soname =~ $GUI_ROOTS_RE ]] || continue
   GUI_SONAMES+=("$soname")
   GUI_PATH["$soname"]="$path"
-done < <(ld_pairs "$SRC_BIN")
+done < <(ld_pairs "$LD_PRE")
 [ "${#GUI_SONAMES[@]}" -gt 0 ] || {
   echo "$SRC_BIN 的闭包里没有 libgtk-4 / libwebkitgtk-6.0：宿主缺图形栈（apt install libgtk-4-1 libwebkitgtk-6.0-4）" >&2
   exit 1
@@ -173,7 +183,7 @@ copy_one() { # $1=soname $2=宿主绝对路径
     *) return 0 ;;
   esac
   [ -n "${GUI_EXCLUDE[$soname]:-}" ] && return 0
-  printf '%s\n' "$soname" | grep -Eq "$HOST_KEEP" && return 0
+  [[ $soname =~ $HOST_KEEP ]] && return 0
   [ -e "$LIBDIR/$soname" ] && return 0
   # -L：把符号链接摊成实体文件，包里不留指向宿主的断链
   cp -L "$path" "$LIBDIR/$soname"
@@ -185,7 +195,7 @@ while read -r soname path; do
   [ -n "${soname:-}" ] || continue
   [ -n "${path:-}" ] || continue
   copy_one "$soname" "$path"
-done < <(ld_pairs "$SRC_BIN")
+done < <(ld_pairs "$LD_PRE")
 
 # 包内绝不允许出现图形栈的任何一颗——出现了就是上面那套减法失效，宿主子进程会与包内库版本错配。
 for soname in "${!GUI_EXCLUDE[@]}"; do
@@ -196,16 +206,20 @@ done
 
 # ---------- 4. 闭包核对：包外的每一条都要说得出理由 ----------
 echo "→ 核对依赖闭包"
+# 包已经灌好，这里必须重新解析一遍（上一份快照记的是拷包前的宿主路径，用它核对等于自己查自己）。
+# 但只解析一遍：整份输出落盘，「说得出理由」和「有没有 not found」两条断言都从同一份快照里读。
+LD_POST="$WORK/ldd-post-check.txt"
+ld_snapshot "$LD_POST"
 bad=0
 while read -r soname path; do
   [ -n "${soname:-}" ] || continue
   case "$path" in "$LIBDIR"/*) continue ;; esac                       # 已在包内
-  printf '%s\n' "$soname" | grep -Eq "$HOST_KEEP" && continue         # ① 系统层，刻意留给宿主
+  [[ $soname =~ $HOST_KEEP ]] && continue                             # ① 系统层，刻意留给宿主
   [ -n "${GUI_EXCLUDE[$soname]:-}" ] && continue                      # ② 图形栈整棵树，随宿主子进程同版本
   echo "  ✗ $soname 既没捆进包内，也说不出留给宿主的理由（宿主解析到 $path）" >&2
   bad=1
-done < <(ld_pairs "$SRC_BIN")
-missing="$(LD_LIBRARY_PATH="$LIBDIR" ldd "$SRC_BIN" 2>&1 | grep 'not found' || true)"
+done < <(ld_pairs "$LD_POST")
+missing="$(grep 'not found' "$LD_POST" || true)"
 [ -z "$missing" ] || { echo "  ✗ $SRC_BIN 有解不开的依赖：$missing" >&2; bad=1; }
 [ "$bad" = 0 ] || { echo "闭包核对未过，不出包。" >&2; exit 1; }
 
