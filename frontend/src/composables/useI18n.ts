@@ -7,13 +7,13 @@ import { messages, type Locale } from '@/locales'
 const LS_KEY = 'phpo-locale'
 
 // 首启（localStorage 里没有这一项）默认英文；用户选过一次以后就永远读回他选的那一份。
-// 三语之外的脏值（手工改过存档）也按首启处理，回落英文，不显示成半中半英。
+// 八语之外的脏值（手工改过存档）也按首启处理，回落英文，不显示成键名。
 const DEFAULT_LOCALE: Locale = 'en-US'
 
 function initialLocale(): Locale {
   try {
     const v = localStorage.getItem(LS_KEY)
-    return v === 'zh-CN' || v === 'zh-TW' || v === 'en-US' ? v : DEFAULT_LOCALE
+    return v === 'zh-CN' || v === 'zh-TW' || v === 'en-US' || v === 'ko' || v === 'fr' || v === 'de' || v === 'es' || v === 'tr' ? v : DEFAULT_LOCALE
   } catch {
     return DEFAULT_LOCALE
   }

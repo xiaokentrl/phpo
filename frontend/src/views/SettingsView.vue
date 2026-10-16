@@ -212,6 +212,11 @@ function pickLang(l: Locale) {
           <button class="pick" :class="{ selected: locale === 'en-US' }" data-lang="en-US" @click="pickLang('en-US')">English</button>
           <button class="pick" :class="{ selected: locale === 'zh-CN' }" data-lang="zh-CN" @click="pickLang('zh-CN')">简体中文</button>
           <button class="pick" :class="{ selected: locale === 'zh-TW' }" data-lang="zh-TW" @click="pickLang('zh-TW')">繁體中文</button>
+          <button class="pick" :class="{ selected: locale === 'ko' }" data-lang="ko" @click="pickLang('ko')">한국어</button>
+          <button class="pick" :class="{ selected: locale === 'fr' }" data-lang="fr" @click="pickLang('fr')">Français</button>
+          <button class="pick" :class="{ selected: locale === 'de' }" data-lang="de" @click="pickLang('de')">Deutsch</button>
+          <button class="pick" :class="{ selected: locale === 'es' }" data-lang="es" @click="pickLang('es')">Español</button>
+          <button class="pick" :class="{ selected: locale === 'tr' }" data-lang="tr" @click="pickLang('tr')">Türkçe</button>
         </div>
       </div>
     </div>

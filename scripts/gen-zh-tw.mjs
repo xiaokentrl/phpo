@@ -16,11 +16,14 @@ const OUT = 'frontend/src/locales/zh-TW.ts'
 
 // parse：zh-CN.ts 是扁平 "key": "value" 字面量（生成物、无嵌套），逐行正则提取即可，
 // 不 eval——值里可能有任意文本，正则口径与 scripts/check-i18n-keys.go 一致。
+// 取到的是**源码原文**（`\n` 是两个字符），必须先 JSON.parse 还原成真实字符串再转换：
+// 直接把原文塞进 JSON.stringify 会把反斜杠再逃一次，繁体侧就出现 `\\n`，
+// 界面上显示成一个字面反斜杠（v0.1.120 的 settings.docker.placeholder / engine.installPodmanCmd 就是这么坏的）。
 const kvRe = /^\s*"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$/
 const zh = {}
 for (const line of readFileSync(SRC, 'utf8').split('\n')) {
   const m = kvRe.exec(line)
-  if (m) zh[m[1]] = m[2]
+  if (m) zh[m[1]] = JSON.parse('"' + m[2] + '"')
 }
 if (Object.keys(zh).length === 0) throw new Error('zh-CN.ts 未解析出任何键值对')
 

@@ -5,7 +5,9 @@
 //  1. zh-CN.ts 与 en-US.ts 键集合完全相等（切语言无缺键）；
 //  2. 每条键的占位符集合（{name} 记号）两侧相等——英文把 {n} 写成 {count} 这类漂移在这里拦下，
 //     否则英文界面渲染时 {n} 原样漏出、参数悄悄丢掉；
-//  3. 条目行文法唯一：双引号键 + 双引号值。长得像条目却按别的方式写（模板字符串值、单引号值、
+//  3. 每条键的转义形状（`\n`、`\"` 这类反斜杠记号）两侧相等——译文里把 `\n` 误写成 `\\n`，
+//     界面会显示出一个字面的反斜杠 n，占位符校验看不见它，所以单独拦一道；
+//  4. 条目行文法唯一：双引号键 + 双引号值。长得像条目却按别的方式写（模板字符串值、单引号值、
 //     字符串拼接）一律判红——静默跳过 = 双方各漏各的，对齐校验形同虚设。
 //     值内的反引号只是普通字符（如 `/var/lib/...` 代码标记），不影响解析。
 //
@@ -34,6 +36,28 @@ type entry struct {
 	key   string
 	value string
 	ph    map[string]struct{}
+	esc   map[string]int
+}
+
+// escOf 值里的换行/制表记号数量（只认 `\n`、`\t`、`\r` 三种控制记号）。
+// 引号类转义不进比对：中文用「」、法语用 «»、德语用 „“，数量本就各异，比了是假红。
+// `"a\nb"` → {"n":1}；误写成 `"a\\nb"`（双重转义）→ 这里记为 {"":1}，与基准形状不同，因而可辨。
+func escOf(raw string) map[string]int {
+	m := map[string]int{}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' || i+1 >= len(raw) {
+			continue
+		}
+		switch raw[i+1] {
+		case 'n', 't', 'r':
+			m[string(raw[i+1])]++
+			i++
+		case '\\':
+			m["\\"]++
+			i++
+		}
+	}
+	return m
 }
 
 func entriesOf(path string) ([]entry, []string, error) {
@@ -51,7 +75,7 @@ func entriesOf(path string) ([]entry, []string, error) {
 				ph[name[1]] = struct{}{}
 			}
 			parsed[m[1]] = true
-			out = append(out, entry{key: m[1], value: m[2], ph: ph})
+			out = append(out, entry{key: m[1], value: m[2], ph: ph, esc: escOf(m[2])})
 			continue
 		}
 		trim := strings.TrimSpace(line)
@@ -66,10 +90,12 @@ func entriesOf(path string) ([]entry, []string, error) {
 }
 
 func main() {
-	// 三语（AGENTS §5.15：每种语言一个 locale 文件）：zh-CN 是基准，en-US / zh-TW 各与它对齐。
+	// 八语（AGENTS §5.15：每种语言一个 locale 文件）：zh-CN 是基准，其余各与它对齐。
 	// 两个可选参数覆盖路径（负向演练用）：go run scripts/check-i18n-keys.go <a> <b>
 	zhPath, otherPath := "frontend/src/locales/zh-CN.ts", "frontend/src/locales/en-US.ts"
-	paths := []string{zhPath, otherPath, "frontend/src/locales/zh-TW.ts"}
+	paths := []string{zhPath, otherPath,
+		"frontend/src/locales/zh-TW.ts", "frontend/src/locales/ko.ts", "frontend/src/locales/fr.ts",
+		"frontend/src/locales/de.ts", "frontend/src/locales/es.ts", "frontend/src/locales/tr.ts"}
 	if len(os.Args) == 3 {
 		paths = []string{os.Args[1], os.Args[2]} // 演练模式只比对这两份
 	}
@@ -138,6 +164,17 @@ func main() {
 			sort.Strings(missThis)
 			problems = append(problems, fmt.Sprintf("%s（%s 缺 %v / %s 缺 %v）", e.key, baseName, missBase, path, missThis))
 		}
+		// 转义形状比对：`\n` 写成 `\\n` 会让界面显示字面反斜杠，占位符校验看不见，单独拦
+		for _, e := range base {
+			oe, ok := thisMap[e.key]
+			if !ok {
+				continue
+			}
+			if d := escDiff(e.esc, oe.esc); d != "" {
+				problems = append(problems, fmt.Sprintf("%s 转义形状不一致：%s（基准记号 %v / 本语言记号 %v）",
+					e.key, d, escKeys(e.esc), escKeys(oe.esc)))
+			}
+		}
 	}
 
 	if len(problems) == 0 {
@@ -165,6 +202,37 @@ func keySet(es []entry) map[string]struct{} {
 		m[e.key] = struct{}{}
 	}
 	return m
+}
+
+// escKeys 排序后的记号列表，仅用于报错信息
+func escKeys(m map[string]int) []string {
+	var out []string
+	for k, n := range m {
+		out = append(out, fmt.Sprintf("backslash-%s x%d", k, n))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// escDiff 两组转义记号是否逐符号等量；不等时回一句人话说明差在哪。
+// 抓的就是「把 \n 写成 \\n」这一类：记号本身变成反斜杠，界面于是显示出一个字面反斜杠。
+func escDiff(base, other map[string]int) string {
+	var parts []string
+	for k, n := range base {
+		if o := other[k]; o != n {
+			parts = append(parts, fmt.Sprintf("反斜杠+%s 基准 %d 个、本语言 %d 个", k, n, o))
+		}
+	}
+	for k, n := range other {
+		if _, ok := base[k]; !ok {
+			parts = append(parts, fmt.Sprintf("本语言多出 反斜杠+%s x%d", k, n))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "；")
 }
 
 func dupKeys(es []entry) []string {
