@@ -42,7 +42,10 @@ jobs:
           if [ -n "$out" ]; then echo "需要 gofmt 的文件:"; echo "$out"; exit 1; fi
 
       # go vet 为阻断门禁：属 Go 工具链、离线可验真，本地已全绿。
-      # 即便下方 golangci-lint 暂非阻断，vet 级问题也会在此拦下。
+      # 它不与下方 golangci-lint 合并成一条：golangci-lint 是外部二进制、版本与其所用 Go 的
+      # export data 格式强绑（Install golangci-lint 上方那段记的就是它因版本不符而「一项都没跑」的那次）。
+      # 那份一挂、它默认的 vet 检查集同时静默清零，vet 级问题就没有任何门禁在看了。
+      # 这一条不经过外部二进制，Go 工具链自己就能跑，所以两份要各自活着——留一份是护栏，不是重复劳动。
       - name: go vet
         run: go vet ./...
 
