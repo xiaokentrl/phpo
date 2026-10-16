@@ -357,3 +357,14 @@ func TestGateEveryActionWiredInFacade(t *testing.T) {
 		}
 	}
 }
+
+// AutoStart 门面：wails 未 Attach（demo/单测）时两路都给 errNotReady，不 panic
+func TestAutoStart_NotReady(t *testing.T) {
+	a := NewApp() // Attach 未跑，a.wails 为 nil
+	if _, err := a.AutoStartGet(); err == nil {
+		t.Fatal("未 Attach 时 Get 应报 errNotReady")
+	}
+	if err := a.AutoStartSet(true); err == nil {
+		t.Fatal("未 Attach 时 Set 应报 errNotReady")
+	}
+}

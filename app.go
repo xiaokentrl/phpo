@@ -105,6 +105,27 @@ func (a *App) Quit() error {
 	return nil
 }
 
+// AutoStartGet 读当前「开机自启动」注册态（Wails AutostartManager：Linux 写 ~/.config/autostart/、
+// Windows 写 HKCU Run 键、macOS 走 SMAppService/LaunchAgent）。OS 注册即唯一权威，不另落一份配置。
+func (a *App) AutoStartGet() (bool, error) {
+	if a.wails == nil {
+		return false, errNotReady
+	}
+	return a.wails.Autostart.IsEnabled()
+}
+
+// AutoStartSet 设「开机自启动」：Enable 重复调用安全（注册被覆盖，指向当前二进制——
+// 覆盖安装换路径后再开一次即自愈）；Disable 对未注册态返回 nil。切换即写，立即生效（下次登录起）。
+func (a *App) AutoStartSet(enable bool) error {
+	if a.wails == nil {
+		return errNotReady
+	}
+	if enable {
+		return a.wails.Autostart.Enable()
+	}
+	return a.wails.Autostart.Disable()
+}
+
 // ServiceStartup 实现 Wails v3 服务生命周期（启动钩子含残留临时目录清理，自 T211 注册）
 func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	return a.assembly.Startup(ctx)

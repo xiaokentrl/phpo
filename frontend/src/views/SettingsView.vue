@@ -11,6 +11,7 @@ import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
 import { backendMsg } from '@/utils/backendMsg'
 import { currentVersion } from '@/api/updater'
+import { getAutoStart, setAutoStart } from '@/api/autostart'
 import { getSources, setSources, probeSources } from '@/api/dockerSource'
 import { LAYOUT_LIMITS, LAYOUT_PRESETS, UI_SCALE, type PresetName } from '@/constants/layout'
 import type { Locale } from '@/locales'
@@ -23,6 +24,33 @@ const { openUpdateModal } = useModals()
 const { preflight } = usePreflight()
 const version = ref('')
 onMounted(async () => { version.value = await currentVersion() })
+
+// 开机自启动：OS 注册态是唯一权威（硬红线 4）——每次进页现问一次，不落本地缓存。
+// 切换即写（Enable/Disable 同步返回）；写失败回滚开关并 toast 后端原话现译，绝不留在假状态上。
+const autoStart = ref(false)
+const autoStartReady = ref(true)
+const autoStartBusy = ref(false)
+
+onMounted(async () => {
+  const v = await getAutoStart()
+  if (v === null) { autoStartReady.value = false; return }
+  autoStart.value = v
+})
+
+async function toggleAutoStart(): Promise<void> {
+  if (autoStartBusy.value || !autoStartReady.value) return
+  const next = !autoStart.value
+  autoStartBusy.value = true
+  try {
+    await setAutoStart(next)
+    autoStart.value = next
+    toast(t('settings.autostart.done', { state: t(next ? 'common.on' : 'common.off') }), 'ok', 2200)
+  } catch (e: unknown) {
+    toast(backendMsg(String(e)), 'err', 4600)
+  } finally {
+    autoStartBusy.value = false
+  }
+}
 
 // Docker 镜像源（联网拉取那一级）：清单的权威值在 config.yaml，回显只认后端读回来的那一份（硬红线 4）。
 const dockerText = ref('')
@@ -200,6 +228,26 @@ function pickLang(l: Locale) {
         <label class="danger-check tray-check">
           <input v-model="prefs.tray.enabled" type="checkbox" id="tray-show" class="tray-check-input" />
           <span class="check-label text-dim">{{ t('settings.tray.show') }}</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card card-gap">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.autostart') }}</h3>
+        <span class="chip">{{ t('settings.autostart.hint') }}</span>
+      </div>
+      <div class="stack-12">
+        <label class="danger-check tray-check">
+          <input
+            type="checkbox"
+            id="autostart"
+            class="tray-check-input"
+            :checked="autoStart"
+            :disabled="!autoStartReady || autoStartBusy"
+            @change="toggleAutoStart"
+          />
+          <span class="check-label text-dim">{{ t('settings.autostart.enable') }}</span>
         </label>
       </div>
     </div>
