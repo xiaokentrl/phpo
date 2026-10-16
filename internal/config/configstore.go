@@ -331,7 +331,9 @@ func (c *ConfigStore) AutostartRefs() []string {
 }
 
 // SetAutostartRefs 全量替换勾选集：refs 里出现的即勾选，其余已有记录一律取消（取消只翻标记，
-// 端口/密码/数据目录照原样留着）。形状不合法的 ref 直接报错并点名原值，不静默丢弃。
+// 端口/密码/数据目录照原样留着）。形状不合法的 ref 直接报错并点名原值，不静默丢弃；
+// 版本键还必须是路径安全的（禁 `/`、`\`、`..`、空字符）——这个键之后会随快照去拼服务数据目录，
+// 落盘那一刻不放过，下次启动的自启清单就带不出宿主路径。
 //
 // 为「本次新勾选、此前没有任何配置记录」的版本建记录时，密码按当前实际生效的默认值一并落定：
 // 空着建等于往配置里写「这个版本的密码是空」，下次重建容器时它会被当成空密码——原本用的是 123456。
@@ -342,6 +344,9 @@ func (c *ConfigStore) SetAutostartRefs(refs []string) error {
 		kind, ver, ok := SplitSvcRef(r)
 		if !ok {
 			return fmt.Errorf("%s: %s", errs.SvcMissing, strings.TrimSpace(r))
+		}
+		if vc := ValidateVersion(kind, ver); !vc.Ok {
+			return fmt.Errorf("%s", vc.Msg)
 		}
 		want[JoinSvcRef(kind, ver)] = true
 	}

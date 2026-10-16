@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"phpo/pkg/errs"
 )
 
 // 开机自启清单的落盘与回显：勾选集是「全量覆盖」，取消只翻标记，不带走端口/密码/数据目录。
@@ -87,6 +89,7 @@ func TestConfigStoreAutostartUncheckKeepsOtherFields(t *testing.T) {
 }
 
 // 形状不合法的引用点名报错，且不半写：已有的勾选集不能因为一个坏值被改掉。
+// 形状对但版本不是路径安全的（`..`、`\`、空字符）同样拒——这个键落盘后下次启动要拿去拼服务数据目录。
 func TestConfigStoreAutostartRejectsMalformedRefs(t *testing.T) {
 	cs := newStoreAt(t.TempDir() + "/config.yaml")
 	if err := cs.SetAutostartRefs([]string{"redis/8"}); err != nil {
@@ -95,6 +98,16 @@ func TestConfigStoreAutostartRejectsMalformedRefs(t *testing.T) {
 	for _, bad := range []string{"redis", "redis/", "/8", "redis/8/data", "", "   "} {
 		if err := cs.SetAutostartRefs([]string{bad}); err == nil {
 			t.Errorf("坏引用 %q 应报错", bad)
+		}
+	}
+	for _, unsafe := range []string{"redis/..", "redis/.", `redis/a\b`, "redis/8\x00"} {
+		err := cs.SetAutostartRefs([]string{unsafe})
+		if err == nil {
+			t.Errorf("路径不安全的引用 %q 应报错", unsafe)
+			continue
+		}
+		if !strings.Contains(err.Error(), errs.VersionInvalid) {
+			t.Errorf("引用 %q 应报版本号不合法，实际：%v", unsafe, err)
 		}
 	}
 	if got := cs.AutostartRefs(); strings.Join(got, ",") != "redis/8" {

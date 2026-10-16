@@ -620,12 +620,32 @@ func (a *App) ServiceAutostartGet() ([]string, error) {
 	return cfg.AutostartRefs(), nil
 }
 
+// checkSvcRef 拆开机自启引用并在落盘前做一次体检：形状必须是「kind/version」一段斜杠，
+// 版本还要过路径安全这一关（禁 / 、 \ 、 .. 、空字符）。校验用的是版本策略那唯一一处判据
+// （config.ValidateVersion），不另起字符集白名单。这个值之后会拼成容器名和服务数据目录，
+// 所以不能等它进了 config.yaml 再说。
+func checkSvcRef(ref string) (kind, version string, err error) {
+	kind, version, ok := config.SplitSvcRef(ref)
+	if !ok {
+		return "", "", fmt.Errorf("%s: %s", errs.SvcMissing, strings.TrimSpace(ref))
+	}
+	vc := config.ValidateVersion(kind, version)
+	if !vc.Ok {
+		return "", "", fmt.Errorf("%s", vc.Msg)
+	}
+	return kind, vc.Value, nil
+}
+
 // ServiceAutostartSet 保存开机自启清单（全量覆盖：传进来的就是最终勾中的那一组）。
-// 每一项先过一次 update-config 裁决——未安装、非服务种类一律拒绝并点名，界面因此不会勾中一个装不出来的东西。
+// 每一项先验形状与版本路径安全，再过 update-config 裁决——未安装、非服务种类一律拒绝并点名，
+// 界面因此不会勾中一个装不出来的东西，落进 config.yaml 的版本键也绝不可能是带路径分隔符的那种。
 // 保存本身不建任务、不启停容器：勾选只在下次 phpo 启动时兑现。
 func (a *App) ServiceAutostartSet(ctx context.Context, refs []string) error {
 	for _, ref := range refs {
-		kind, version, _ := config.SplitSvcRef(ref)
+		kind, version, err := checkSvcRef(ref)
+		if err != nil {
+			return err
+		}
 		if err := a.guard(preflight.ActUpdateConfig, preflight.Ctx{
 			Kind: kind, Version: version, Field: "autostart", NewValue: "true",
 		}); err != nil {

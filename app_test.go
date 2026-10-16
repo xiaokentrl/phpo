@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -366,5 +367,27 @@ func TestAutoStart_NotReady(t *testing.T) {
 	}
 	if err := a.AutoStartSet(true); err == nil {
 		t.Fatal("未 Attach 时 Set 应报 errNotReady")
+	}
+}
+
+// 自启引用的落盘前体检：形状坏了、或版本不是路径安全的（.. 、 \ 、空字符）一律当场拒。
+// 拒绝发生在碰对象图之前，所以这份用例不需要装配好的 container——NewApp() 即可。
+func TestServiceAutostartSet_RejectsUnsafeRefs(t *testing.T) {
+	a := NewApp()
+	for _, ref := range []string{"php/..", "php/.", `php/8\1`, "php/8\x00", "php", "php/a/b", "  "} {
+		err := a.ServiceAutostartSet(context.Background(), []string{ref})
+		if err == nil {
+			t.Errorf("引用 %q 应在落盘前被拒", ref)
+			continue
+		}
+		if errors.Is(err, errNotReady) {
+			t.Errorf("引用 %q 应在进入对象图前就被拒，实得尚未初始化：%v", ref, err)
+		}
+		if !strings.Contains(err.Error(), errs.VersionInvalid) && !strings.Contains(err.Error(), errs.SvcMissing) {
+			t.Errorf("引用 %q 应报引用不合法，实际：%v", ref, err)
+		}
+	}
+	if k, v, err := checkSvcRef(" pgsql/17 "); err != nil || k != "pgsql" || v != "17" {
+		t.Errorf("合法引用应拆成 pgsql/17，实得 %q/%q err=%v", k, v, err)
 	}
 }

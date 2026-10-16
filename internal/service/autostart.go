@@ -169,8 +169,8 @@ func (s *AppService) waitEngineReady(ctx context.Context) bool {
 	}
 }
 
-// autoStartTargets 把 "kind/version" 换成待启动清单；形状不对直接丢掉——
-// 这个清单只由 ConfigStore.AutostartRefs 产出，写盘那一刻已经过同一道拆分。
+// autoStartTargets 把 "kind/version" 换成待启动清单；形状不对或版本不是路径安全的（手改过的 config.yaml
+// 里塞进 `..`、`/` 这类）一律丢掉——这份清单后面要拿去拼容器名和服务数据目录，不能让一个坏键走进宿主路径。
 func autoStartTargets(refs []string) []autoStartTarget {
 	out := make([]autoStartTarget, 0, len(refs))
 	for _, ref := range refs {
@@ -178,10 +178,14 @@ func autoStartTargets(refs []string) []autoStartTarget {
 		if !ok {
 			continue
 		}
+		vc := config.ValidateVersion(kind, version)
+		if !vc.Ok {
+			continue
+		}
 		out = append(out, autoStartTarget{
 			kind:    model.ServiceKind(kind),
-			version: version,
-			name:    dockerutil.ContainerName(kind, version),
+			version: vc.Value,
+			name:    dockerutil.ContainerName(kind, vc.Value),
 		})
 	}
 	return out

@@ -61,7 +61,8 @@ func shortenAutoStartWait(t *testing.T) {
 }
 
 func TestAutoStartTargets_ParsesRefsAndDropsMalformed(t *testing.T) {
-	got := autoStartTargets([]string{"php/8.4", "mysql/8.4", "redis", "pgsql/", "/17", "  "})
+	// 后四项形状/版本不安全：拿它们去拼容器名与服务数据目录等于让一个坏键走进宿主路径
+	got := autoStartTargets([]string{"php/8.4", "mysql/8.4", "redis", "pgsql/", "/17", "  ", "php/..", "php/8\x00", `php/8\..`})
 	want := []string{"phpo-php-8.4", "phpo-mysql-8.4"}
 	var names []string
 	for _, tg := range got {
