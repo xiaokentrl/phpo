@@ -1,25 +1,21 @@
 ## English
 
-### phpo 0.1.119 What's Changed from 0.1.118 to 0.1.119
+### phpo 0.1.120 What's Changed from 0.1.119 to 0.1.120
 
 **Version type: Stable**
 
-**Changed**
+**Added**
 
-- Stop the three platform packaging jobs from cloning the whole repository history just to read the version number
-- Skip regenerating the frontend TypeScript bindings when no Go source has changed
-- Scan the main binary's library dependencies twice instead of four times when building the AppImage
-- Move the version type line into each language section of the release body, so English readers no longer see a Chinese-only line
+- Add a "Launch at login" toggle in Settings that writes the OS auto-start registration immediately, on Linux, Windows and macOS
+- Add a Traditional Chinese (Taiwan-style) interface language, derived from Simplified Chinese and selectable in Settings
 
 ## 中文
 
-### 0.1.119 相比 0.1.118 更新内容
+### 0.1.120 相比 0.1.119 更新内容
 
 **版本类型：稳定版**
 
-**修改**
+**新增**
 
-- 云端三个平台的出包作业不再为读一个版本号克隆整仓历史
-- 没改 Go 源码时不再重新生成前端 TypeScript 绑定
-- AppImage 打包时对主程序依赖库的扫描从四遍减到两遍
-- 发布正文里的版本类型那一行拆进中英两段各自的位置，英文读者不再只看到一句中文
+- 设置页新增「开机自启动」开关：切换即写入系统自启动注册，Linux、Windows、macOS 全平台生效
+- 新增繁体中文界面（台湾用语）：由简体中文自动转换生成，设置页语言选择器即可切换
