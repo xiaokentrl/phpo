@@ -211,6 +211,7 @@ function pickLang(l: Locale) {
         <div class="quick-picks" id="lang-picker">
           <button class="pick" :class="{ selected: locale === 'en-US' }" data-lang="en-US" @click="pickLang('en-US')">English</button>
           <button class="pick" :class="{ selected: locale === 'zh-CN' }" data-lang="zh-CN" @click="pickLang('zh-CN')">简体中文</button>
+          <button class="pick" :class="{ selected: locale === 'zh-TW' }" data-lang="zh-TW" @click="pickLang('zh-TW')">繁體中文</button>
         </div>
       </div>
     </div>

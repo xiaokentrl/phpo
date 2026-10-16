@@ -66,99 +66,87 @@ func entriesOf(path string) ([]entry, []string, error) {
 }
 
 func main() {
-	zhPath, enPath := "frontend/src/locales/zh-CN.ts", "frontend/src/locales/en-US.ts"
-	// 可选参数覆盖路径（负向演练用）：go run scripts/check-i18n-keys.go <zh> <en>
+	// 三语（AGENTS §5.15：每种语言一个 locale 文件）：zh-CN 是基准，en-US / zh-TW 各与它对齐。
+	// 两个可选参数覆盖路径（负向演练用）：go run scripts/check-i18n-keys.go <a> <b>
+	zhPath, otherPath := "frontend/src/locales/zh-CN.ts", "frontend/src/locales/en-US.ts"
+	paths := []string{zhPath, otherPath, "frontend/src/locales/zh-TW.ts"}
 	if len(os.Args) == 3 {
-		zhPath, enPath = os.Args[1], os.Args[2]
+		paths = []string{os.Args[1], os.Args[2]} // 演练模式只比对这两份
 	}
-	zh, susZh, err := entriesOf(zhPath)
-	if err != nil {
-		fail("读取 %s 失败: %v", zhPath, err)
-	}
-	en, susEn, err := entriesOf(enPath)
-	if err != nil {
-		fail("读取 %s 失败: %v", enPath, err)
-	}
-	zset := keySet(zh)
-	eset := keySet(en)
 
-	var onlyZh, onlyEn []string
-	for k := range zset {
-		if _, ok := eset[k]; !ok {
-			onlyZh = append(onlyZh, k)
+	var base []entry
+	var baseName string
+	var problems []string
+	for idx, path := range paths {
+		es, sus, err := entriesOf(path)
+		if err != nil {
+			fail("读取 %s 失败: %v", path, err)
 		}
-	}
-	for k := range eset {
-		if _, ok := zset[k]; !ok {
-			onlyEn = append(onlyEn, k)
+		for _, x := range sus {
+			problems = append(problems, fmt.Sprintf("%s 有未解析的条目行: %s", path, x))
 		}
-	}
-	sort.Strings(onlyZh)
-	sort.Strings(onlyEn)
-
-	dupZh, dupEn := dupKeys(zh), dupKeys(en)
-
-	// 占位符集合逐键比对（两侧都有的键才比）
-	var phDiffs []string
-	enMap := enMapOf(en)
-	for _, e := range zh {
-		oe, ok := enMap[e.key]
-		if !ok {
+		if d := dupKeys(es); len(d) > 0 {
+			problems = append(problems, fmt.Sprintf("%s 重复键: %v", path, d))
+		}
+		if idx == 0 {
+			base, baseName = es, path
 			continue
 		}
-		var missZh, missEn []string
-		for name := range e.ph {
-			if _, ok := oe.ph[name]; !ok {
-				missEn = append(missEn, name)
+		// 与基准比：仅基准有 / 仅此语言有 / 占位符集合
+		bset := keySet(base)
+		var onlyBase, onlyThis []string
+		eset := keySet(es)
+		for k := range bset {
+			if _, ok := eset[k]; !ok {
+				onlyBase = append(onlyBase, k)
 			}
 		}
-		for name := range oe.ph {
-			if _, ok := e.ph[name]; !ok {
-				missZh = append(missZh, name)
+		for k := range eset {
+			if _, ok := bset[k]; !ok {
+				onlyThis = append(onlyThis, k)
 			}
 		}
-		if len(missZh) == 0 && len(missEn) == 0 {
-			continue
+		sort.Strings(onlyBase)
+		sort.Strings(onlyThis)
+		if len(onlyBase) > 0 {
+			problems = append(problems, fmt.Sprintf("仅 %s 有 (%d): %v", baseName, len(onlyBase), onlyBase))
 		}
-		sort.Strings(missZh)
-		sort.Strings(missEn)
-		phDiffs = append(phDiffs, fmt.Sprintf("%s（zh 缺 %v / en 缺 %v）", e.key, missZh, missEn))
+		if len(onlyThis) > 0 {
+			problems = append(problems, fmt.Sprintf("仅 %s 有 (%d): %v", path, len(onlyThis), onlyThis))
+		}
+		thisMap := enMapOf(es)
+		for _, e := range base {
+			oe, ok := thisMap[e.key]
+			if !ok {
+				continue
+			}
+			var missBase, missThis []string
+			for name := range e.ph {
+				if _, ok := oe.ph[name]; !ok {
+					missThis = append(missThis, name)
+				}
+			}
+			for name := range oe.ph {
+				if _, ok := e.ph[name]; !ok {
+					missBase = append(missBase, name)
+				}
+			}
+			if len(missBase) == 0 && len(missThis) == 0 {
+				continue
+			}
+			sort.Strings(missBase)
+			sort.Strings(missThis)
+			problems = append(problems, fmt.Sprintf("%s（%s 缺 %v / %s 缺 %v）", e.key, baseName, missBase, path, missThis))
+		}
 	}
 
-	if len(onlyZh) == 0 && len(onlyEn) == 0 && len(dupZh) == 0 && len(dupEn) == 0 && len(phDiffs) == 0 && len(susZh) == 0 && len(susEn) == 0 {
-		fmt.Printf("✓ i18n 对齐：zh-CN / en-US 各 %d 键，键集相等、无重复、占位符集合相等、无未解析条目行\n", len(zh))
+	if len(problems) == 0 {
+		fmt.Printf("✓ i18n 对齐：%d 个语言各 %d 键（%s），键集相等、无重复、占位符集合相等、无未解析条目行\n", len(paths), len(base), strings.Join(paths, " / "))
 		return
 	}
 	fmt.Println("✗ i18n 不对齐：")
-	if len(susZh) > 0 {
-		fmt.Printf("  %s 有未解析的条目行（模板字符串/单引号/拼接一律判红）:\n", zhPath)
-		for _, x := range susZh {
-			fmt.Printf("    %s\n", x)
-		}
-	}
-	if len(susEn) > 0 {
-		fmt.Printf("  %s 有未解析的条目行:\n", enPath)
-		for _, x := range susEn {
-			fmt.Printf("    %s\n", x)
-		}
-	}
-	if len(onlyZh) > 0 {
-		fmt.Printf("  仅 zh-CN 有 (%d): %v\n", len(onlyZh), onlyZh)
-	}
-	if len(onlyEn) > 0 {
-		fmt.Printf("  仅 en-US 有 (%d): %v\n", len(onlyEn), onlyEn)
-	}
-	if len(dupZh) > 0 {
-		fmt.Printf("  zh-CN 重复键: %v\n", dupZh)
-	}
-	if len(dupEn) > 0 {
-		fmt.Printf("  en-US 重复键: %v\n", dupEn)
-	}
-	if len(phDiffs) > 0 {
-		fmt.Println("  占位符集合不一致:")
-		for _, d := range phDiffs {
-			fmt.Printf("    %s\n", d)
-		}
+	for _, p := range problems {
+		fmt.Printf("  %s\n", p)
 	}
 	os.Exit(1)
 }
