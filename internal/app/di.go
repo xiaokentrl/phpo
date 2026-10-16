@@ -77,8 +77,7 @@ type Container struct {
 	Emitter        Emitter
 	Lifecycle      *Lifecycle
 	Env            config.Env
-	CurrentVersion string           // 应用当前版本（升级比较基准）
-	engineInfo     model.EngineInfo // 容器引擎检测结果（§5.25：启动时拨号识别一次；快照唯一来源）
+	CurrentVersion string // 应用当前版本（升级比较基准）
 
 	// M3 真实对象图：于启动钩子内构造（避免 Build 期产生文件/连接，保持单测纯净）
 	AppService  *service.AppService  // 前端绑定的写/读门面；启动后非 nil
@@ -292,13 +291,13 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 		_ = st.Close()
 		return err
 	}
-	// 引擎检测（§5.25，v2.9.16）：启动时拨一次 /version 识别引擎种类与版本（3s 超时容忍 daemon 冷启动），
-	// 结论进快照唯一来源；拨号失败回落 EngineUnknown（kind 空 = 未识别，版本留空），健康细节走 health 三态。
-	dctx, dcancel := context.WithTimeout(ctx, 3*time.Second)
-	engKind, engVer := cli.DetectEngine(dctx)
-	dcancel()
-	c.engineInfo = model.EngineInfo{Kind: string(engKind), Version: engVer, Endpoint: cli.DockerHost(), Rootless: cli.Rootless()}
-	st.SetEngineProvider(func() model.EngineInfo { return c.engineInfo })
+	// 引擎检测（§5.25，v2.9.16）：端点与 rootless 由 socket 路径直接判定，不需要拨号，装配期即落快照
+	// （前端默认端口 80/8080 的预填只看 rootless）。种类与版本要拨一次 /version——本机实测这一拨要 0.7 秒
+	// （Podman 的 /version 比 /_ping 慢一个量级），而启动钩子跑在主线程上、界面循环还没起，留在原地等于
+	// 每次开机多卡 0.7 秒忙碌光标。故改到后台一拨（见函数末尾）：口径不变（一次启动一拨、3 秒上限、
+	// 无本地缓存、失败不写结论）；未识别期间 Kind 为空，界面按 §5.8.1 显示「引擎未就绪」。
+	eng := &engineID{info: model.EngineInfo{Endpoint: cli.DockerHost(), Rootless: cli.Rootless()}}
+	st.SetEngineProvider(eng.get)
 	st.SetFlatpakProvider(isFlatpakSandbox)
 	tm := task.NewManager(c.Emitter)
 	// 任务实时反馈三接线（硬红线 4：状态唯一权威在后端）：
@@ -328,7 +327,14 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 	vh := vhost.New(env)
 	// resolver 按引擎动态化（§5.25/S3）：Docker=内嵌 DNS 127.0.0.11 不变；Podman=aardvark 网关
 	// （network inspect 现取，失败用最后成功值，再退 podman 默认首网网关 10.89.0.1——本机实测取证）
-	vh.SetResolverProvider(engineResolverFunc(cli, c.engineInfo.Kind))
+	vh.SetResolverProvider(engineResolverFunc(
+		func() engine.EngineKind {
+			kctx, kcancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer kcancel()
+			return cli.EngineKind(kctx)
+		},
+		cli.NetworkGateway,
+	))
 	hm := hosts.New()
 	c.SiteService = service.NewSiteService(
 		st,
@@ -456,6 +462,23 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 			})
 		}()
 	}
+	// 引擎识别那一拨（§5.25 现测纪律：一次启动一拨 /version，3 秒上限，不落本地缓存）放在这里，而不是
+	// 装配开头： provider 与各界面门面无一遗漏之后才发快照，避免「识别先回来、图还没装配完」把半截快照推给前端。
+	// 拨号在后台，界面不等它——识别完成才把 Kind/Version 填进 engineID 并重发一次 state:changed。
+	go func() {
+		dctx, dcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer dcancel()
+		kind, ver := cli.DetectEngine(dctx)
+		eng.set(string(kind), ver)
+		if cur, ok := c.GraphConfig(); !ok || cur != cfg {
+			return // 对象图已重绑：旧图这份结论不再下发，重绑后的新图自己会再拨一次
+		}
+		snap, err := st.BuildSnapshot()
+		if err != nil {
+			return // 首启未落两根等场景：无快照可发，引擎结论仍随下次回流带上
+		}
+		c.Emitter.Emit(EventStateChanged, map[string]any{"snapshot": snap})
+	}()
 	c.graphCleanup = func(ctx context.Context) error {
 		// 每次退出彻底清空任务账本（需求）：进程生命周期即账本生命周期，退出前抹零；
 		// 强杀/崩溃场景由下次启动的清空兜底。此刻界面已关，同秒级的 DELETE 用户不可感知。
@@ -464,6 +487,26 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 		return st.Close()
 	}
 	return nil
+}
+
+// engineID 承载这一棵对象图的引擎检测结论：装配期先有端点与 rootless（无需拨号），后台那一拨 /version
+// 完成后补种类与版本。拨号在 goroutine 里写、快照在别的 goroutine 里读，故一律过锁。
+// Kind 为空 = 尚未识别（拨号还没回来或失败），不得当成 Docker。
+type engineID struct {
+	mu   sync.Mutex
+	info model.EngineInfo
+}
+
+func (e *engineID) get() model.EngineInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.info
+}
+
+func (e *engineID) set(kind, version string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.info.Kind, e.info.Version = kind, version
 }
 
 // updaterSources 把配置层的发布源换成 updater 层的源列表（跨层桥接只在装配层发生，§0.2 规则 12）；
@@ -483,13 +526,15 @@ func updaterSources(list []config.UpdateSource) []updater.Source {
 // engineResolverFunc 返回 nginx 运行时 DNS 地址的 provider（v2.9.16/S3）：Docker 分支恒为内嵌
 // DNS 127.0.0.11；Podman 分支现取 phpo-network 网关（aardvark-dns 挂在网关上），失败退最后成功值，
 // 再退 podman 默认首网网关 10.89.0.1（本机实测取证）。
-func engineResolverFunc(cli *engine.Client, kind string) func() string {
+// kindOf 每次调用现问引擎种类：识别结论由后台拨号落定，晚于装配完成。装配时把种类抄成定值，
+// Podman 机器会把 127.0.0.11 写进 vhost——站点解析跟着坏，且这份错值要重绑对象图才自愈。
+func engineResolverFunc(kindOf func() engine.EngineKind, gateway func(context.Context, string) (string, error)) func() string {
 	var last string
 	return func() string {
-		if kind != string(engine.EnginePodman) {
+		if kindOf() != engine.EnginePodman {
 			return "127.0.0.11"
 		}
-		if gw, err := cli.NetworkGateway(context.Background(), dockerutil.NetworkName); err == nil && gw != "" {
+		if gw, err := gateway(context.Background(), dockerutil.NetworkName); err == nil && gw != "" {
 			last = gw
 			return gw
 		}

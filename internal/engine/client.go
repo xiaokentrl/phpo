@@ -141,12 +141,19 @@ func classifyEngineVersion(v types.Version) EngineKind {
 	return EngineDocker
 }
 
-// engineKind 已识别的引擎种类（DetectEngine 成功后缓存；未识别 = EngineUnknown）。
-// 供方言分岔使用（§5.25：podman 的 save/load 走 CLI，见 image.go）。
-func (c *Client) engineKind() EngineKind {
+// EngineKind 现取引擎种类：已识别即用缓存；尚未识别则当场补一次 /version 拨号（用调用方给的 ctx，
+// 到期即按未识别返回，不无限等）。识别失败不写缓存，下次调用再试。
+// 为什么不能只读缓存（§5.25 实测纪律）：启动装配不再阻塞等这一拨，凡「用到才知道要问引擎」的调用
+// （镜像 save/load 方言、nginx resolver 分支）都必须能现补，否则会把「未识别」当成 Docker 走错方言。
+func (c *Client) EngineKind(ctx context.Context) EngineKind {
 	c.engMu.Lock()
-	defer c.engMu.Unlock()
-	return c.engine
+	kind := c.engine
+	c.engMu.Unlock()
+	if kind != EngineUnknown {
+		return kind
+	}
+	kind, _ = c.DetectEngine(ctx)
+	return kind
 }
 
 // candidateSockets 按优先级给出候选端点：Docker 家族全部候选在前（Docker 优先仲裁，§5.25）→

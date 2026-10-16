@@ -22,7 +22,7 @@ import (
 
 // ImageLoad 从 tar 路径加载镜像（零网络）；resp.Body 必须读完再关，否则加载不完成
 func (c *Client) ImageLoad(ctx context.Context, tarPath string) error {
-	if c.engineKind() == EnginePodman {
+	if c.EngineKind(ctx) == EnginePodman {
 		return c.podmanLoad(ctx, tarPath)
 	}
 	f, err := os.Open(tarPath)
@@ -45,7 +45,7 @@ func (c *Client) ImageLoad(ctx context.Context, tarPath string) error {
 
 // ImageSave 将镜像导出为 tar 到 outPath（先写临时再原子重命名，避免半截文件）
 func (c *Client) ImageSave(ctx context.Context, ref, outPath string) error {
-	if c.engineKind() == EnginePodman {
+	if c.EngineKind(ctx) == EnginePodman {
 		return c.podmanSave(ctx, ref, outPath)
 	}
 	rc, err := c.cli.ImageSave(ctx, []string{ref})
