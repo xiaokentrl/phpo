@@ -12,10 +12,13 @@ import { toast } from '@/composables/useToast'
 import { backendMsg } from '@/utils/backendMsg'
 import { currentVersion } from '@/api/updater'
 import { getAutoStart, setAutoStart } from '@/api/autostart'
+import { getAutostartServices, setAutostartServices } from '@/api/autostartServices'
 import { getSources, setSources, probeSources } from '@/api/dockerSource'
 import { LAYOUT_LIMITS, LAYOUT_PRESETS, UI_SCALE, type PresetName } from '@/constants/layout'
+import { SVC_META } from '@/constants/service'
+import { useAppState } from '@/stores/appState'
 import type { Locale } from '@/locales'
-import type { MirrorSource } from '@/types'
+import type { MirrorSource, ServiceKind } from '@/types'
 
 const { t, locale, setLocale } = useI18n()
 const prefs = usePrefsStore()
@@ -49,6 +52,50 @@ async function toggleAutoStart(): Promise<void> {
     toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     autoStartBusy.value = false
+  }
+}
+
+// 勾选哪些服务在 phpo 启动后自动加入任务队列（真正的启动在后端，界面只登记名单）。
+// 名单的权威值在 config.yaml，每次进页现问一次；点一下就整份保存、保存后以后端回读为准（硬红线 4）。
+const appState = useAppState()
+const svcChecked = ref<string[]>([])
+const svcReady = ref(true)
+const svcBusy = ref(false)
+
+onMounted(async () => {
+  const list = await getAutostartServices()
+  if (list === null) { svcReady.value = false; return }
+  svcChecked.value = list
+})
+
+// svcOptions 只列本机已安装的版本：没装的服务勾了也不会启动，摆出来只会误导。
+// 值用后端的 "kind/version" 引用，标签是「服务名 版本号」。
+const svcOptions = computed(() => {
+  const rows: Array<{ svcRef: string; label: string }> = []
+  for (const kind of Object.keys(SVC_META) as ServiceKind[]) {
+    for (const ver of appState.installed[kind]) {
+      rows.push({ svcRef: `${kind}/${ver}`, label: `${t(SVC_META[kind].titleKey)} ${ver}` })
+    }
+  }
+  return rows
+})
+
+async function toggleSvc(svcRef: string) {
+  if (svcBusy.value || !svcReady.value) return
+  const next = svcChecked.value.includes(svcRef)
+    ? svcChecked.value.filter((x) => x !== svcRef)
+    : [...svcChecked.value, svcRef]
+  svcBusy.value = true
+  try {
+    await setAutostartServices(next)
+    // 回读后端落库的那份，不用本地乐观值（保存可能被 preflight 判回）
+    svcChecked.value = (await getAutostartServices()) ?? []
+    toast(t('settings.autostart.svcSaved'), 'ok', 2200)
+  } catch (e) {
+    svcChecked.value = (await getAutostartServices()) ?? []
+    toast(backendMsg(String(e)), 'err', 4600)
+  } finally {
+    svcBusy.value = false
   }
 }
 
@@ -255,6 +302,24 @@ function pickLang(l: Locale) {
           />
           <span class="check-label text-dim">{{ t('settings.autostart.enable') }}</span>
         </label>
+      </div>
+
+      <div class="field">
+        <label>{{ t('settings.autostart.svcLabel') }}</label>
+        <div class="alert alert-warn alert-gap" v-if="!svcReady">{{ t('settings.autostart.noBackend') }}</div>
+        <div class="hint hint-empty" v-else-if="!svcOptions.length">{{ t('settings.autostart.svcEmpty') }}</div>
+        <div v-else class="quick-picks">
+          <button
+            v-for="opt in svcOptions"
+            :key="opt.svcRef"
+            class="pick"
+            :class="{ selected: svcChecked.includes(opt.svcRef) }"
+            type="button"
+            :disabled="svcBusy"
+            @click="toggleSvc(opt.svcRef)"
+          >{{ opt.label }}</button>
+        </div>
+        <div class="hint">{{ t('settings.autostart.svcHint') }}</div>
       </div>
     </div>
 

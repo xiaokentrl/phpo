@@ -328,7 +328,11 @@ func TestLocaleKeysCoverAllCodes(t *testing.T) {
 		MsgTaskSiteHosts, MsgTaskSiteRemove, MsgTaskConfigSave, MsgTaskUpdate, MsgTaskExtensionApply,
 		MsgTaskWizardInit, MsgTaskOfflineRemove, MsgTaskOfflineImport, MsgTaskDockerClean,
 		MsgTaskCleanupOrphan, MsgTaskCleanupCache, MsgTaskTrashRestore, MsgTaskTrashEmpty,
-		MsgTaskBackupCreate, MsgTaskBackupRestore, MsgTaskBackupDelete)
+		MsgTaskBackupCreate, MsgTaskBackupRestore, MsgTaskBackupDelete, MsgTaskAutoStart)
+	// 开机自启那五行只在 service 构造点直接给码（不进本兼容层表），这里按同样的字面量核对两侧语言包。
+	want = append(want,
+		"log.autoStartSkipAbsent", "log.autoStartSkipRunning", "log.autoStartDone",
+		"log.autoStartFail", "log.autoStartTimeout")
 	var miss []string
 	for _, c := range want {
 		if _, ok := zh[c]; !ok {

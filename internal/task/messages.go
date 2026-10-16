@@ -11,6 +11,7 @@ const (
 	MsgTaskStart          = "task.start"
 	MsgTaskStop           = "task.stop"
 	MsgTaskRemove         = "task.remove"
+	MsgTaskAutoStart      = "task.autoStart"
 	MsgTaskBackupCreate   = "task.backupCreate"
 	MsgTaskBackupRestore  = "task.backupRestore"
 	MsgTaskBackupDelete   = "task.backupDelete"

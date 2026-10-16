@@ -35,12 +35,15 @@ docker_sources:
 # 每服务版本的可配置项（按需出现；未列出的版本回落注册表默认端口与默认密码）
 # 密码策略：明文、默认 123456、可为空、长度不校验（总纲 §1.5）。
 # data_dir 同样互斥：写了即用该目录，未写回落默认 {phpo_home}/{kind}/{version}/data。
+# autostart：写在哪个版本上，phpo 一启动就自动把那个版本拉起（设置页「开机自启动」里的多选框就是这个字段）。
+#   引擎（Docker/Podman）此刻没起来也不放弃：最多等 2 分钟，等到了照常启动；等不到就在任务日志里说清原因。
 services:
   mysql:
     "8.4":
       password: "123456"
       port: 3306
       data_dir: /srv/mysql-data   # 可选：自定义该版本的数据存放路径
+      autostart: true             # 可选：phpo 启动后自动启动这个版本
   pgsql:
     "17":
       password: ""        # 空密码合法

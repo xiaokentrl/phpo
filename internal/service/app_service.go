@@ -44,6 +44,9 @@ type AppService struct {
 	healer    SiteHealer         // 站点转为可服务的事件后补齐 vhost（未注入则跳过）
 	env       config.Env
 	seq       atomic.Uint64 // 任务 ID 计数
+	// autostartOnce 保证「开机自启」在一次进程里只跑一遍：延迟校准那一步会再次走到这里，
+	// 引擎就绪前的等待也只为这一遍服务，不能每 12 秒重跑一次。
+	autostartOnce atomic.Bool
 }
 
 func NewAppService(lc *LifecycleService, tm *task.Manager, cache steps.ImageEnsurer, probe engine.Probe, env config.Env) *AppService {

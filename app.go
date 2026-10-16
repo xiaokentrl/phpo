@@ -607,6 +607,38 @@ func (a *App) DockerSourcesProbe(ctx context.Context, hosts []string) ([]model.M
 	return a.container.ProbeDockerSources(ctx, hosts), nil
 }
 
+// ---- 开机自启绑定（设置页：勾选哪些服务在 phpo 启动后自动拉起）----
+// 勾选集落在 config.yaml 每条服务记录上（与端口/密码/数据目录同一份、同一个可写面），
+// 因此不新增可写配置面数；启动那一次补启动由 internal/service/autostart.go 执行。
+
+// ServiceAutostartGet 读回已勾选的开机自启清单（"kind/version"，按种类再按版本升序）
+func (a *App) ServiceAutostartGet() ([]string, error) {
+	cfg, ok := a.container.GraphConfig()
+	if !ok {
+		return nil, errNotReady
+	}
+	return cfg.AutostartRefs(), nil
+}
+
+// ServiceAutostartSet 保存开机自启清单（全量覆盖：传进来的就是最终勾中的那一组）。
+// 每一项先过一次 update-config 裁决——未安装、非服务种类一律拒绝并点名，界面因此不会勾中一个装不出来的东西。
+// 保存本身不建任务、不启停容器：勾选只在下次 phpo 启动时兑现。
+func (a *App) ServiceAutostartSet(ctx context.Context, refs []string) error {
+	for _, ref := range refs {
+		kind, version, _ := config.SplitSvcRef(ref)
+		if err := a.guard(preflight.ActUpdateConfig, preflight.Ctx{
+			Kind: kind, Version: version, Field: "autostart", NewValue: "true",
+		}); err != nil {
+			return err
+		}
+	}
+	cfg, ok := a.container.GraphConfig()
+	if !ok {
+		return errNotReady
+	}
+	return cfg.SetAutostartRefs(refs)
+}
+
 // ---- M5 服务配置绑定：读回显 / 三段式原子保存（硬红线 3/5）----
 
 // ConfigGetFiles 返回该服务版本配置：宿主已存在则回显内容，否则回落模板默认

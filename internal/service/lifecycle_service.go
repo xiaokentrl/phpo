@@ -102,6 +102,12 @@ func (l *LifecycleService) Snapshot() (*model.Snapshot, error) {
 	return l.store.BuildSnapshot()
 }
 
+// Running 现问一次容器引擎：这个服务版本的容器此刻在不在跑。
+// 队列里排过一会儿之后，快照那份运行态可能已经不是当下的，自启这类「逐个补启动」必须现问。
+func (l *LifecycleService) Running(ctx context.Context, kind model.ServiceKind, version string) (bool, error) {
+	return l.docker.ContainerRunning(ctx, dockerutil.ContainerName(string(kind), version))
+}
+
 // Calibrate 读 SQLite 期望态与 Docker 实际态比对：
 //   - 有运行态修正 → 写回 SetRunning，并依次发 docker:state-drift（漂移详情）与 state:changed（新快照）；
 //   - 无变化则静默返回。

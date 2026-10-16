@@ -448,6 +448,12 @@ func (c *Container) buildObjectGraph(ctx context.Context, cfg *config.ConfigStor
 			if _, cerr := lc.Calibrate(ctx); cerr != nil {
 				c.Emitter.Emit(EventDockerStateDrift, map[string]any{"error": cerr.Error()})
 			}
+			// 开机自启排在启动校准之后：先让界面看见「这台机器此刻有什么」，再补启动用户勾过的那些。
+			// 引擎没就绪时这里最多等两分钟（每 5 秒重拨一次），全程在后台，不占任务队列、不推迟窗口出现。
+			_ = c.AppService.AutoStart(ctx, cfg.AutostartRefs(), func() bool {
+				cur, ok := c.GraphConfig()
+				return ok && cur == cfg
+			})
 		}()
 	}
 	c.graphCleanup = func(ctx context.Context) error {

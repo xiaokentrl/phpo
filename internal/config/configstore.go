@@ -7,8 +7,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"phpo/internal/util"
+	"phpo/pkg/errs"
 )
 
 // envVer 键规则：version 去点（8.4 → 84），与端口/密码 env 键命名一致（沿用原型）
@@ -31,11 +34,12 @@ func EnvKeyPort(kind, version string) string {
 	return strings.ToUpper(kind) + "_" + envVer(version) + "_PORT"
 }
 
-// SvcSetting 某服务版本的可配置项：明文密码 + 宿主发布端口 + 数据目录（Port=0/DataDir="" 表示未设，回落默认）
+// SvcSetting 某服务版本的可配置项：明文密码 + 宿主发布端口 + 数据目录 + 开机自启（Port=0/DataDir="" 表示未设，回落默认）
 type SvcSetting struct {
-	Password string `yaml:"password"`
-	Port     int    `yaml:"port,omitempty"`
-	DataDir  string `yaml:"data_dir,omitempty"`
+	Password  string `yaml:"password"`
+	Port      int    `yaml:"port,omitempty"`
+	DataDir   string `yaml:"data_dir,omitempty"`
+	Autostart bool   `yaml:"autostart,omitempty"` // 勾选了「phpo 启动后把这个服务也拉起」；未勾即 false，不写盘
 }
 
 // UpdateSource 一个升级检测发布源（§5.9）：名字进界面「更新源」显示，清单地址匿名读取（不存任何凭据，§1.5）
@@ -287,6 +291,81 @@ func (c *ConfigStore) SetServicePort(kind, version string, port int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.putSetting(kind, version, func(s *SvcSetting) { s.Port = port })
+	return c.save()
+}
+
+// ---- 开机自启（设置页多选）：勾选集落在每条服务记录上，与端口/密码/数据目录同源同面 ----
+
+// JoinSvcRef 服务版本的复合键，与自定义数据目录用的同一形状（"kind/version"）
+func JoinSvcRef(kind, version string) string { return kind + "/" + version }
+
+// SplitSvcRef 拆 "kind/version"；缺分隔符、分隔符多于一个、任一侧为空即 ok=false
+// （读盘与界面入参都走这一处，口径不分叉）。版本号本身不含斜杠，多一段就是写坏了。
+func SplitSvcRef(ref string) (kind, version string, ok bool) {
+	s := strings.TrimSpace(ref)
+	if strings.Count(s, "/") != 1 {
+		return "", "", false
+	}
+	k, v, found := strings.Cut(s, "/")
+	if !found || k == "" || v == "" {
+		return "", "", false
+	}
+	return k, v, true
+}
+
+// AutostartRefs 已勾选开机自启的服务版本（"kind/version"），按种类再按版本升序返回——
+// 回显与启动日志的次序由此固定， map 遍历次序不再影响界面。
+func (c *ConfigStore) AutostartRefs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for kind, vers := range c.fc.Services {
+		for ver, s := range vers {
+			if s.Autostart {
+				out = append(out, JoinSvcRef(kind, ver))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SetAutostartRefs 全量替换勾选集：refs 里出现的即勾选，其余已有记录一律取消（取消只翻标记，
+// 端口/密码/数据目录照原样留着）。形状不合法的 ref 直接报错并点名原值，不静默丢弃。
+//
+// 为「本次新勾选、此前没有任何配置记录」的版本建记录时，密码按当前实际生效的默认值一并落定：
+// 空着建等于往配置里写「这个版本的密码是空」，下次重建容器时它会被当成空密码——原本用的是 123456。
+// 一个自启勾选不该顺带改掉服务密码，所以这里必须显式落定，而不是留一个零值。
+func (c *ConfigStore) SetAutostartRefs(refs []string) error {
+	want := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		kind, ver, ok := SplitSvcRef(r)
+		if !ok {
+			return fmt.Errorf("%s: %s", errs.SvcMissing, strings.TrimSpace(r))
+		}
+		want[JoinSvcRef(kind, ver)] = true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for kind, vers := range c.fc.Services {
+		for ver, s := range vers {
+			if !s.Autostart || want[JoinSvcRef(kind, ver)] {
+				continue
+			}
+			s.Autostart = false
+			c.fc.Services[kind][ver] = s
+		}
+	}
+	for ref := range want {
+		kind, ver, _ := SplitSvcRef(ref) // 上面已逐项校验过形状
+		_, exists := c.setting(kind, ver)
+		c.putSetting(kind, ver, func(s *SvcSetting) {
+			if !exists && s.Password == "" {
+				s.Password = DefaultPassword
+			}
+			s.Autostart = true
+		})
+	}
 	return c.save()
 }
 
