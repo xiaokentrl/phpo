@@ -2,12 +2,17 @@ package vhost
 
 import "testing"
 
-func TestPresets_NineKeys(t *testing.T) {
+func TestPresets_TwentyOneKeys(t *testing.T) {
 	ps := Presets()
-	if len(ps) != 9 {
-		t.Fatalf("应有 9 个预设，实得 %d", len(ps))
+	if len(ps) != 21 {
+		t.Fatalf("应有 21 个预设，实得 %d", len(ps))
 	}
-	want := []string{"none", "laravel", "thinkphp", "yii2", "thinkcmf", "ci", "symfony", "wordpress", "custom"}
+	want := []string{
+		"none", "laravel", "thinkphp", "yii2", "thinkcmf", "ci", "symfony", "wordpress",
+		"drupal", "joomla", "mediawiki", "dokuwiki", "typecho", "pbootcms",
+		"discuz", "phpbb", "opencart", "spa", "yii1", "cakephp",
+		"custom",
+	}
 	for i, k := range want {
 		if ps[i].Key != k {
 			t.Fatalf("第 %d 个键应为 %s，实得 %s", i, k, ps[i].Key)

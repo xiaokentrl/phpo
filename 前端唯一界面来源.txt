@@ -285,15 +285,15 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 
 .theme-swatch-bg{grid-column:span 2;height:32px;border-radius:6px}
 .theme-name{font-size:13px;font-weight:600;color:var(--text)}
 .theme-desc{font-size:11.5px;color:var(--text-mute);margin-top:2px}
-.fw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px}
-.fw-card{display:flex;flex-direction:column;align-items:center;gap:5px;padding:12px 8px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--bg);cursor:pointer;transition:all var(--motion-fast);text-align:center}
+.fw-grid{display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;scrollbar-width:thin}
+.fw-card{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:6px;padding:5px 10px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--bg);cursor:pointer;transition:all var(--motion-fast);text-align:left}
 .fw-card:hover{border-color:var(--accent);background:var(--accent-bg)}
 .fw-card.selected{border-color:var(--accent);background:var(--accent-bg);box-shadow:0 0 0 2px var(--accent-bg)}
-.fw-card .fw-icon{font-size:20px;line-height:1}
-.fw-card .fw-name{font-size:12px;font-weight:550;color:var(--text)}
+.fw-card .fw-icon{font-size:14px;line-height:1}
+.fw-card .fw-name{font-size:11.5px;font-weight:550;color:var(--text);white-space:nowrap}
 .fw-card.selected .fw-name{color:var(--accent)}
-.fw-card .fw-tag{font-size:10px;color:var(--text-mute);font-family:var(--mono)}
-.rw-editor{width:100%;min-height:160px;padding:12px 14px;font-family:var(--mono);font-size:12.5px;line-height:1.7;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--bg);color:var(--text);resize:vertical;outline:none;transition:border-color var(--motion-fast),box-shadow var(--motion-fast);tab-size:4}
+.fw-card .fw-tag{font-size:9.5px;color:var(--text-mute);font-family:var(--mono);white-space:nowrap}
+.rw-editor{width:100%;min-height:250px;padding:12px 14px;font-family:var(--mono);font-size:12.5px;line-height:1.7;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--bg);color:var(--text);resize:vertical;outline:none;transition:border-color var(--motion-fast),box-shadow var(--motion-fast);tab-size:4}
 .rw-editor:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
 .rw-collapse-btn{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--text-dim);padding:4px 8px;border-radius:var(--r-xs);transition:all var(--motion-fast)}
 .rw-collapse-btn:hover{background:var(--surface-2);color:var(--text)}
@@ -610,6 +610,18 @@ const REWRITE_PRESETS = {
   ci:{icon:'🔥',nameKey:'rw.ci',tag:'PHP',rule:'# CodeIgniter 3/4\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}'},
   symfony:{icon:'⚫',nameKey:'rw.symfony',tag:'PHP',rule:'# Symfony 5+ (public dir)\nlocation / {\n    try_files $uri /index.php$is_args$args;\n}'},
   wordpress:{icon:'📰',nameKey:'rw.wordpress',tag:'CMS',rule:'# WordPress 5/6\nlocation / {\n    try_files $uri $uri/ /index.php?$args;\n}'},
+  drupal:{icon:'💧',nameKey:'rw.drupal',tag:'CMS',rule:'# Drupal 9/10/11\nlocation / {\n    try_files $uri /index.php?$query_string;\n}'},
+  joomla:{icon:'🟧',nameKey:'rw.joomla',tag:'CMS',rule:'# Joomla 4/5\nlocation / {\n    try_files $uri $uri/ /index.php?$args;\n}'},
+  mediawiki:{icon:'📚',nameKey:'rw.mediawiki',tag:'CMS',rule:'# MediaWiki 1.35+\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}'},
+  dokuwiki:{icon:'📝',nameKey:'rw.dokuwiki',tag:'CMS',rule:'# DokuWiki\nlocation / {\n    index index.php doku.php;\n    if (!-e $request_filename) {\n        rewrite ^/(.*)$ /doku.php?id=$1&$args last;\n    }\n}'},
+  typecho:{icon:'🌱',nameKey:'rw.typecho',tag:'CMS',rule:'# Typecho 1.2\nlocation / {\n    if (!-e $request_filename) {\n        rewrite ^(.*)$ /index.php$1 last;\n    }\n}'},
+  pbootcms:{icon:'🏗️',nameKey:'rw.pbootcms',tag:'CMS',rule:'# PbootCMS 3.x\nlocation / {\n    if (!-e $request_filename) {\n        rewrite ^/(.*)$ /index.php?p=$1 last;\n    }\n}'},
+  discuz:{icon:'💬',nameKey:'rw.discuz',tag:'Forum',rule:'# Discuz! X3.4 / X3.5\nlocation / {\n    rewrite ^(.*)-htm-(.*)$ $1.php?$2 last;\n    if (!-e $request_filename) {\n        rewrite ^(.*)$ /forum.php last;\n    }\n}'},
+  phpbb:{icon:'📢',nameKey:'rw.phpbb',tag:'Forum',rule:'# phpBB 3.3\nlocation / {\n    try_files $uri $uri/ /app.php?$query_string;\n}'},
+  opencart:{icon:'🛒',nameKey:'rw.opencart',tag:'Shop',rule:'# OpenCart 3/4\nlocation / {\n    if (!-e $request_filename) {\n        rewrite ^/(.+)$ /index.php?_route_=$1 last;\n    }\n}'},
+  spa:{icon:'🧩',nameKey:'rw.spa',tag:'SPA',rule:'# Single Page App (Vue / React / Angular)\nlocation / {\n    try_files $uri $uri/ /index.html;\n}'},
+  yii1:{icon:'🟨',nameKey:'rw.yii1',tag:'PHP',rule:'# Yii 1.1\nlocation / {\n    if (!-e $request_filename) {\n        rewrite ^/(.*)$ /index.php?r=$1 last;\n    }\n}'},
+  cakephp:{icon:'🍰',nameKey:'rw.cakephp',tag:'PHP',rule:'# CakePHP 4/5\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}'},
   custom:{icon:'✏️',nameKey:'rw.custom',tag:'Custom',rule:'# Custom rewrite rules\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}'},
 };
 
@@ -852,7 +864,7 @@ const MESSAGES = {
     'rw.writeHint':'写入位置：{root}/{domain}.conf 的 server 块内',
     'rw.applyHint':'应用流程：生成 vhost → nginx -t 校验 → reload Nginx → 失败自动恢复旧配置。',
     'rw.apply':'应用并重载','rw.current':'当前配置',
-    'rw.none':'无','rw.laravel':'Laravel','rw.thinkphp':'ThinkPHP','rw.yii2':'Yii2','rw.thinkcmf':'ThinkCMF','rw.ci':'CodeIgniter','rw.symfony':'Symfony','rw.wordpress':'WordPress','rw.custom':'自定义',
+    'rw.none':'无','rw.laravel':'Laravel','rw.thinkphp':'ThinkPHP','rw.yii2':'Yii2','rw.thinkcmf':'ThinkCMF','rw.ci':'CodeIgniter','rw.symfony':'Symfony','rw.wordpress':'WordPress','rw.drupal':'Drupal','rw.joomla':'Joomla!','rw.mediawiki':'MediaWiki','rw.dokuwiki':'DokuWiki','rw.typecho':'Typecho','rw.pbootcms':'PbootCMS','rw.discuz':'Discuz!','rw.phpbb':'phpBB','rw.opencart':'OpenCart','rw.spa':'单页应用','rw.yii1':'Yii 1.x','rw.cakephp':'CakePHP','rw.custom':'自定义',
     'ext.title':'扩展管理','ext.subtitle':'启用、停用、添加或删除扩展 · 应用后自动重建镜像并重载 Nginx',
     'ext.enabled':'扩展列表','ext.suggestions':'常用可添加','ext.selected':'{count} / {total} 已选',
     'ext.enabled.hint':'点击标签切换启用/停用，点击 × 从列表中删除。',
@@ -995,7 +1007,7 @@ const MESSAGES = {
     'rw.writeHint':'Write to {root}/{domain}.conf server block',
     'rw.applyHint':'Flow: generate vhost → nginx -t → reload Nginx → auto-restore on failure.',
     'rw.apply':'Apply & Reload','rw.current':'Current',
-    'rw.none':'None','rw.laravel':'Laravel','rw.thinkphp':'ThinkPHP','rw.yii2':'Yii2','rw.thinkcmf':'ThinkCMF','rw.ci':'CodeIgniter','rw.symfony':'Symfony','rw.wordpress':'WordPress','rw.custom':'Custom',
+    'rw.none':'None','rw.laravel':'Laravel','rw.thinkphp':'ThinkPHP','rw.yii2':'Yii2','rw.thinkcmf':'ThinkCMF','rw.ci':'CodeIgniter','rw.symfony':'Symfony','rw.wordpress':'WordPress','rw.drupal':'Drupal','rw.joomla':'Joomla!','rw.mediawiki':'MediaWiki','rw.dokuwiki':'DokuWiki','rw.typecho':'Typecho','rw.pbootcms':'PbootCMS','rw.discuz':'Discuz!','rw.phpbb':'phpBB','rw.opencart':'OpenCart','rw.spa':'SPA','rw.yii1':'Yii 1.x','rw.cakephp':'CakePHP','rw.custom':'Custom',
     'ext.title':'Extensions','ext.subtitle':'Enable, disable, add or remove extensions · Rebuilds image and reloads Nginx on apply',
     'ext.enabled':'Extension list','ext.suggestions':'Common add-ons','ext.selected':'{count} / {total} selected',
     'ext.enabled.hint':'Click the chip to toggle, click × to remove from the list.',

@@ -1,4 +1,4 @@
-// 伪静态预设：REWRITE_PRESETS（9 种）后端化，rule 原文逐字对齐 SSOT
+// 伪静态预设：REWRITE_PRESETS（21 种）后端化，rule 原文逐字对齐 SSOT
 package vhost
 
 import "strings"
@@ -12,7 +12,7 @@ type RewritePreset struct {
 	Rule    string
 }
 
-// presets REWRITE_PRESETS 九键；顺序与原型一致
+// presets REWRITE_PRESETS 二十一键；顺序与原型一致
 var presets = []RewritePreset{
 	{Key: "none", Icon: "📄", NameKey: "rw.none", Tag: "Static", Rule: "# Rewrite disabled\nlocation / {\n    try_files $uri $uri/ =404;\n}"},
 	{Key: "laravel", Icon: "🔺", NameKey: "rw.laravel", Tag: "PHP", Rule: "# Laravel 5+ / Lumen\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}"},
@@ -22,6 +22,18 @@ var presets = []RewritePreset{
 	{Key: "ci", Icon: "🔥", NameKey: "rw.ci", Tag: "PHP", Rule: "# CodeIgniter 3/4\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}"},
 	{Key: "symfony", Icon: "⚫", NameKey: "rw.symfony", Tag: "PHP", Rule: "# Symfony 5+ (public dir)\nlocation / {\n    try_files $uri /index.php$is_args$args;\n}"},
 	{Key: "wordpress", Icon: "📰", NameKey: "rw.wordpress", Tag: "CMS", Rule: "# WordPress 5/6\nlocation / {\n    try_files $uri $uri/ /index.php?$args;\n}"},
+	{Key: "drupal", Icon: "💧", NameKey: "rw.drupal", Tag: "CMS", Rule: "# Drupal 9/10/11\nlocation / {\n    try_files $uri /index.php?$query_string;\n}"},
+	{Key: "joomla", Icon: "🟧", NameKey: "rw.joomla", Tag: "CMS", Rule: "# Joomla 4/5\nlocation / {\n    try_files $uri $uri/ /index.php?$args;\n}"},
+	{Key: "mediawiki", Icon: "📚", NameKey: "rw.mediawiki", Tag: "CMS", Rule: "# MediaWiki 1.35+\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}"},
+	{Key: "dokuwiki", Icon: "📝", NameKey: "rw.dokuwiki", Tag: "CMS", Rule: "# DokuWiki\nlocation / {\n    index index.php doku.php;\n    if (!-e $request_filename) {\n        rewrite ^/(.*)$ /doku.php?id=$1&$args last;\n    }\n}"},
+	{Key: "typecho", Icon: "🌱", NameKey: "rw.typecho", Tag: "CMS", Rule: "# Typecho 1.2\nlocation / {\n    if (!-e $request_filename) {\n        rewrite ^(.*)$ /index.php$1 last;\n    }\n}"},
+	{Key: "pbootcms", Icon: "🏗️", NameKey: "rw.pbootcms", Tag: "CMS", Rule: "# PbootCMS 3.x\nlocation / {\n    if (!-e $request_filename) {\n        rewrite ^/(.*)$ /index.php?p=$1 last;\n    }\n}"},
+	{Key: "discuz", Icon: "💬", NameKey: "rw.discuz", Tag: "Forum", Rule: "# Discuz! X3.4 / X3.5\nlocation / {\n    rewrite ^(.*)-htm-(.*)$ $1.php?$2 last;\n    if (!-e $request_filename) {\n        rewrite ^(.*)$ /forum.php last;\n    }\n}"},
+	{Key: "phpbb", Icon: "📢", NameKey: "rw.phpbb", Tag: "Forum", Rule: "# phpBB 3.3\nlocation / {\n    try_files $uri $uri/ /app.php?$query_string;\n}"},
+	{Key: "opencart", Icon: "🛒", NameKey: "rw.opencart", Tag: "Shop", Rule: "# OpenCart 3/4\nlocation / {\n    if (!-e $request_filename) {\n        rewrite ^/(.+)$ /index.php?_route_=$1 last;\n    }\n}"},
+	{Key: "spa", Icon: "🧩", NameKey: "rw.spa", Tag: "SPA", Rule: "# Single Page App (Vue / React / Angular)\nlocation / {\n    try_files $uri $uri/ /index.html;\n}"},
+	{Key: "yii1", Icon: "🟨", NameKey: "rw.yii1", Tag: "PHP", Rule: "# Yii 1.1\nlocation / {\n    if (!-e $request_filename) {\n        rewrite ^/(.*)$ /index.php?r=$1 last;\n    }\n}"},
+	{Key: "cakephp", Icon: "🍰", NameKey: "rw.cakephp", Tag: "PHP", Rule: "# CakePHP 4/5\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}"},
 	{Key: "custom", Icon: "✏️", NameKey: "rw.custom", Tag: "Custom", Rule: "# Custom rewrite rules\nlocation / {\n    try_files $uri $uri/ /index.php?$query_string;\n}"},
 }
 

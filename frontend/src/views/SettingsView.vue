@@ -330,7 +330,6 @@ function pickLang(l: Locale) {
           />
           <span class="check-label text-dim">{{ t('settings.startMin') }}</span>
         </label>
-        <div class="hint">{{ t('settings.startMin.hint') }}</div>
         <div class="alert alert-warn alert-gap" v-if="!startMinReady">{{ t('settings.startMin.noBackend') }}</div>
         <label class="danger-check tray-check">
           <input
