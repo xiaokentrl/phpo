@@ -45,7 +45,7 @@ func main() {
 		},
 	})
 	// 窗口必须先于 Attach 创建：托盘要绑定它，点图标才能唤回窗口
-	window := app.Window.NewWithOptions(ui.MainWindowOptions())
+	window := app.Window.NewWithOptions(ui.MainWindowOptions(startMinimizedAtBoot()))
 	root.Attach(app, window)
 
 	if err := app.Run(); err != nil {

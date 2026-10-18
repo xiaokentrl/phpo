@@ -12,6 +12,7 @@ import { toast } from '@/composables/useToast'
 import { backendMsg } from '@/utils/backendMsg'
 import { currentVersion } from '@/api/updater'
 import { getAutoStart, setAutoStart } from '@/api/autostart'
+import { getStartMinimized, setStartMinimized } from '@/api/startMinimized'
 import { getAutostartServices, setAutostartServices } from '@/api/autostartServices'
 import { getSources, setSources, probeSources } from '@/api/dockerSource'
 import { LAYOUT_LIMITS, LAYOUT_PRESETS, UI_SCALE, type PresetName } from '@/constants/layout'
@@ -52,6 +53,33 @@ async function toggleAutoStart(): Promise<void> {
     toast(backendMsg(String(e)), 'err', 4600)
   } finally {
     autoStartBusy.value = false
+  }
+}
+
+// 启动后最小化：勾上则下次 phpo 启动时不显示主窗口、也不占任务栏，只在托盘待着，点托盘图标唤回。
+// 权威值在 config.yaml，每次进页现问一次；正在跑的这一轮不受影响（窗口已经建出来了）。
+const startMin = ref(false)
+const startMinReady = ref(true)
+const startMinBusy = ref(false)
+
+onMounted(async () => {
+  const v = await getStartMinimized()
+  if (v === null) { startMinReady.value = false; return }
+  startMin.value = v
+})
+
+async function toggleStartMin(): Promise<void> {
+  if (startMinBusy.value || !startMinReady.value) return
+  const next = !startMin.value
+  startMinBusy.value = true
+  try {
+    await setStartMinimized(next)
+    startMin.value = next
+    toast(t('settings.startMin.done', { state: t(next ? 'common.on' : 'common.off') }), 'ok', 2200)
+  } catch (e: unknown) {
+    toast(backendMsg(String(e)), 'err', 4600)
+  } finally {
+    startMinBusy.value = false
   }
 }
 
@@ -291,6 +319,19 @@ function pickLang(l: Locale) {
         <span class="chip">{{ t('settings.autostart.hint') }}</span>
       </div>
       <div class="stack-12">
+        <label class="danger-check tray-check">
+          <input
+            type="checkbox"
+            id="start-minimized"
+            class="tray-check-input"
+            :checked="startMin"
+            :disabled="!startMinReady || startMinBusy"
+            @change="toggleStartMin"
+          />
+          <span class="check-label text-dim">{{ t('settings.startMin') }}</span>
+        </label>
+        <div class="hint">{{ t('settings.startMin.hint') }}</div>
+        <div class="alert alert-warn alert-gap" v-if="!startMinReady">{{ t('settings.startMin.noBackend') }}</div>
         <label class="danger-check tray-check">
           <input
             type="checkbox"

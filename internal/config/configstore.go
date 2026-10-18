@@ -62,14 +62,31 @@ func DefaultUpdateSources() []UpdateSource {
 // 其余派生路径（PHP_ROOT/…）不落盘、由 DerivePaths 现算，杜绝不同步。
 // 自定义根与默认根互斥且唯一：非空即完全取代 ./offline、./backups。
 type FileConfig struct {
-	PHPOHome      string                           `yaml:"phpo_home,omitempty"`
-	WWWRoot       string                           `yaml:"www_root,omitempty"`
-	OfflineRoot   string                           `yaml:"offline_root,omitempty"`
-	BackupRoot    string                           `yaml:"backup_root,omitempty"`
-	DockerSources []string                         `yaml:"docker_sources,omitempty"` // Docker 镜像源主机名；空即不改写镜像名（直连官方）
-	UpdateSources []UpdateSource                   `yaml:"update_sources,omitempty"` // 全部并发探测，顺序只作并列版本的裁决与点名次序
-	Services      map[string]map[string]SvcSetting `yaml:"services,omitempty"`       // kind -> version -> 设置
-	SiteOrder     []string                         `yaml:"site_order,omitempty"`     // 站点域名展示顺序（拖拽排序持久化）：快照按此排序，缺席的域名按原序排在末尾
+	PHPOHome       string                           `yaml:"phpo_home,omitempty"`
+	WWWRoot        string                           `yaml:"www_root,omitempty"`
+	OfflineRoot    string                           `yaml:"offline_root,omitempty"`
+	BackupRoot     string                           `yaml:"backup_root,omitempty"`
+	DockerSources  []string                         `yaml:"docker_sources,omitempty"`  // Docker 镜像源主机名；空即不改写镜像名（直连官方）
+	UpdateSources  []UpdateSource                   `yaml:"update_sources,omitempty"`  // 全部并发探测，顺序只作并列版本的裁决与点名次序
+	Services       map[string]map[string]SvcSetting `yaml:"services,omitempty"`        // kind -> version -> 设置
+	SiteOrder      []string                         `yaml:"site_order,omitempty"`      // 站点域名展示顺序（拖拽排序持久化）：快照按此排序，缺席的域名按原序排在末尾
+	StartMinimized bool                             `yaml:"start_minimized,omitempty"` // 启动后最小化：true 即建窗时不显示主窗口，只在托盘待着（设置页那一项的唯一落点）
+}
+
+// StartMinimized 返回「启动后最小化」是否被勾选（未配置即 false = 正常显示主窗口）。
+func (c *ConfigStore) StartMinimized() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fc.StartMinimized
+}
+
+// SetStartMinimized 持久化「启动后最小化」：取消勾选即 false，字段带 omitempty 因此不留残行。
+// 只落盘，不改当前这轮的窗口——开关在下次启动兑现。
+func (c *ConfigStore) SetStartMinimized(v bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fc.StartMinimized = v
+	return c.save()
 }
 
 // SiteOrder 返回站点的展示顺序（未拖拽过为空切片）。

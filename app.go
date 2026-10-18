@@ -126,6 +126,39 @@ func (a *App) AutoStartSet(enable bool) error {
 	return a.wails.Autostart.Disable()
 }
 
+// startMinimizedAtBoot 在建窗之前现读一次「启动后最小化」。这一步必须在 `app.Window.NewWithOptions`
+// 之前完成：那一刻对象图、引擎、SQLite、快照全都还没起（它们排在 ServiceStartup 钩子里），
+// 而窗口显示与否是建窗那一刻就定死的事，只能由这份现读的结论决定。
+//
+// 只读不写：读不到配置（首启还没有 config.yaml、路径异常、YAML 坏了）一律按「正常显示主窗口」处理，
+// 绝不让一次读失败变成「开机后既没有窗口也没有解释」。
+func startMinimizedAtBoot() bool {
+	cs, err := config.LoadConfigStore()
+	if err != nil {
+		return false
+	}
+	return cs.StartMinimized()
+}
+
+// StartMinimizedGet 读回「启动后最小化」的落盘值（权威在 config.yaml，界面每次进设置页现问一次）。
+func (a *App) StartMinimizedGet() (bool, error) {
+	cfg, ok := a.container.GraphConfig()
+	if !ok {
+		return false, errNotReady
+	}
+	return cfg.StartMinimized(), nil
+}
+
+// StartMinimizedSet 保存「启动后最小化」：纯配置写（与 site_order 同类，不是第五个可写配置面），
+// 不建任务、不动当前这轮的窗口——勾选在下次 phpo 启动时兑现，界面据此给提示。
+func (a *App) StartMinimizedSet(enable bool) error {
+	cfg, ok := a.container.GraphConfig()
+	if !ok {
+		return errNotReady
+	}
+	return cfg.SetStartMinimized(enable)
+}
+
 // ServiceStartup 实现 Wails v3 服务生命周期（启动钩子含残留临时目录清理，自 T211 注册）
 func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
 	return a.assembly.Startup(ctx)
