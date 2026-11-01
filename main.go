@@ -9,6 +9,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 
 	phpapp "phpo/internal/app"
+	"phpo/internal/config"
 	"phpo/internal/identity"
 	"phpo/internal/ui"
 )
@@ -22,6 +23,10 @@ var assets embed.FS
 var appIcon []byte
 
 func main() {
+	webViewMigration, err := config.PrepareWebViewDataMigration(identity.DesktopID, identity.Slug)
+	if err != nil {
+		log.Fatal(err)
+	}
 	root := NewApp()
 	windowFocusRequests := make(chan struct{}, 1)
 	windowReady := make(chan struct{})
@@ -64,6 +69,10 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 	})
+	// Run after Wails has handled the single-instance check, but before WebKit creates its profile.
+	if err := webViewMigration.Migrate(); err != nil {
+		log.Fatal(err)
+	}
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		close(windowReady)
 	})
