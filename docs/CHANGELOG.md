@@ -1,8 +1,13 @@
 # 更新日志
 
-> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.139`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
+> 遵循 Keep a Changelog 精神，按里程碑（M0–M7）记录 phpo 的演进。版本号策略见 [版本策略](./版本策略.md)（此处指**应用自身**版本，比较用 `pkg/version/semver`）。当前应用版本 `0.1.140`（单一真实来源 `wails.json` 的 `info.productVersion`）。冲突以 AGENTS.md 为准。
 >
 > **应用版本单一真实来源**：`wails.json` 的 `info.productVersion`。`scripts/bump-version.sh [patch|minor|major]`（默认 patch）改写它并同步 `build/linux/nfpm.yaml` 的 `version`（deb/rpm 包内版本）；运行时基准由 Taskfile 经 `-ldflags "-X phpo/internal/app.Version=$(bash scripts/version.sh)"` 注入 `internal/app/di.go`。因此每次 `task release:local` 出包都会让 patch +1，使安装包可区分、可覆盖升级。
+
+## [0.1.140] - 2026-11-01
+- **推送前本机覆盖安装保留用户数据**：先核对 dpkg 已安装版本及 `/usr/bin/phpo` 归属，再用新 deb 原位重装；不 purge 软件包、不删除用户数据目录。若安装类型或路径不符则停止，避免并装。
+- **修复 Release workflow lint**：合并 `$GITHUB_OUTPUT` 的连续追加写入，消除 ShellCheck SC2129。
+- 补充跨平台既有安装位置与覆盖更新的数据保留说明。
 
 ## [0.1.139] - 2026-11-01
 - **托盘设置按平台能力联动**：托盘支持状态由后端检测并回传；托盘不可用时禁用「关闭窗口时最小化到托盘」，关闭显示开关时同步关闭最小化选项。Windows/macOS 保持可切换；Linux 因 Wails v3.0.0 的 `SystemTray.Show()/Hide()` 是空操作，图标开关禁用并说明限制。根目录新增 [当前托盘技术方案](../当前托盘技术方案.md)，Linux 动态隐藏/显示登记为待完成项。

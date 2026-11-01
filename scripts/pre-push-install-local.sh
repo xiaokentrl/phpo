@@ -18,7 +18,11 @@ done
 [[ "$(dpkg --print-architecture)" == amd64 ]] || fail "local deb install currently requires amd64"
 [[ -f /etc/debian_version ]] || fail "automatic local install requires Debian or Ubuntu"
 [[ "$(dpkg-query -W -f='${Status}' phpo 2>/dev/null || true)" == "install ok installed" ]] \
-  || fail "phpo is not installed as a Debian package; refusing to remove other install types"
+  || fail "phpo is not installed as a Debian package; refusing to install beside another install type"
+installed_version="$(dpkg-query -W -f='${Version}' phpo)"
+installed_files="$(dpkg-query -L phpo)"
+grep -Fxq /usr/bin/phpo <<<"$installed_files" \
+  || fail "the installed phpo package does not own /usr/bin/phpo; refusing to install beside an unknown location"
 
 head_commit="$(git rev-parse HEAD)"
 push_has_current_head=0
@@ -45,11 +49,6 @@ config_root="${XDG_CONFIG_HOME:-$HOME/.config}"
 [[ "$config_root" == /* ]] || fail "XDG_CONFIG_HOME must be an absolute path"
 config_root="$(realpath -m -- "$config_root")"
 config_dir="$config_root/phpo"
-[[ "$config_dir" == "$config_root/phpo" && "$config_dir" != /phpo ]] \
-  || fail "unsafe phpo configuration path: $config_dir"
-[[ ! -L "$config_dir" ]] || fail "configuration path is a symlink; refusing to delete it: $config_dir"
-[[ "$config_dir" != "$repo_root" && "$config_dir" != "$HOME" ]] \
-  || fail "configuration path resolves to a protected directory: $config_dir"
 if [[ -e "$config_dir" && ! -d "$config_dir" ]]; then
   fail "configuration path exists but is not a directory: $config_dir"
 fi
@@ -63,9 +62,13 @@ if [[ "${PHPO_PRE_PUSH_DRY_RUN:-}" == 1 ]]; then
   printf 'phpo pre-push dry run:\n'
   printf '  source: %s\n' "$head_commit"
   printf '  package: %s\n' "$deb"
-  printf '  purge installed Debian package phpo\n'
-  printf '  remove only %s\n' "$config_dir"
-  printf '  install the newly built local deb and block push on failure\n'
+  printf '  detected installation: Debian package phpo %s at /usr/bin/phpo\n' "$installed_version"
+  if [[ -d "$config_dir" ]]; then
+    printf '  preserve existing user data: %s\n' "$config_dir"
+  else
+    printf '  user data directory does not exist yet: %s\n' "$config_dir"
+  fi
+  printf '  replace the installed package in place and block push on failure\n'
   exit 0
 fi
 
@@ -86,20 +89,23 @@ trap 'git restore --source="$head_commit" --worktree -- frontend/dist/index.html
 printf '%s\n' 'phpo pre-push: building the local Debian package'
 PATH="$(go env GOPATH)/bin:$PATH" wails3 task package:local
 [[ -f "$deb" ]] || fail "package task did not produce $deb"
+[[ "$(dpkg-deb -f "$deb" Package)" == "phpo" ]] \
+  || fail "built package identity does not match the existing phpo installation"
 [[ "$(dpkg-deb -f "$deb" Version)" == "$version" ]] \
   || fail "built package version does not match wails.json ($version)"
 
-printf '%s\n' 'phpo pre-push: removing the installed app and its user configuration'
-sudo dpkg --purge phpo
-if [[ -e "$config_dir" ]]; then
-  rm -rf -- "$config_dir"
+had_user_data=0
+if [[ -d "$config_dir" ]]; then
+  had_user_data=1
 fi
-[[ ! -e "$config_dir" ]] || fail "could not remove the phpo user configuration directory"
 
-printf '%s\n' 'phpo pre-push: installing the freshly built package'
+printf 'phpo pre-push: replacing Debian package phpo %s in place\n' "$installed_version"
 sudo apt-get install -y --reinstall "$deb"
 [[ "$(dpkg-query -W -f='${Status}' phpo 2>/dev/null || true)" == "install ok installed" ]] \
   || fail "the newly built phpo package is not installed"
 [[ -x /usr/bin/phpo ]] || fail "the installed package did not provide /usr/bin/phpo"
+if (( had_user_data == 1 )); then
+  [[ -d "$config_dir" ]] || fail "the existing phpo user data directory disappeared during package replacement: $config_dir"
+fi
 
 printf 'phpo pre-push: installed phpo %s; allowing push\n' "$version"

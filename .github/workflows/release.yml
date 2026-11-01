@@ -258,10 +258,12 @@ jobs:
               exit 1
             fi
           fi
-          echo "version=$expected" >>"$GITHUB_OUTPUT"
-          echo "tag=$tag" >>"$GITHUB_OUTPUT"
           # 发布标题用标签上那串（预览版要看得见 -beta.N），清单与内嵌版本仍用去掉后缀的 $expected。
-          echo "label=$declared" >>"$GITHUB_OUTPUT"
+          {
+            echo "version=$expected"
+            echo "tag=$tag"
+            echo "label=$declared"
+          } >>"$GITHUB_OUTPUT"
           echo "发布 $tag（版本 $expected）"
 
       - name: Sign artifacts (Ed25519 → .sig)
