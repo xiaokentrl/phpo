@@ -3,7 +3,7 @@
 # 触发：推送 v* 标签，或手动 dispatch。三个原生 runner 并行出包 → 汇总签名/校验 → 挂到 GitHub Release。
 # dry-run：手动 dispatch 勾选 guard_only=true 时，跳过出包/发布，仅跑 verify-guard 作业验证
 #   「内嵌公钥 ≡ 签名私钥」守卫是否生效（复用 scripts/verify-signing-guard.sh，与真实签名步骤同一代码）。
-# 说明（scope「脚手架优先」）：本工作流已在本地按 wails3 v3.0.0-beta.23 命令模型编写并经 actionlint 校验；
+# 说明（scope「脚手架优先」）：本工作流使用 wails3 v3.0.0 命令模型并经 actionlint 校验；
 #   真实出包/签名/公证需以下仓库 secrets（缺失时签名步骤自动跳过，不阻断出包）：
 #     PHPO_SIGNING_KEY   Ed25519 私钥（base64；scripts/sign-release.sh genkey 生成）——供 .sig 自升级验签
 #                        配好私钥后必须把 sign-release.sh pubkey 导出的匹配公钥提交到
@@ -13,7 +13,7 @@
 #     APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID / build/signing/*.p12  macOS 开发者签名+公证（可选）
 #     WIN_CERT / WIN_CERT_PASSWORD                                                   Windows 代码签名（可选）
 #
-# 说明：Linux 出包与 ci.yml/lint.yml 同一工具链口径——Wails beta.23 的 Linux cgo 走 GTK4 一路
+# 说明：Linux 出包与 ci.yml/lint.yml 同一工具链口径——Wails v3.0.0 的 Linux cgo 走 GTK4 一路
 #   （pkg-config: gtk4 webkitgtk-6.0 libsoup-3.0 gio-unix-2.0 + x11），故 linux matrix 与两个
 #   纯脚本作业都用 ubuntu-24.04（22.04 无 libwebkitgtk-6.0-dev）；actions 跟到跑 node24 的主版本。
 name: Release
@@ -40,7 +40,7 @@ permissions:
 env:
   GO_VERSION: "1.27"
   NODE_VERSION: "22"
-  WAILS_VERSION: "v3.0.0-beta.23"
+  WAILS_VERSION: "v3.0.0"
 
 jobs:
   # dry-run：勾选 guard_only 时仅此作业运行——复用与真实签名步骤同一脚本，验证守卫是否生效，不出包/不发布。

@@ -204,6 +204,8 @@ export interface TrayPrefs {
   minimizeOnClose: boolean
 }
 
+export type TrayStatusFailure = 'backendUnavailable' | 'probeFailed'
+
 // env 为扁平键值表（derivePaths 产物 + 各服务端口/密码键）
 export type Env = Record<string, string>
 

@@ -6,8 +6,10 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	phpapp "phpo/internal/app"
+	"phpo/internal/identity"
 	"phpo/internal/ui"
 )
 
@@ -16,12 +18,30 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed build/appicon.png
+var appIcon []byte
+
 func main() {
 	root := NewApp()
+	windowFocusRequests := make(chan struct{}, 1)
+	windowReady := make(chan struct{})
+	requestWindowFocus := func() {
+		select {
+		case windowFocusRequests <- struct{}{}:
+		default:
+		}
+	}
 
 	app := application.New(application.Options{
-		Name:        "phpo",
+		Name:        identity.DisplayName,
 		Description: "面向 PHP 开发者的本地 Docker 化开发环境管理器（仅 GUI，不提供 CLI）",
+		Icon:        appIcon,
+		Linux: application.LinuxOptions{
+			// Avoid Wails' derived org.wails.phpo GTK application identity.
+			ApplicationID: identity.AppID,
+			// GNOME uses the same ID for the GTK app, Wayland window, and desktop entry.
+			ProgramName: identity.DesktopID,
+		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
@@ -32,7 +52,7 @@ func main() {
 		// 第二实例把自己的版本号带给首实例：与运行中进程不一致 = 磁盘二进制已被覆盖安装/升级，
 		// 首实例自动换血重启成新版本（覆盖安装后旧实例驻留托盘、点快捷方式只见旧界面的根治）。
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID:       "io.github.xiaokentrl.phpo",
+			UniqueID:       identity.AppID,
 			ExitCode:       0,
 			AdditionalData: map[string]string{"version": phpapp.Version},
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
@@ -44,9 +64,18 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 	})
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		close(windowReady)
+	})
 	// 窗口必须先于 Attach 创建：托盘要绑定它，点图标才能唤回窗口
 	window := app.Window.NewWithOptions(ui.MainWindowOptions(startMinimizedAtBoot()))
-	root.Attach(app, window)
+	root.Attach(app, window, requestWindowFocus)
+	go func() {
+		<-windowReady
+		for range windowFocusRequests {
+			ui.ShowMainWindow(window)
+		}
+	}()
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)

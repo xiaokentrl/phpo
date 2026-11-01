@@ -33,11 +33,17 @@ export async function refreshServices(): Promise<boolean> {
   return true
 }
 
-// setTrayPrefs 把两项托盘偏好交给原生外壳（撤下/挂上托盘图标 + 关闭按钮驻留或退出）。
-// 不做反向读取：偏好以 localStorage 为准；无宿主时直接跳过，demo 下仅驱动窗口内 AppTrayMenu.vue。
+// setTrayPrefs 把托盘偏好投影到原生外壳；能力状态由 TrayStatus 查询，localStorage 仍是偏好权威。
 export async function setTrayPrefs(showTray: boolean, minimizeOnClose: boolean): Promise<void> {
   if (!hasBackend()) return
   await app.SetTrayPrefs(showTray, minimizeOnClose)
+}
+
+export type TrayStatus = Awaited<ReturnType<typeof app.TrayStatus>>
+
+export async function getTrayStatus(): Promise<TrayStatus | null> {
+  if (!hasBackend()) return null
+  return await app.TrayStatus()
 }
 
 // quitApp 请原生外壳退出进程：托盘菜单「退出 phpo」的唯一出口（忙锁判定在前端，见 AppTrayMenu.vue）。

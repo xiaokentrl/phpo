@@ -1,6 +1,6 @@
 # Lint 门禁：Go 格式/静态 + 前端类型 + 工作流自检（对应 AGENTS.md §11.3 / 并行轨 TX01）
 #
-# 说明：runner 与工具链口径同 ci.yml——Wails beta.23 的 Linux cgo 走 GTK4 一路
+# 说明：runner 与工具链口径同 ci.yml——Wails v3.0.0 的 Linux cgo 走 GTK4 一路
 #   （pkg-config: gtk4 webkitgtk-6.0 libsoup-3.0 gio-unix-2.0 + x11），故须 ubuntu-24.04；
 #   actions 一律跟到跑 node24 的主版本，否则本文件的 actionlint 作业把三个工作流一起判红。
 name: Lint
@@ -17,7 +17,7 @@ permissions:
 env:
   GO_VERSION: "1.27"
   NODE_VERSION: "22"
-  WAILS_VERSION: "v3.0.0-beta.23"
+  WAILS_VERSION: "v3.0.0"
 
 jobs:
   go-lint:

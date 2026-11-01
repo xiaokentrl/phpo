@@ -41,6 +41,7 @@ func (w wailsEmitter) Emit(event string, payload any) {
 type App struct {
 	wails          *application.App
 	window         *application.WebviewWindow // 主窗口句柄：单实例「再点一次」时前置召回（见 Activate）
+	showMainWindow func()
 	container      *phpapp.Container
 	assembly       *phpapp.Assembly
 	tray           *ui.Tray // 原生托盘句柄；未 Attach 前为 nil，偏好下发据此拒绝
@@ -54,13 +55,14 @@ func NewApp() *App {
 
 // Attach 在 application.New 之后注入 Wails 实例：替换真实发射器并安装托盘。
 // window 必须先创建——托盘图标点击与「关闭时最小化」都要绑定主窗口才有效果。
-func (a *App) Attach(app *application.App, window *application.WebviewWindow) {
+func (a *App) Attach(app *application.App, window *application.WebviewWindow, showMainWindow func()) {
 	a.wails = app
 	a.window = window
+	a.showMainWindow = showMainWindow
 	emitter := wailsEmitter{app: app}
 	a.container.Emitter = emitter
 	a.assembly.Emitter = emitter
-	a.tray = ui.InstallTray(app, emitter, window)
+	a.tray = ui.InstallTray(app, emitter, window, appIcon, showMainWindow)
 }
 
 // Activate 单实例的「再点一次快捷方式」。第二实例带来的版本号与运行中进程不一致时，
@@ -76,14 +78,13 @@ func (a *App) Activate(data application.SecondInstanceData) {
 		}
 		return
 	}
-	if a.window == nil {
+	if a.showMainWindow == nil {
 		return
 	}
-	a.window.Show()
-	a.window.Focus()
+	a.showMainWindow()
 }
 
-// SetTrayPrefs 把前端 prefsStore（localStorage 权威，§3.1 原则 5）的两项托盘偏好投影到原生外壳。
+// SetTrayPrefs 把前端 prefsStore（localStorage 权威，§3.1 原则 5）的托盘偏好投影到原生外壳。
 //
 // 不走 preflight：§5.6 事件名与 17 个 preflight action 均已冻结，且 UI 偏好不含端口/路径/版本，
 // 无裁决对象；三段式（硬红线 5）约束的是业务状态写操作，偏好既不落 config.yaml 也不落 SQLite。
@@ -91,8 +92,21 @@ func (a *App) SetTrayPrefs(showTray, minimizeOnClose bool) error {
 	if a.tray == nil {
 		return errNotReady
 	}
+	support, err := ui.DetectTraySupport()
+	if err != nil {
+		return err
+	}
+	showTray, minimizeOnClose = ui.NormalizeTrayPrefs(support, showTray, minimizeOnClose)
 	a.tray.SetPrefs(showTray, minimizeOnClose)
 	return nil
+}
+
+// TrayStatus reports whether a system tray is available and whether its visibility can be changed.
+func (a *App) TrayStatus() (ui.TraySupport, error) {
+	if a.tray == nil {
+		return ui.TraySupport{}, errNotReady
+	}
+	return ui.DetectTraySupport()
 }
 
 // Quit 退出整个进程：托盘菜单（原生菜单与窗口内仿真菜单共用 ui:command）的退出动作落到这里的单一出口。

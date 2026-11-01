@@ -36,6 +36,7 @@ onMounted(async () => {
   await waitForBackend()
   // 宿主已确认：store 建立早于 window._wails 注入时会误判 demo 铺下占位数据，此处一次性收掉再等快照
   if (hasBackend()) app.enterRealHost()
+  await prefs.refreshTrayStatus()
   prefs.syncTrayPrefs() // 宿主就绪后才把托盘偏好投影到原生外壳；此后勾选变化由 store 自动跟随
   startStateSync() // 订阅后端 §5.6 全量事件；此后状态变化只来自事件落地
   subscribeUpdater() // 订阅 update:* 事件：后台发现新版本即时提示（硬红线 4）

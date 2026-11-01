@@ -29,11 +29,16 @@ func TestActivate_VersionMismatchRestarts(t *testing.T) {
 	}
 }
 
-func TestActivate_SameVersionNoRestart(t *testing.T) {
+func TestActivate_SameVersionRequestsWindowFocus(t *testing.T) {
 	a := NewApp()
+	focused := false
+	a.showMainWindow = func() { focused = true }
 	a.Activate(application.SecondInstanceData{AdditionalData: map[string]string{"version": a.container.CurrentVersion}})
 	if a.restartPending {
 		t.Fatal("版本一致不应换血，只前置窗口")
+	}
+	if !focused {
+		t.Fatal("版本一致时应请求显示并聚焦现有主窗口")
 	}
 }
 
@@ -75,6 +80,13 @@ func TestRestartWithoutWails(t *testing.T) {
 func TestSetTrayPrefsWithoutTray(t *testing.T) {
 	a := &App{}
 	if err := a.SetTrayPrefs(true, true); !errors.Is(err, errNotReady) {
+		t.Fatalf("期望 errNotReady，实际：%v", err)
+	}
+}
+
+func TestTrayStatusWithoutTray(t *testing.T) {
+	a := &App{}
+	if _, err := a.TrayStatus(); !errors.Is(err, errNotReady) {
 		t.Fatalf("期望 errNotReady，实际：%v", err)
 	}
 }

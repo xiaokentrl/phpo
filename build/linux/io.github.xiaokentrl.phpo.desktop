@@ -9,5 +9,5 @@ Icon=phpo
 Terminal=false
 Categories=Development;IDE;
 Keywords=php;docker;env;nginx;mysql;
-StartupNotify=true
-StartupWMClass=phpo
+StartupNotify=false
+StartupWMClass=io.github.xiaokentrl.phpo

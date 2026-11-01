@@ -2,10 +2,10 @@
 // 托盘两项额外投影到原生外壳（api/state.ts#setTrayPrefs），localStorage 仍是唯一权威。
 import { defineStore } from 'pinia'
 import { reactive, ref, watchEffect } from 'vue'
-import { setTrayPrefs } from '@/api/state'
+import { getTrayStatus, setTrayPrefs, type TrayStatus } from '@/api/state'
 import { toast } from '@/composables/useToast'
 import { t } from '@/composables/useI18n'
-import type { TrayPrefs } from '@/types'
+import type { TrayPrefs, TrayStatusFailure } from '@/types'
 
 export const THEME_IDS = ['light', 'midnight', 'oled', 'forest', 'ocean', 'sakura', 'amber', 'teal', 'titanium'] as const
 export type ThemeId = (typeof THEME_IDS)[number]
@@ -42,6 +42,8 @@ function readTray(): TrayPrefs {
 export const usePrefsStore = defineStore('prefs', () => {
   const theme = ref<ThemeId>(readTheme())
   const tray = reactive<TrayPrefs>(readTray())
+  const trayStatus = ref<TrayStatus | null>(null)
+  const trayStatusFailure = ref<TrayStatusFailure | null>(null)
 
   function setTheme(id: ThemeId): void {
     if (isThemeId(id)) theme.value = id
@@ -61,7 +63,7 @@ export const usePrefsStore = defineStore('prefs', () => {
   // 由 App.vue 在 waitForBackend() 之后调 syncTrayPrefs() 起闸，此后勾选变化自动跟随。
   let mirroring = false
   function mirrorTray(): void {
-    if (!mirroring) return
+    if (!mirroring || trayStatus.value === null) return
     // 下发失败不得静默：勾选已写进 localStorage 并显示为「已生效」，原生托盘却没变＝界面失真（硬红线 4 的同一口径）
     void setTrayPrefs(tray.enabled, tray.minimizeOnClose).catch(() => {
       toast(t('settings.tray.pushFailed'), 'err', 4200)
@@ -71,6 +73,36 @@ export const usePrefsStore = defineStore('prefs', () => {
   function syncTrayPrefs(): void {
     mirroring = true
     mirrorTray()
+  }
+
+  async function refreshTrayStatus(): Promise<void> {
+    try {
+      const status = await getTrayStatus()
+      if (status === null) {
+        trayStatus.value = null
+        trayStatusFailure.value = 'backendUnavailable'
+        return
+      }
+      trayStatus.value = status
+      trayStatusFailure.value = null
+      if (!status.canToggleVisibility) tray.enabled = true
+      if (!status.available || !tray.enabled) tray.minimizeOnClose = false
+    } catch (error: unknown) {
+      trayStatus.value = null
+      trayStatusFailure.value = 'probeFailed'
+      toast(`${t('settings.tray.statusFailed')} ${String(error)}`, 'err', 5200)
+    }
+  }
+
+  function setTrayEnabled(enabled: boolean): void {
+    if (!trayStatus.value?.canToggleVisibility) return
+    tray.enabled = enabled
+    if (!enabled) tray.minimizeOnClose = false
+  }
+
+  function setTrayMinimizeOnClose(enabled: boolean): void {
+    if (!trayStatus.value?.available || !tray.enabled) return
+    tray.minimizeOnClose = enabled
   }
 
   // 托盘偏好持久化：设置页勾选必须跨重启保留，否则重启即回弹为默认（点击无长期效果）
@@ -83,5 +115,16 @@ export const usePrefsStore = defineStore('prefs', () => {
     mirrorTray()
   })
 
-  return { theme, tray, setTheme, syncTrayPrefs, THEME_IDS }
+  return {
+    theme,
+    tray,
+    trayStatus,
+    trayStatusFailure,
+    setTheme,
+    syncTrayPrefs,
+    refreshTrayStatus,
+    setTrayEnabled,
+    setTrayMinimizeOnClose,
+    THEME_IDS,
+  }
 })

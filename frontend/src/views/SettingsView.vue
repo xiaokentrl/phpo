@@ -29,6 +29,22 @@ const { preflight } = usePreflight()
 const version = ref('')
 onMounted(async () => { version.value = await currentVersion() })
 
+const trayVisibilityDisabled = computed(() => !prefs.trayStatus?.canToggleVisibility)
+const trayMinimizeDisabled = computed(() => !prefs.trayStatus?.available || !prefs.tray.enabled)
+const trayStatusMessage = computed(() => {
+  if (prefs.trayStatusFailure === 'backendUnavailable') return t('settings.tray.noBackend')
+  if (prefs.trayStatusFailure === 'probeFailed') return t('settings.tray.statusFailed')
+  if (!prefs.trayStatus) return t('settings.tray.checking')
+  if (!prefs.trayStatus.available) return t('settings.tray.unavailable')
+  return ''
+})
+const trayVisibilityMessage = computed(() =>
+  prefs.trayStatus && !prefs.trayStatus.canToggleVisibility
+    ? t('settings.tray.visibilityUnsupported')
+    : '',
+)
+onMounted(() => { void prefs.refreshTrayStatus() })
+
 // 开机自启动：OS 注册态是唯一权威（硬红线 4）——每次进页现问一次，不落本地缓存。
 // 切换即写（Enable/Disable 同步返回）；写失败回滚开关并 toast 后端原话现译，绝不留在假状态上。
 const autoStart = ref(false)
@@ -303,13 +319,29 @@ function pickLang(l: Locale) {
       </div>
       <div class="stack-12">
         <label class="danger-check tray-check">
-          <input v-model="prefs.tray.minimizeOnClose" type="checkbox" id="tray-minimize" class="tray-check-input" />
-          <span class="check-label text-dim">{{ t('settings.tray.minimize') }}</span>
-        </label>
-        <label class="danger-check tray-check">
-          <input v-model="prefs.tray.enabled" type="checkbox" id="tray-show" class="tray-check-input" />
+          <input
+            :checked="prefs.tray.enabled"
+            :disabled="trayVisibilityDisabled"
+            @change="prefs.setTrayEnabled(($event.target as HTMLInputElement).checked)"
+            type="checkbox"
+            id="tray-show"
+            class="tray-check-input"
+          />
           <span class="check-label text-dim">{{ t('settings.tray.show') }}</span>
         </label>
+        <label class="danger-check tray-check">
+          <input
+            :checked="prefs.tray.minimizeOnClose"
+            :disabled="trayMinimizeDisabled"
+            @change="prefs.setTrayMinimizeOnClose(($event.target as HTMLInputElement).checked)"
+            type="checkbox"
+            id="tray-minimize"
+            class="tray-check-input"
+          />
+          <span class="check-label text-dim">{{ t('settings.tray.minimize') }}</span>
+        </label>
+        <div v-if="trayStatusMessage" class="alert alert-warn">{{ trayStatusMessage }}</div>
+        <div v-if="trayVisibilityMessage" class="alert alert-warn">{{ trayVisibilityMessage }}</div>
       </div>
     </div>
 
@@ -453,6 +485,11 @@ function pickLang(l: Locale) {
   background: var(--bg);
   border-color: var(--border);
   cursor: pointer;
+}
+
+.tray-check:has(.tray-check-input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .tray-check-input {

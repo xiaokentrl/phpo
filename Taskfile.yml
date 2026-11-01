@@ -60,7 +60,7 @@ tasks:
     cmds:
       - pnpm -C frontend build
 
-  # 说明：wails3 v3.0.0-beta.23 的 `wails3 build` / `wails3 package` 会转发到本 Taskfile
+  # 说明：wails3 v3.0.0 的 `wails3 build` / `wails3 package` 会转发到本 Taskfile
   # 的同名任务（build / package），真正的编译编排在下面这些任务里。
   # 本任务**不加** `-tags gtk3`，故 Wails 在 Linux 上走 GTK4 一路：pkg-config 需要
   # gtk4 / webkitgtk-6.0 / libsoup-3.0 / gio-unix-2.0 / glib-2.0 / gobject-2.0 / x11
@@ -97,8 +97,15 @@ tasks:
       - mv -f build/bin/{{.BINARY}}.deb build/bin/{{.BINARY}}_$(bash scripts/version.sh)_amd64.deb
       - bash scripts/make-appimage.sh
 
+  package:local:
+    desc: 只打当前 Linux 的 deb，供本机 pre-push 安装验收
+    deps: [build]
+    cmds:
+      - wails3 tool package -format deb -name {{.BINARY}} -out build/bin -config build/linux/nfpm.yaml
+      - mv -f build/bin/{{.BINARY}}.deb build/bin/{{.BINARY}}_$(bash scripts/version.sh)_amd64.deb
+
   package:linux:
-    # AppImage 由 scripts/make-appimage.sh 出：Wails beta.23 的 tool package 没有 AppImage 这一档格式，
+    # AppImage 由 scripts/make-appimage.sh 出：Wails v3.0.0 的 tool package 没有 AppImage 这一档格式，
     # 只能外挂 appimagetool。图形栈（GTK4/WebKitGTK）走宿主，原因见该脚本开头。
     desc: Linux 出包（deb + rpm + AppImage），需本机有 dpkg-deb / rpmbuild / mksquashfs
     deps: [build]
@@ -126,10 +133,10 @@ tasks:
       - makensis "-DAPP_NAME={{.BINARY}}" "-DAPP_VERSION={{.VERSION}}" "-DBINARY_NAME={{.BINARY}}" "-DEXE_NAME={{joinPath .ROOT_DIR "build" "bin" (printf "%s-setup-x64.exe" .BINARY)}}" "-DBUILD_DIR={{joinPath .ROOT_DIR "build" "bin"}}" "-DICON={{joinPath .ROOT_DIR "build" "windows" "icon.ico"}}" "{{joinPath .ROOT_DIR "build" "windows" "nsis" "installer.nsi"}}"
 
   package:darwin:
-    # .app bundle 必须由本任务自建：wails3 v3.0.0-beta.23 的 `tool package -format dmg` 只把
+    # .app bundle 必须由本任务自建：wails3 v3.0.0 的 `tool package -format dmg` 只把
     # **已存在**的 `{out}/{name}.app` 打成 dmg（internal/commands/tool_package.go 先 os.Stat，
     # 缺席即 `application bundle not found`），而 `wails3 package` 只是转发到本 Taskfile 的
-    # `package` 任务（internal/commands/task_wrapper.go）——beta.23 没有内建 bundler。
+    # `package` 任务（internal/commands/task_wrapper.go）——v3.0.0 没有内建 bundler。
     # 版本必须注入 bundle 的 Info.plist：源文件 build/darwin/Info.plist 的两项版本写死 0.1.0，
     # 不覆写即产出「自报 0.1.0」的 macOS 包——与 package:windows 的 APP_VERSION 同源缺陷，
     # 因此取不到 VERSION 即中止，覆写完还要回读校验，不匹配同样中止。

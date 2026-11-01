@@ -9,7 +9,7 @@
 
 | 模块 | 版本 | 许可证 | 版权归属 | 用途 |
 |------|------|--------|---------|------|
-| `github.com/wailsapp/wails/v3` | v3.0.0-beta.23 | MIT | Wails project | 桌面框架（窗口/事件/托盘/绑定） |
+| `github.com/wailsapp/wails/v3` | v3.0.0 | MIT | Wails project | 桌面框架（窗口/事件/托盘/绑定） |
 | `github.com/docker/docker` | v28.3.2+incompatible | Apache-2.0 | Docker Inc. | Docker Engine SDK（容器/镜像/网络/卷） |
 | `github.com/docker/go-connections` | v0.8.1 | Apache-2.0 | Docker Inc. | Docker SDK 传输层依赖 |
 | `modernc.org/sqlite` | v1.59.0 | BSD-3-Clause | The Sqlite Authors | 纯 Go SQLite 驱动（CGO_ENABLED=0 持久化） |
@@ -27,10 +27,10 @@ Go 标准库（`crypto/ed25519`、`crypto/sha256`、`archive/tar`、`compress/gz
 | `vue` | ^3.5.13 | MIT | 运行时（入包） |
 | `pinia` | ^2.2.6 | MIT | 运行时（入包） |
 | `vue-router` | ^4.5.0 | MIT | 运行时（入包） |
-| `@wailsio/runtime` | 3.0.0-beta.23 | MIT | 运行时（入包） |
+| `@wailsio/runtime` | 3.0.0 | MIT | 运行时（入包） |
 | `typescript` | ~5.7.2 | Apache-2.0 | 构建期 |
-| `vite` | ^5.4.11 | MIT | 构建期 |
-| `@vitejs/plugin-vue` | ^5.2.1 | MIT | 构建期 |
+| `vite` | ^8.2.4 | MIT | 构建期 |
+| `@vitejs/plugin-vue` | ^6.0.8 | MIT | 构建期 |
 | `vue-tsc` | ^2.1.10 | MIT | 构建期 |
 | `@types/node` | ^22.10.1 | MIT | 构建期（类型，不入包） |
 

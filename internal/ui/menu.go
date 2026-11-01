@@ -16,8 +16,11 @@ const (
 	CmdQuit      = "quit"
 )
 
-func BuildTrayMenu(app *application.App, emitter phpapp.Emitter) *application.Menu {
+func BuildTrayMenu(app *application.App, emitter phpapp.Emitter, showMainWindow func()) *application.Menu {
 	menu := app.NewMenu()
+	menu.Add("显示主界面").OnClick(func(*application.Context) {
+		showMainWindow()
+	})
 	menu.Add("打开日志").OnClick(func(*application.Context) {
 		emitter.Emit(EventUICommand, CmdOpenLogs)
 	})

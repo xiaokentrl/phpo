@@ -231,7 +231,7 @@ If you change the working root / cache root / backup root in Settings, grant the
 
 ## Building from source
 
-Toolchain: Go 1.27, Wails v3.0.0-beta.23, Node 22 + pnpm 12. On Linux you also need the GTK4 family of development headers (the app is CGO + WebKit):
+Toolchain: Go 1.27, Wails v3.0.0, Node 22.12+ + pnpm 12. On Linux you also need the GTK4 family of development headers (the app is CGO + WebKit):
 
 ```bash
 sudo apt install libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev \

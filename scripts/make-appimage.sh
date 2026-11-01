@@ -111,7 +111,9 @@ chmod 0755 "$APPDIR/usr/bin/$BINARY"
 
 # 桌面入口：deb 那份 Exec=phpo 靠宿主 PATH 找可执行文件，AppImage 里没有这个 PATH，
 # 所以只把 Exec 换成 AppRun，其余字段（Name/Comment/Icon/Categories）逐字沿用。
-sed -e 's|^Exec=phpo|Exec=AppRun|' build/linux/phpo.desktop >"$APPDIR/$BINARY.desktop"
+DESKTOP_SRC="build/linux/io.github.xiaokentrl.phpo.desktop"
+DESKTOP_FILE="$(basename "$DESKTOP_SRC")"
+sed -e 's|^Exec=phpo|Exec=AppRun|' "$DESKTOP_SRC" >"$APPDIR/$DESKTOP_FILE"
 cp -f build/linux/icons/256x256/phpo.png "$APPDIR/$BINARY.png"
 ln -sf "$BINARY.png" "$APPDIR/.DirIcon"
 

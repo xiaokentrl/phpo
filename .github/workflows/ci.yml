@@ -1,7 +1,7 @@
 # CI 主链路：构建 + 全量单测 + 工程规范校验 + 前端构建（对应 AGENTS.md §11.3 / 并行轨 TX01）
 #
 # 说明：`go build ./...` 与 `go test ./...` 会编译含 Wails ui 包在内的全部包，Linux 上需 GTK4/webkitgtk 开发头（CGO）。
-#   Wails v3.0.0-beta.23 未加 `gtk3` 构建标签时走的是 GTK4 一路（#cgo pkg-config: gtk4 webkitgtk-6.0
+#   Wails v3.0.0 未加 `gtk3` 构建标签时走的是 GTK4 一路（#cgo pkg-config: gtk4 webkitgtk-6.0
 #   libsoup-3.0 gio-unix-2.0 glib-2.0 gobject-2.0 + x11），故 runner 必须是 ubuntu-24.04：
 #   22.04 的 apt 源里根本没有 libwebkitgtk-6.0-dev，装旧的 libwebkit2gtk-4.1-dev 编不过（build/vet 恒红）。
 #   纯逻辑单测不触碰真实 Docker；集成 live 测以 PHPO_LIVE 门禁，默认 skip，不在 CI 强跑。
@@ -23,7 +23,7 @@ permissions:
 env:
   GO_VERSION: "1.27"
   NODE_VERSION: "22"
-  WAILS_VERSION: "v3.0.0-beta.23"
+  WAILS_VERSION: "v3.0.0"
 
 jobs:
   go:
