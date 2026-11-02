@@ -3,6 +3,7 @@
 // 追加「应用升级」组（T604 / §5.9）：当前版本展示 + 打开升级弹窗（后端为唯一权威）
 // 追加「Docker 镜像源」组：一行一个地址 + 保存 + 检测（延迟分级）；清单权威值在 config.yaml，回显只认后端
 import { computed, onMounted, ref } from 'vue'
+import { Browser } from '@wailsio/runtime'
 import { useI18n } from '@/composables/useI18n'
 import { usePrefsStore } from '@/stores/prefsStore'
 import { useLayoutStore } from '@/stores/layoutStore'
@@ -11,6 +12,8 @@ import { usePreflight } from '@/composables/usePreflight'
 import { toast } from '@/composables/useToast'
 import { backendMsg } from '@/utils/backendMsg'
 import { currentVersion } from '@/api/updater'
+import { appInfo, type AppAbout } from '@/api/about'
+import { hasBackend } from '@/api/site'
 import { getAutoStart, setAutoStart } from '@/api/autostart'
 import { getStartMinimized, setStartMinimized } from '@/api/startMinimized'
 import { getAutostartServices, setAutostartServices } from '@/api/autostartServices'
@@ -28,6 +31,24 @@ const { openUpdateModal } = useModals()
 const { preflight } = usePreflight()
 const version = ref('')
 onMounted(async () => { version.value = await currentVersion() })
+
+// 「关于我们」：版本 / 构建时间 / 源码版本 / 数据目录都以后端为准（硬红线 4），每次进页现问一次
+const about = ref<AppAbout | null>(null)
+onMounted(async () => { about.value = await appInfo() })
+
+// 项目固定入口：主页 / Issue 区 / 许可协议原文
+const REPO_HOME = 'https://github.com/xiaokentrl/phpo'
+const REPO_ISSUES = REPO_HOME + '/issues'
+const REPO_LICENSE = REPO_HOME + '/blob/main/LICENSE'
+
+// openLink 交给系统浏览器开新标签页；无宿主（纯 Vite demo）退回 window.open
+function openLink(url: string): void {
+  if (!hasBackend()) {
+    window.open(url, '_blank', 'noopener')
+    return
+  }
+  Browser.OpenURL(url)
+}
 
 const trayMinimizeDisabled = computed(() => !prefs.trayStatus?.available || !prefs.tray.enabled)
 const trayStatusMessage = computed(() => {
@@ -421,7 +442,7 @@ function pickLang(l: Locale) {
       <div class="hint hint-empty" v-else-if="dockerSaved.length === 0">{{ t('settings.docker.empty') }}</div>
     </div>
 
-    <div class="card">
+    <div class="card card-gap">
       <div class="section-head">
         <h3 class="section-title">{{ t('settings.upgrade') }}</h3>
         <span class="chip">{{ t('settings.upgrade.hint') }}</span>
@@ -429,6 +450,33 @@ function pickLang(l: Locale) {
       <div class="upgrade-row">
         <span class="text-dim">{{ t('update.subtitle', { version }) }}</span>
         <button class="btn btn-primary" type="button" id="check-update-btn" @click="openUpdateModal()">{{ t('update.check') }}</button>
+      </div>
+    </div>
+
+    <div class="card card-gap">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.about.title') }}</h3>
+        <span class="chip">MIT</span>
+      </div>
+      <div class="about-name">{{ about?.name || 'phpo' }}</div>
+      <p class="about-tagline">{{ t('settings.about.tagline') }}</p>
+      <div class="about-links">
+        <button class="btn" type="button" @click="openLink(REPO_HOME)">{{ t('settings.about.home') }}</button>
+        <button class="btn" type="button" @click="openLink(REPO_ISSUES)">{{ t('settings.about.issues') }}</button>
+        <button class="btn" type="button" @click="openLink(REPO_LICENSE)">{{ t('settings.about.license') }}</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.about.version.title') }}</h3>
+      </div>
+      <div class="about-kv">
+        <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.current') }}</span><span class="mono mono-size">{{ about?.version || version || '—' }}</span></div>
+        <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.buildTime') }}</span><span class="mono mono-size">{{ about?.buildTime || t('settings.about.notProvided') }}</span></div>
+        <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.commit') }}</span><span class="mono mono-size">{{ about?.commit || t('settings.about.notProvided') }}</span></div>
+        <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.license') }}</span><span class="mono mono-size">MIT</span></div>
+        <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.dataDir') }}</span><span class="mono mono-size">{{ about?.dataDir || '—' }}</span></div>
       </div>
     </div>
   </div>
@@ -542,5 +590,47 @@ function pickLang(l: Locale) {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+}
+
+.about-name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.about-tagline {
+  margin: 6px 0 14px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.about-links {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.about-kv {
+  display: flex;
+  flex-direction: column;
+}
+
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.kv-row:last-child {
+  border-bottom: none;
+}
+
+.kv-key {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  flex-shrink: 0;
 }
 </style>

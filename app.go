@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -262,12 +263,38 @@ func (a *App) cacheEntries() ([]model.CacheEntry, error) {
 	return a.container.OfflineService.ListCacheEntries(context.Background())
 }
 
-// AppInfo 供前端确认绑定链路已通
+// AppInfo 「关于我们」卡片的数据源：应用名 / 当前版本 / 源码版本 / 构建时间 / 用户数据目录。
+// 源码版本与构建时间来自 go 工具链在 git 仓库内编译时自动注入的 vcs 信息；拿不到（非 git 构建、go run）就给空串，前端显示「未提供」。
 func (a *App) AppInfo() map[string]string {
+	commit, buildTime := vcsInfo()
+	dataDir, _ := config.UserDataDir()
 	return map[string]string{
-		"name":    "phpo",
-		"version": a.container.CurrentVersion,
+		"name":      "phpo",
+		"version":   a.container.CurrentVersion,
+		"commit":    commit,
+		"buildTime": buildTime,
+		"dataDir":   dataDir,
 	}
+}
+
+// vcsInfo 读运行时构建信息里的 vcs.revision / vcs.time（只读，不落库）
+func vcsInfo() (commit, buildTime string) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", ""
+	}
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			commit = s.Value
+		case "vcs.time":
+			buildTime = s.Value
+		}
+	}
+	if len(commit) > 12 {
+		commit = commit[:12]
+	}
+	return commit, buildTime
 }
 
 // ---- M3 生命周期绑定：所有写操作经 AppService → task.Manager 三段式（硬红线 4/5）----
