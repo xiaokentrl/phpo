@@ -252,6 +252,7 @@ const messages: Record<string, string> = {
   "settings.appearance": "外觀",
   "settings.appearance.hint": "即時生效",
   "settings.language": "語言/Language",
+  "settings.theme": "主題",
   "settings.tray": "托盤與視窗",
   "settings.tray.hint": "即時生效（需系統托盤支援）",
   "settings.tray.checking": "正在檢查系統托盤支援…",

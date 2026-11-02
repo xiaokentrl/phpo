@@ -19,8 +19,10 @@ import { getStartMinimized, setStartMinimized } from '@/api/startMinimized'
 import { getAutostartServices, setAutostartServices } from '@/api/autostartServices'
 import { getSources, setSources, probeSources } from '@/api/dockerSource'
 import { LAYOUT_LIMITS, LAYOUT_PRESETS, UI_SCALE, type PresetName } from '@/constants/layout'
+import { THEMES } from '@/constants/themes'
 import { SVC_META } from '@/constants/service'
 import { useAppState } from '@/stores/appState'
+import type { ThemeId } from '@/stores/prefsStore'
 import type { Locale } from '@/locales'
 import type { MirrorSource, ServiceKind } from '@/types'
 
@@ -323,6 +325,19 @@ function pickLang(l: Locale) {
           <button class="pick" :class="{ selected: locale === 'de' }" data-lang="de" @click="pickLang('de')">Deutsch</button>
           <button class="pick" :class="{ selected: locale === 'es' }" data-lang="es" @click="pickLang('es')">Español</button>
           <button class="pick" :class="{ selected: locale === 'tr' }" data-lang="tr" @click="pickLang('tr')">Türkçe</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>{{ t('settings.theme') }}</label>
+        <div class="quick-picks" id="theme-picker">
+          <button
+            v-for="th in THEMES"
+            :key="th.id"
+            class="pick"
+            :class="{ selected: prefs.theme === th.id }"
+            :data-theme-pick="th.id"
+            @click="prefs.setTheme(th.id as ThemeId)"
+          >{{ t(th.nameKey) }}</button>
         </div>
       </div>
     </div>

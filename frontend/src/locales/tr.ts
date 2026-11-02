@@ -252,6 +252,7 @@ const messages: Record<string, string> = {
   "settings.appearance": "Görünüm",
   "settings.appearance.hint": "Anında",
   "settings.language": "Dil",
+  "settings.theme": "Tema",
   "settings.tray": "Sistem tepsisi ve pencere",
   "settings.tray.hint": "Anında (sistem tepsisi desteği gerekir)",
   "settings.tray.checking": "Sistem tepsisi desteği denetleniyor…",

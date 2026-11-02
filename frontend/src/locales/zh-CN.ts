@@ -251,6 +251,7 @@ const messages: Record<string, string> = {
   "settings.appearance": "外观",
   "settings.appearance.hint": "即时生效",
   "settings.language": "语言/Language",
+  "settings.theme": "主题",
   "settings.tray": "托盘与窗口",
   "settings.tray.hint": "即时生效（需系统托盘支持）",
   "settings.tray.checking": "正在检查系统托盘支持…",

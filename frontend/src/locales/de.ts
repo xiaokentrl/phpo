@@ -252,6 +252,7 @@ const messages: Record<string, string> = {
   "settings.appearance": "Erscheinungsbild",
   "settings.appearance.hint": "Sofort",
   "settings.language": "Sprache",
+  "settings.theme": "Design",
   "settings.tray": "Infobereich und Fenster",
   "settings.tray.hint": "Sofort (Systemtray-Unterstützung nötig)",
   "settings.tray.checking": "Systemtray-Unterstützung wird geprüft …",

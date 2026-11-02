@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 根布局壳：侧栏导航（对齐原型 NAV 三段分组）+ 视图出口
 // T102 10 路由；T103 i18n；T104 主题应用+持久化；T110 事件订阅启动
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { refreshServices, runSync, startStateSync, stopStateSync, bootstrapState } from '@/composables/useStateSync'
@@ -24,8 +24,8 @@ import UpdateBadge from '@/components/business/UpdateBadge.vue'
 
 const { t } = useI18n()
 const app = useAppState()
-const { openThemePicker, openHomeSetupWizard } = useModals()
-useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
+const { openHomeSetupWizard } = useModals()
+const layout = useLayoutStore() // 实例化即应用 --sidebar-width / --ui-scale 与 documentElement.zoom
 const prefs = usePrefsStore()
 const router = useRouter()
 let stopRouteWatch: (() => void) | null = null
@@ -79,7 +79,6 @@ const sections: { titleKey: string; items: { id: string; labelKey: string; icon:
     items: [
       { id: 'backup', labelKey: 'nav.backup', icon: '📦' },
       { id: 'offline', labelKey: 'nav.offline', icon: '🗄️' },
-      { id: 'settings', labelKey: 'nav.settings', icon: '⚙️' },
       { id: 'overview', labelKey: 'nav.overview', icon: '◈' },
     ],
   },
@@ -91,33 +90,68 @@ async function resync(): Promise<void> {
   await runSync()
   toast(t('common.refresh'), 'ok', 1400)
 }
+
+// 侧栏自由拖宽：按住右缘手柄横向拖，setSidebar 自带 64–380px 夹取，watchEffect 落 CSS 变量并持久化。
+// pointer capture 让拖出窗口也不丢事件；拖拽期间给 body 加类锁光标和文本选中，避免拖出一片蓝。
+const resizing = ref(false)
+function onResizeDown(e: PointerEvent): void {
+  e.preventDefault()
+  resizing.value = true
+  ;(e.currentTarget as HTMLElement).dataset.startX = String(e.clientX)
+  ;(e.currentTarget as HTMLElement).dataset.startW = String(layout.sidebarWidth)
+  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  document.body.classList.add('sidebar-resizing')
+}
+function onResizeMove(e: PointerEvent): void {
+  if (!resizing.value) return
+  const el = e.currentTarget as HTMLElement
+  layout.setSidebar(Number(el.dataset.startW) + (e.clientX - Number(el.dataset.startX)))
+}
+function onResizeUp(e: PointerEvent): void {
+  if (!resizing.value) return
+  resizing.value = false
+  ;(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId)
+  document.body.classList.remove('sidebar-resizing')
+}
 </script>
 
 <template>
   <div class="app-shell">
-    <aside class="app-sidebar">
-      <div class="app-brand">phpo</div>
-      <UpdateBadge />
-      <nav>
-        <section v-for="s in sections" :key="s.titleKey">
-          <h3 class="nav-section">{{ t(s.titleKey) }}</h3>
-          <RouterLink v-for="it in s.items" :key="it.id" :to="{ name: it.id }" class="nav-item">
-            <span class="nav-icon">{{ it.icon }}</span>
-            <span>{{ t(it.labelKey) }}</span>
+    <div class="app-sidebar-wrap">
+      <aside class="app-sidebar">
+        <div class="app-brand">phpo</div>
+        <UpdateBadge />
+        <nav>
+          <section v-for="s in sections" :key="s.titleKey">
+            <h3 class="nav-section">{{ t(s.titleKey) }}</h3>
+            <RouterLink v-for="it in s.items" :key="it.id" :to="{ name: it.id }" class="nav-item">
+              <span class="nav-icon">{{ it.icon }}</span>
+              <span>{{ t(it.labelKey) }}</span>
+            </RouterLink>
+          </section>
+        </nav>
+        <div class="sidebar-foot">
+          <button class="btn-ghost foot-btn" type="button" id="refresh-btn" @click="resync">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+            <span>{{ t('common.refresh') }}</span>
+          </button>
+          <RouterLink class="btn-ghost foot-btn" id="settings-btn" :to="{ name: 'settings' }">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>{{ t('nav.settings') }}</span>
           </RouterLink>
-        </section>
-      </nav>
-      <div class="sidebar-foot">
-        <button class="btn-ghost" type="button" id="refresh-btn" @click="resync">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
-          <span>{{ t('common.refresh') }}</span>
-        </button>
-        <button class="btn-ghost" type="button" id="theme-btn" @click="openThemePicker">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-          <span>{{ t('common.theme') }}</span>
-        </button>
-      </div>
-    </aside>
+        </div>
+      </aside>
+      <div
+        class="sidebar-resizer"
+        :class="{ active: resizing }"
+        role="separator"
+        aria-orientation="vertical"
+        @pointerdown="onResizeDown"
+        @pointermove="onResizeMove"
+        @pointerup="onResizeUp"
+        @pointercancel="onResizeUp"
+      />
+    </div>
     <main class="app-main">
       <DockerGate />
       <div class="view">
@@ -140,14 +174,40 @@ async function resync(): Promise<void> {
   background: var(--bg);
   color: var(--text);
 }
-.app-sidebar {
+/* 侧栏外壳：宽度挂在 wrap 上，滚动放进内层 aside——拖宽手柄贴在 wrap 右缘，不随内容滚走 */
+.app-sidebar-wrap {
+  position: relative;
   width: var(--sidebar-width, 200px);
   flex: none;
+  height: 100%;
+}
+.app-sidebar {
+  height: 100%;
   background: var(--surface);
   border-right: 1px solid var(--border);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+/* 拖宽手柄：骑在边框上（左 -3px 起 7px 宽），悬停/拖拽中亮起 */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 20;
+  touch-action: none;
+}
+.sidebar-resizer:hover,
+.sidebar-resizer.active {
+  background: var(--accent-bg);
+}
+/* 拖拽期间锁光标与选中（scoped 下打 :global 落到 body） */
+:global(body.sidebar-resizing) {
+  cursor: col-resize;
+  user-select: none;
 }
 .app-brand {
   font-weight: 700;
@@ -186,11 +246,25 @@ async function resync(): Promise<void> {
   color: var(--accent);
   font-weight: 600;
 }
+/* 底部两颗左右平铺、随侧栏宽度自适应：各占一半，窄到极限时文字省略不换行 */
 .sidebar-foot {
   margin-top: auto;
-  padding: 12px 16px;
+  padding: 12px 10px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+}
+.foot-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 6px;
+}
+.foot-btn span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 </style>

@@ -252,6 +252,7 @@ const messages: Record<string, string> = {
   "settings.appearance": "모양",
   "settings.appearance.hint": "즉시 적용",
   "settings.language": "언어",
+  "settings.theme": "테마",
   "settings.tray": "트레이 및 창",
   "settings.tray.hint": "즉시 적용(시스템 트레이 지원 필요)",
   "settings.tray.checking": "시스템 트레이 지원을 확인하는 중…",

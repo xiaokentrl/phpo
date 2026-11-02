@@ -252,6 +252,7 @@ const messages: Record<string, string> = {
   "settings.appearance": "Apariencia",
   "settings.appearance.hint": "Inmediato",
   "settings.language": "Idioma",
+  "settings.theme": "Tema",
   "settings.tray": "Bandeja y ventana",
   "settings.tray.hint": "Inmediato (requiere soporte de bandeja del sistema)",
   "settings.tray.checking": "Comprobando la compatibilidad con la bandeja del sistema…",

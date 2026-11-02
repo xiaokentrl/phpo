@@ -251,6 +251,7 @@ const messages: Record<string, string> = {
   "settings.appearance": "Appearance",
   "settings.appearance.hint": "Instant",
   "settings.language": "Language",
+  "settings.theme": "Theme",
   "settings.tray": "Tray and window",
   "settings.tray.hint": "Instant (needs system tray support)",
   "settings.tray.checking": "Checking system tray support…",

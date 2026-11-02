@@ -252,6 +252,7 @@ const messages: Record<string, string> = {
   "settings.appearance": "Apparence",
   "settings.appearance.hint": "Immédiat",
   "settings.language": "Langue",
+  "settings.theme": "Thème",
   "settings.tray": "Zone de notification et fenêtre",
   "settings.tray.hint": "Immédiat (nécessite la prise en charge de la zone de notification)",
   "settings.tray.checking": "Vérification de la prise en charge de la zone de notification…",
