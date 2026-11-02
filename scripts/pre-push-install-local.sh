@@ -41,10 +41,6 @@ done
   exit 0
 }
 
-if pgrep -x phpo >/dev/null 2>&1; then
-  fail "close the running phpo application before pushing; the hook will replace its installed package"
-fi
-
 config_root="${XDG_CONFIG_HOME:-$HOME/.config}"
 [[ "$config_root" == /* ]] || fail "XDG_CONFIG_HOME must be an absolute path"
 config_root="$(realpath -m -- "$config_root")"
@@ -58,11 +54,18 @@ version="$(bash scripts/version.sh)"
   || fail "could not read a valid application version from wails.json"
 deb="$repo_root/build/bin/phpo_${version}_amd64.deb"
 
+if pgrep -x phpo >/dev/null 2>&1; then
+  running_state="will be stopped before install and relaunched after"
+else
+  running_state="not running"
+fi
+
 if [[ "${PHPO_PRE_PUSH_DRY_RUN:-}" == 1 ]]; then
   printf 'phpo pre-push dry run:\n'
   printf '  source: %s\n' "$head_commit"
   printf '  package: %s\n' "$deb"
   printf '  detected installation: Debian package phpo %s at /usr/bin/phpo\n' "$installed_version"
+  printf '  running phpo instance: %s\n' "$running_state"
   if [[ -d "$config_dir" ]]; then
     printf '  preserve existing user data: %s\n' "$config_dir"
   else
@@ -82,6 +85,28 @@ while IFS= read -r path; do
       ;;
   esac
 done < <(git ls-files --others --exclude-standard)
+
+# phpo 还跑着就替用户关掉（放在所有快速失败检查之后：树不干净等情况下不动用户的应用）。
+# 先 TERM 给它 10 秒自己退，退不掉再 KILL 兜底；都拦不住才挡 push。
+# 应用没有信号处理器，TERM 即硬退出——sqlite 落盘安全，但队列里在跑的任务会被打断，这是本机验收流的既定代价。
+stopped_running=0
+if pgrep -x phpo >/dev/null 2>&1; then
+  printf '%s\n' 'phpo pre-push: stopping the running phpo application'
+  stopped_running=1
+  pkill -x -TERM phpo || true
+  stopped=0
+  for _ in $(seq 1 50); do
+    if ! pgrep -x phpo >/dev/null 2>&1; then stopped=1; break; fi
+    sleep 0.2
+  done
+  if (( stopped == 0 )); then
+    printf '%s\n' 'phpo pre-push: phpo did not exit on SIGTERM; sending SIGKILL'
+    pkill -x -KILL phpo || true
+    sleep 0.5
+    pgrep -x phpo >/dev/null 2>&1 \
+      && fail "could not stop the running phpo application; close it manually and push again"
+  fi
+fi
 
 sudo -v || fail "administrator authorization is required to replace the installed package"
 trap 'git restore --source="$head_commit" --worktree -- frontend/dist/index.html' EXIT
@@ -109,3 +134,24 @@ if (( had_user_data == 1 )); then
 fi
 
 printf 'phpo pre-push: installed phpo %s; allowing push\n' "$version"
+
+# 装完把替用户关掉的那个 phpo 拉起来：只在我们主动关过的情况下才拉（本来就没跑的不越权启动）。
+# 尽力而为：拉起失败只提醒、不挡 push——包已经装好，push 该放行；图形会话不在（CI 等）同样只提醒。
+if (( stopped_running == 1 )); then
+  printf '%s\n' 'phpo pre-push: relaunching the newly installed phpo'
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    setsid nohup /usr/bin/phpo >/dev/null 2>&1 &
+    relaunched=0
+    for _ in $(seq 1 15); do
+      if pgrep -x phpo >/dev/null 2>&1; then relaunched=1; break; fi
+      sleep 0.2
+    done
+    if (( relaunched == 1 )); then
+      printf '%s\n' 'phpo pre-push: phpo is back up'
+    else
+      printf '%s\n' 'phpo pre-push: could not confirm phpo started; run /usr/bin/phpo manually if needed'
+    fi
+  else
+    printf '%s\n' 'phpo pre-push: no graphical session detected; start phpo manually if needed'
+  fi
+fi
