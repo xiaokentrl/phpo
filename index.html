@@ -844,7 +844,7 @@ const MESSAGES = {
     'settings.layout.preset.compact':'紧凑','settings.layout.preset.default':'标准','settings.layout.preset.wide':'宽屏','settings.layout.reset':'重置',
     'settings.layout.sidebar':'侧边栏宽度','settings.layout.drawer':'日志面板高度','settings.layout.hint2':'选择预设会把下方两项切换为该组合的数值。',
     'settings.appearance':'外观','settings.appearance.hint':'即时生效','settings.language':'语言',
-    'settings.tray':'托盘','settings.tray.hint':'即时生效','settings.tray.minimize':'关闭窗口时最小化到托盘','settings.tray.show':'显示托盘图标',
+    'settings.tray':'托盘与窗口','settings.tray.hint':'即时生效','settings.tray.minimize':'关闭窗口时最小化到托盘','settings.tray.startMin':'启动后最小化到托盘',
     'settings.zoom':'界面缩放','settings.zoom.hint':'即时生效',
     'settings.zoom.presets':'档位','settings.zoom.slider':'缩放比例','settings.zoom.reset':'重置',
     'overview.title':'总览','overview.subtitle':'所有服务实例一览','overview.doctor':'环境诊断',
@@ -987,7 +987,7 @@ const MESSAGES = {
     'settings.layout.preset.compact':'Compact','settings.layout.preset.default':'Standard','settings.layout.preset.wide':'Wide','settings.layout.reset':'Reset',
     'settings.layout.sidebar':'Sidebar width','settings.layout.drawer':'Log drawer height','settings.layout.hint2':'Selecting a preset updates the two sliders below.',
     'settings.appearance':'Appearance','settings.appearance.hint':'Instant','settings.language':'Language',
-    'settings.tray':'Tray','settings.tray.hint':'Instant','settings.tray.minimize':'Minimize to tray on close','settings.tray.show':'Show tray icon',
+    'settings.tray':'Tray and window','settings.tray.hint':'Instant','settings.tray.minimize':'Minimize to tray on close','settings.tray.startMin':'Start minimized to tray',
     'settings.zoom':'Interface zoom','settings.zoom.hint':'Instant',
     'settings.zoom.presets':'Presets','settings.zoom.slider':'Zoom level','settings.zoom.reset':'Reset',
     'overview.title':'Overview','overview.subtitle':'All service instances','overview.doctor':'Doctor',
@@ -2717,7 +2717,7 @@ function renderSettings(){
   const currentPct = Math.round(layout.scale * 100);
   const zoomGroup = `<div class="card" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h3 style="font-size:14px;font-weight:600">${t('settings.zoom')}</h3><span class="chip">${t('settings.zoom.hint')}</span></div><div style="display:flex;flex-direction:column;gap:16px"><div class="field"><label>${t('settings.zoom.presets')}</label><div class="quick-picks">${UI_SCALE.snap.map(v => `<button class="pick zoom-preset-btn${Math.round(v*100)===currentPct?' selected':''}" data-scale="${v}">${Math.round(v*100)}%</button>`).join('')}<button class="pick" id="zoom-reset-btn">${t('settings.zoom.reset')}</button></div></div><div class="field"><label>${t('settings.zoom.slider')}</label><div class="slider-row"><input type="range" id="setting-zoom" min="${Math.round(UI_SCALE.min*100)}" max="${Math.round(UI_SCALE.max*100)}" step="${Math.round(UI_SCALE.step*100)}" value="${currentPct}"><span class="slider-value" id="zoom-value">${currentPct}%</span></div></div></div></div>`;
   const appearanceGroup = `<div class="card" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h3 style="font-size:14px;font-weight:600">${t('settings.appearance')}</h3><span class="chip">${t('settings.appearance.hint')}</span></div><div class="field"><label>${t('settings.language')}</label><div class="quick-picks" id="lang-picker"><button class="pick ${i18n.locale==='zh-CN'?'selected':''}" data-lang="zh-CN">简体中文</button><button class="pick ${i18n.locale==='en-US'?'selected':''}" data-lang="en-US">English</button></div></div></div>`;
-  const trayGroup = `<div class="card" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h3 style="font-size:14px;font-weight:600">${t('settings.tray')}</h3><span class="chip">${t('settings.tray.hint')}</span></div><div style="display:flex;flex-direction:column;gap:12px"><label class="danger-check" style="background:var(--bg);border-color:var(--border);cursor:pointer"><input type="checkbox" id="tray-minimize" ${state.tray.minimizeOnClose?'checked':''} style="accent-color:var(--accent)"><span class="check-label" style="color:var(--text-dim)">${t('settings.tray.minimize')}</span></label><label class="danger-check" style="background:var(--bg);border-color:var(--border);cursor:pointer"><input type="checkbox" id="tray-show" ${state.tray.enabled?'checked':''} style="accent-color:var(--accent)"><span class="check-label" style="color:var(--text-dim)">${t('settings.tray.show')}</span></label></div></div>`;
+  const trayGroup = `<div class="card" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h3 style="font-size:14px;font-weight:600">${t('settings.tray')}</h3><span class="chip">${t('settings.tray.hint')}</span></div><div style="display:flex;flex-direction:column;gap:12px"><label class="danger-check" style="background:var(--bg);border-color:var(--border);cursor:pointer"><input type="checkbox" id="tray-minimize" ${state.tray.minimizeOnClose?'checked':''} style="accent-color:var(--accent)"><span class="check-label" style="color:var(--text-dim)">${t('settings.tray.minimize')}</span></label><label class="danger-check" style="background:var(--bg);border-color:var(--border);cursor:pointer"><input type="checkbox" id="start-minimized" style="accent-color:var(--accent)"><span class="check-label" style="color:var(--text-dim)">${t('settings.tray.startMin')}</span></label></div></div>`;
   return `<div class="view-inner"><header class="view-header"><div><h1>${t('settings.title')}</h1><p class="view-sub">${t('settings.subtitle')}</p></div></header>${layoutGroup}${zoomGroup}${appearanceGroup}${trayGroup}</div>`;
 }
 function renderOverview(){
@@ -3198,7 +3198,6 @@ function setupLayoutControls(){
 
   $$('#lang-picker .pick', document).forEach(btn=>{ btn.addEventListener('click', ()=>{ i18n.setLocale(btn.dataset.lang); render(); updateTray(); toast(t('toast.langSwitched', {lang: btn.dataset.lang === 'zh-CN' ? '简体中文' : 'English'}), 'ok', 1600); }); });
   const trayMin = $('#tray-minimize'); if(trayMin) trayMin.addEventListener('change', ()=>{ state.tray.minimizeOnClose = trayMin.checked; persistState(); });
-  const trayShow = $('#tray-show'); if(trayShow) trayShow.addEventListener('change', ()=>{ state.tray.enabled = trayShow.checked; $('#tray-sim').style.display = trayShow.checked ? '' : 'none'; persistState(); });
   markActivePreset();
   markActiveZoom();
 }

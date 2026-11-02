@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Settings 视图：1:1 迁移原型 renderSettings（2706–2712）；4 组：布局 / 缩放 / 外观 / 托盘
+// Settings 视图：1:1 迁移原型 renderSettings（2706–2712）；包含布局 / 缩放 / 外观 / 托盘与窗口等设置
 // 追加「应用升级」组（T604 / §5.9）：当前版本展示 + 打开升级弹窗（后端为唯一权威）
 // 追加「Docker 镜像源」组：一行一个地址 + 保存 + 检测（延迟分级）；清单权威值在 config.yaml，回显只认后端
 import { computed, onMounted, ref } from 'vue'
@@ -29,7 +29,6 @@ const { preflight } = usePreflight()
 const version = ref('')
 onMounted(async () => { version.value = await currentVersion() })
 
-const trayVisibilityDisabled = computed(() => !prefs.trayStatus?.canToggleVisibility)
 const trayMinimizeDisabled = computed(() => !prefs.trayStatus?.available || !prefs.tray.enabled)
 const trayStatusMessage = computed(() => {
   if (prefs.trayStatusFailure === 'backendUnavailable') return t('settings.tray.noBackend')
@@ -38,11 +37,6 @@ const trayStatusMessage = computed(() => {
   if (!prefs.trayStatus.available) return t('settings.tray.unavailable')
   return ''
 })
-const trayVisibilityMessage = computed(() =>
-  prefs.trayStatus && !prefs.trayStatus.canToggleVisibility
-    ? t('settings.tray.visibilityUnsupported')
-    : '',
-)
 onMounted(() => { void prefs.refreshTrayStatus() })
 
 // 开机自启动：OS 注册态是唯一权威（硬红线 4）——每次进页现问一次，不落本地缓存。
@@ -320,17 +314,6 @@ function pickLang(l: Locale) {
       <div class="stack-12">
         <label class="danger-check tray-check">
           <input
-            :checked="prefs.tray.enabled"
-            :disabled="trayVisibilityDisabled"
-            @change="prefs.setTrayEnabled(($event.target as HTMLInputElement).checked)"
-            type="checkbox"
-            id="tray-show"
-            class="tray-check-input"
-          />
-          <span class="check-label text-dim">{{ t('settings.tray.show') }}</span>
-        </label>
-        <label class="danger-check tray-check">
-          <input
             :checked="prefs.tray.minimizeOnClose"
             :disabled="trayMinimizeDisabled"
             @change="prefs.setTrayMinimizeOnClose(($event.target as HTMLInputElement).checked)"
@@ -341,16 +324,6 @@ function pickLang(l: Locale) {
           <span class="check-label text-dim">{{ t('settings.tray.minimize') }}</span>
         </label>
         <div v-if="trayStatusMessage" class="alert alert-warn">{{ trayStatusMessage }}</div>
-        <div v-if="trayVisibilityMessage" class="alert alert-warn">{{ trayVisibilityMessage }}</div>
-      </div>
-    </div>
-
-    <div class="card card-gap">
-      <div class="section-head">
-        <h3 class="section-title">{{ t('settings.autostart') }}</h3>
-        <span class="chip">{{ t('settings.autostart.hint') }}</span>
-      </div>
-      <div class="stack-12">
         <label class="danger-check tray-check">
           <input
             type="checkbox"
@@ -362,7 +335,16 @@ function pickLang(l: Locale) {
           />
           <span class="check-label text-dim">{{ t('settings.startMin') }}</span>
         </label>
-        <div class="alert alert-warn alert-gap" v-if="!startMinReady">{{ t('settings.startMin.noBackend') }}</div>
+        <div class="alert alert-warn" v-if="!startMinReady">{{ t('settings.startMin.noBackend') }}</div>
+      </div>
+    </div>
+
+    <div class="card card-gap">
+      <div class="section-head">
+        <h3 class="section-title">{{ t('settings.autostart') }}</h3>
+        <span class="chip">{{ t('settings.autostart.hint') }}</span>
+      </div>
+      <div class="stack-12">
         <label class="danger-check tray-check">
           <input
             type="checkbox"
