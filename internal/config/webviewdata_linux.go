@@ -25,8 +25,7 @@ func PrepareWebViewDataMigration(profileName string, legacyNames ...string) (Web
 		return WebViewDataMigration{}, fmt.Errorf("invalid WebView profile name %q", profileName)
 	}
 	names := make([]string, 0, len(legacyNames)+1)
-	seenNames := map[string]struct{}{profileName: {}}
-	names = append(names, profileName)
+	seenNames := make(map[string]struct{}, len(legacyNames)+1)
 	for _, name := range legacyNames {
 		if !validProfileName(name) {
 			return WebViewDataMigration{}, fmt.Errorf("invalid legacy WebView profile name %q", name)
@@ -36,6 +35,9 @@ func PrepareWebViewDataMigration(profileName string, legacyNames ...string) (Web
 		}
 		seenNames[name] = struct{}{}
 		names = append(names, name)
+	}
+	if _, exists := seenNames[profileName]; !exists {
+		names = append(names, profileName)
 	}
 
 	dataDir, err := UserDataDir()
@@ -60,23 +62,41 @@ func PrepareWebViewDataMigration(profileName string, legacyNames ...string) (Web
 		return WebViewDataMigration{}, err
 	}
 
-	moves := make([]webViewProfileMove, 0, len(names)*2)
-	for _, name := range names {
-		moves = append(moves,
-			webViewProfileMove{
-				source: filepath.Join(dataHome, name),
-				target: filepath.Join(dataDir, profileName),
-			},
-			webViewProfileMove{
-				source: filepath.Join(cacheHome, name),
-				target: filepath.Join(cacheDataHome, profileName),
-			},
-		)
-	}
+	moves := append(
+		legacyWebViewProfileMoves(dataHome, filepath.Join(dataDir, profileName), filepath.Join(dataDir, "webview-legacy", "data"), names),
+		legacyWebViewProfileMoves(cacheHome, filepath.Join(cacheDataHome, profileName), filepath.Join(dataDir, "webview-legacy", "cache"), names)...,
+	)
 
 	return WebViewDataMigration{migrate: func() error {
 		return migrateWebViewProfiles(moves)
 	}}, nil
+}
+
+func legacyWebViewProfileMoves(sourceHome, activeTarget, legacyRoot string, names []string) []webViewProfileMove {
+	existing := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, err := os.Lstat(filepath.Join(sourceHome, name)); err == nil {
+			existing = append(existing, name)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			existing = append(existing, name)
+		}
+	}
+	if len(existing) == 0 {
+		return nil
+	}
+
+	moves := make([]webViewProfileMove, 0, len(existing))
+	for index, name := range existing {
+		target := filepath.Join(legacyRoot, name)
+		if index == 0 {
+			target = activeTarget
+		}
+		moves = append(moves, webViewProfileMove{
+			source: filepath.Join(sourceHome, name),
+			target: target,
+		})
+	}
+	return moves
 }
 
 func validProfileName(name string) bool {
@@ -102,7 +122,6 @@ func restoreEnvironment(key, value string, wasSet bool) {
 func migrateWebViewProfiles(moves []webViewProfileMove) error {
 	uniqueMoves := make([]webViewProfileMove, 0, len(moves))
 	seenSources := make(map[string]struct{}, len(moves))
-	seenTargets := make(map[string]struct{}, len(moves))
 
 	for _, move := range moves {
 		source := filepath.Clean(move.source)
@@ -140,10 +159,6 @@ func migrateWebViewProfiles(moves []webViewProfileMove) error {
 		}
 		for _, entry := range entries {
 			targetEntry := filepath.Join(target, entry.Name())
-			if _, duplicate := seenTargets[targetEntry]; duplicate {
-				return fmt.Errorf("multiple legacy WebView profiles contain %s; data was left in place", entry.Name())
-			}
-			seenTargets[targetEntry] = struct{}{}
 			if _, err := os.Lstat(targetEntry); err == nil {
 				return fmt.Errorf("WebView migration would overwrite %s; legacy data remains at %s", targetEntry, source)
 			} else if !errors.Is(err, os.ErrNotExist) {

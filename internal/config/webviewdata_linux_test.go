@@ -21,8 +21,12 @@ func TestPrepareWebViewDataMigrationMovesLegacyProfiles(t *testing.T) {
 
 	dataSource := filepath.Join(oldDataHome, "phpo")
 	cacheSource := filepath.Join(oldCacheHome, "phpo")
+	identityDataSource := filepath.Join(oldDataHome, "io.github.example.phpo")
+	identityCacheSource := filepath.Join(oldCacheHome, "io.github.example.phpo")
 	writeWebViewTestFile(t, filepath.Join(dataSource, "localstorage", "settings"), "saved settings")
 	writeWebViewTestFile(t, filepath.Join(cacheSource, "WebKitCache", "entry"), "cached response")
+	writeWebViewTestFile(t, filepath.Join(identityDataSource, "mediakeys", "v1", "salt"), "identity media key")
+	writeWebViewTestFile(t, filepath.Join(identityCacheSource, "WebKitCache", "Version 17", "salt"), "identity cache salt")
 
 	migration, err := PrepareWebViewDataMigration("io.github.example.phpo", "phpo")
 	if err != nil {
@@ -42,11 +46,43 @@ func TestPrepareWebViewDataMigrationMovesLegacyProfiles(t *testing.T) {
 	}
 	assertWebViewTestFile(t, filepath.Join(wantDataHome, "io.github.example.phpo", "localstorage", "settings"), "saved settings")
 	assertWebViewTestFile(t, filepath.Join(wantCacheHome, "io.github.example.phpo", "WebKitCache", "entry"), "cached response")
-	for _, path := range []string{dataSource, cacheSource} {
+	assertWebViewTestFile(t, filepath.Join(wantDataHome, "webview-legacy", "data", "io.github.example.phpo", "mediakeys", "v1", "salt"), "identity media key")
+	assertWebViewTestFile(t, filepath.Join(wantDataHome, "webview-legacy", "cache", "io.github.example.phpo", "WebKitCache", "Version 17", "salt"), "identity cache salt")
+	for _, path := range []string{dataSource, cacheSource, identityDataSource, identityCacheSource} {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Errorf("legacy profile still exists at %s (error: %v)", path, err)
 		}
 	}
+}
+
+func TestPrepareWebViewDataMigrationPreservesBothProfileIdentities(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(home, "config")
+	oldDataHome := filepath.Join(home, "old-data")
+	oldCacheHome := filepath.Join(home, "old-cache")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_DATA_HOME", oldDataHome)
+	t.Setenv("XDG_CACHE_HOME", oldCacheHome)
+
+	writeWebViewTestFile(t, filepath.Join(oldDataHome, "phpo", "localstorage", "settings"), "legacy app settings")
+	writeWebViewTestFile(t, filepath.Join(oldDataHome, "io.github.example.phpo", "mediakeys", "v1", "salt"), "identity media key")
+	writeWebViewTestFile(t, filepath.Join(oldCacheHome, "phpo", "HSTS", "hsts-storage.sqlite"), "legacy HSTS")
+	writeWebViewTestFile(t, filepath.Join(oldCacheHome, "io.github.example.phpo", "HSTS", "hsts-storage.sqlite"), "identity HSTS")
+
+	migration, err := PrepareWebViewDataMigration("io.github.example.phpo", "phpo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migration.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	dataRoot := filepath.Join(configHome, "phpo")
+	assertWebViewTestFile(t, filepath.Join(dataRoot, "io.github.example.phpo", "localstorage", "settings"), "legacy app settings")
+	assertWebViewTestFile(t, filepath.Join(dataRoot, "webview-legacy", "data", "io.github.example.phpo", "mediakeys", "v1", "salt"), "identity media key")
+	assertWebViewTestFile(t, filepath.Join(dataRoot, "webview-cache", "io.github.example.phpo", "HSTS", "hsts-storage.sqlite"), "legacy HSTS")
+	assertWebViewTestFile(t, filepath.Join(dataRoot, "webview-legacy", "cache", "io.github.example.phpo", "HSTS", "hsts-storage.sqlite"), "identity HSTS")
 }
 
 func TestPrepareWebViewDataMigrationDoesNotOverwriteExistingProfile(t *testing.T) {
