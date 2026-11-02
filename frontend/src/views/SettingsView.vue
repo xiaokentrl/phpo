@@ -457,17 +457,6 @@ function pickLang(l: Locale) {
       <div class="hint hint-empty" v-else-if="dockerSaved.length === 0">{{ t('settings.docker.empty') }}</div>
     </div>
 
-    <div class="card card-gap">
-      <div class="section-head">
-        <h3 class="section-title">{{ t('settings.upgrade') }}</h3>
-        <span class="chip">{{ t('settings.upgrade.hint') }}</span>
-      </div>
-      <div class="upgrade-row">
-        <span class="text-dim">{{ t('update.subtitle', { version }) }}</span>
-        <button class="btn btn-primary" type="button" id="check-update-btn" @click="openUpdateModal()">{{ t('update.check') }}</button>
-      </div>
-    </div>
-
     <div class="card">
       <div class="section-head">
         <h3 class="section-title">{{ t('settings.about.title') }}</h3>
@@ -481,7 +470,13 @@ function pickLang(l: Locale) {
         <button class="btn" type="button" @click="openLink(REPO_LICENSE)">{{ t('settings.about.license') }}</button>
       </div>
       <div class="about-kv">
-        <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.current') }}</span><span class="mono mono-size">{{ about?.version || version || '—' }}</span></div>
+        <div class="kv-row">
+          <span class="kv-key">{{ t('settings.about.version.current') }}</span>
+          <span class="kv-val">
+            <span class="mono mono-size">{{ about?.version || version || '—' }}</span>
+            <button class="btn btn-primary" type="button" id="check-update-btn" :title="t('settings.upgrade.hint')" @click="openUpdateModal()">{{ t('update.check') }}</button>
+          </span>
+        </div>
         <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.buildTime') }}</span><span class="mono mono-size">{{ about?.buildTime || t('settings.about.notProvided') }}</span></div>
         <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.commit') }}</span><span class="mono mono-size">{{ about?.commit || t('settings.about.notProvided') }}</span></div>
         <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.license') }}</span><span class="mono mono-size">MIT</span></div>
@@ -594,11 +589,11 @@ function pickLang(l: Locale) {
   line-height: 1.5;
 }
 
-.upgrade-row {
+/* 「检查更新」按钮与版本号同行：右端对齐、间距固定 */
+.kv-val {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .about-name {

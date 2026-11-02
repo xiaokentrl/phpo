@@ -246,12 +246,16 @@ function onResizeUp(e: PointerEvent): void {
   color: var(--accent);
   font-weight: 600;
 }
-/* 底部两颗左右平铺、随侧栏宽度自适应：各占一半，窄到极限时文字省略不换行 */
+/* 底部两颗左右平铺、随侧栏宽度自适应：各占一半，窄到极限时文字省略不换行。
+   全局 base.css 的旧 .sidebar-foot(column) 已删——压缩器会把默认值 flex-direction:row 优化掉，
+   全局 column 若还在就会一直赢 */
 .sidebar-foot {
   margin-top: auto;
   padding: 12px 10px;
   display: flex;
   gap: 6px;
+  border-top: 1px solid var(--border-2);
+  flex-shrink: 0;
 }
 .foot-btn {
   flex: 1;
