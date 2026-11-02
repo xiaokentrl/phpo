@@ -115,15 +115,41 @@ watch(
   }
 )
 
+// onResizerDown：抽屉上缘上下拖高。展开态从当前高度起相对拖；
+// 收起态「一拖就展开」——高度锚住光标（窗口底到指针的距离），实时跟随；拖回底部 60px 内即收回，再上拖会再次展开。
 function onResizerDown(e: PointerEvent): void {
-  if (!store.expanded) return
   e.preventDefault()
   const zoom = layout.scale || 1
-  const startY = e.clientY
-  const startH = layout.drawerHeight
+  if (store.expanded) {
+    const startY = e.clientY
+    const startH = layout.drawerHeight
+    const onMove = (ev: PointerEvent) => {
+      const dy = (startY - ev.clientY) / zoom
+      layout.setDrawer(startH + dy)
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return
+  }
+  let opened = false
   const onMove = (ev: PointerEvent) => {
-    const dy = (startY - ev.clientY) / zoom
-    layout.setDrawer(startH + dy)
+    const h = Math.round((window.innerHeight - ev.clientY) / zoom)
+    if (h < 60) {
+      if (opened) {
+        store.setExpanded(false)
+        opened = false
+      }
+      return
+    }
+    if (!opened) {
+      store.setExpanded(true)
+      opened = true
+    }
+    layout.setDrawer(h)
   }
   const onUp = () => {
     window.removeEventListener('pointermove', onMove)
@@ -190,7 +216,7 @@ async function onClear(): Promise<void> {
 
 <template>
   <section class="drawer" :class="{ expanded }">
-    <div class="drawer-resizer" title="Drag to resize (expanded only)" @pointerdown="onResizerDown" @dblclick="layout.setDrawer(160)"></div>
+    <div class="drawer-resizer" :title="t('drawer.resizeTitle')" @pointerdown="onResizerDown" @dblclick="layout.setDrawer(160)"></div>
     <header class="drawer-head">
       <div class="drawer-left">
         <span :class="dotClass"></span>

@@ -468,7 +468,7 @@ function pickLang(l: Locale) {
       </div>
     </div>
 
-    <div class="card card-gap">
+    <div class="card">
       <div class="section-head">
         <h3 class="section-title">{{ t('settings.about.title') }}</h3>
         <span class="chip">MIT</span>
@@ -479,12 +479,6 @@ function pickLang(l: Locale) {
         <button class="btn" type="button" @click="openLink(REPO_HOME)">{{ t('settings.about.home') }}</button>
         <button class="btn" type="button" @click="openLink(REPO_ISSUES)">{{ t('settings.about.issues') }}</button>
         <button class="btn" type="button" @click="openLink(REPO_LICENSE)">{{ t('settings.about.license') }}</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="section-head">
-        <h3 class="section-title">{{ t('settings.about.version.title') }}</h3>
       </div>
       <div class="about-kv">
         <div class="kv-row"><span class="kv-key">{{ t('settings.about.version.current') }}</span><span class="mono mono-size">{{ about?.version || version || '—' }}</span></div>
@@ -625,7 +619,10 @@ function pickLang(l: Locale) {
   flex-wrap: wrap;
 }
 
+/* 链接区与版本键值区之间的一条分隔 */
 .about-kv {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
 }
