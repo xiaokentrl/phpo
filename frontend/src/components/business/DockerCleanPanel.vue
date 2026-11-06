@@ -94,9 +94,9 @@ async function load(deep: boolean) {
     for (const g of new Set(rows.value.map((r) => r.group))) {
       if (collapsedGroups.value[g] === undefined) collapsedGroups.value[g] = true
     }
-    // 重新数一次不该把用户手工勾的那一半洗掉：一个都没勾时才照范围卡铺一遍。
-    if (picked.value.size === 0) applyScope()
-    else prunePicked()
+    // 需求拍板：每次扫描完都按当前范围卡重铺——两档的全选语义就是字面全选，
+    // 详细扫描后新出现的那批宿主行也自动勾上（手工取消的勾会被下一轮扫描重铺，这是全选语义的代价）。
+    applyScope()
     if (rep.warnings?.length) errText.value = rep.warnings.join(' ')
   } catch (e) {
     setError(String(e))
@@ -119,17 +119,6 @@ function applyScope() {
     if (!selectable(r)) continue
     next.add(r.key)
   }
-  picked.value = next
-}
-
-// 重数之后只摘掉「这一轮点不动了」的那几颗勾（数不到、不给删的行），
-// 已经知情勾上的危险项照原样留着——它们是用户一颗一颗点出来的，不是全选带进来的。
-function prunePicked() {
-  const deletable = new Set(rows.value.filter((r) => r.deletable).map((r) => r.key))
-  const next = new Set<string>()
-  picked.value.forEach((k) => {
-    if (deletable.has(k)) next.add(k)
-  })
   picked.value = next
 }
 
@@ -431,12 +420,16 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
               :class="{ 'hidden-by-group': groupCollapsed(g.key), 'row-spared': rowSpared(r) }"
             >
               <td>
+                <!-- 只有真有删除路径的行才画复选框：说明行/没数到的行/空行画「—」，
+                     「全选中」就是字面事实——页面上看得见的复选框全是勾上的 -->
                 <input
+                  v-if="r.deletable"
                   type="checkbox"
-                  :disabled="!r.deletable || rowSpared(r)"
+                  :disabled="rowSpared(r)"
                   :checked="picked.has(r.key)"
                   @click.stop="toggleRow(r)"
                 />
+                <span v-else class="no-check">—</span>
               </td>
               <td class="mono">
                 {{ t('clean.' + r.key + '.label') }}
@@ -585,6 +578,7 @@ tbody td { padding: 8px 10px; font-size: 12.5px; border-bottom: 1px solid var(--
 }
 .badge-danger { color: var(--danger); border-color: var(--danger); }
 .badge-keep { color: var(--accent); border-color: var(--accent); }
+.no-check { color: var(--text-mute); }
 .item-row.row-spared { opacity: .55; }
 
 .status-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; white-space: nowrap; }
