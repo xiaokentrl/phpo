@@ -148,10 +148,12 @@ function setScopeMode(mode: 'keep' | 'remove') {
   if (rows.value.length === 0 && !scanning.value) void load(false)
 }
 
-// 「有按钮可点」的行还要再收一道：危险项只能一行一行自己点；
+// 「有按钮可点」的行全部默认勾上（需求拍板：两张范围卡都要全选）。
+// 危险项 4 行不再被全选排除——安全网后移到后端：预览清单含危险对象时强制勾「我已知情」才准执行；
+// 手工单独取消再勾回时，行级后果确认照旧。三档说明行（档位③）没有安全删法，仍然勾不上。
 // 保留模式下「整行在用」的行没东西可清，也不给勾（勾了预览也只会空手而回）。
 function selectable(r: CleanRow): boolean {
-  return r.deletable && !r.dangerous && !rowSpared(r)
+  return r.deletable && !rowSpared(r)
 }
 
 // rowSpared：保留模式下这一行的对象全部被 phpo 已装服务占用——整行保留，勾不掉也清不了。
@@ -183,18 +185,18 @@ function flip(key: string, on: boolean) {
 }
 
 function toggleGroupRows(g: { key: string; rows: CleanRow[] }) {
-  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous && !rowSpared(r))
+  const clickable = g.rows.filter((r) => r.deletable && !rowSpared(r))
   const allOn = clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
   for (const r of clickable) flip(r.key, !allOn)
 }
 
 function groupChecked(g: { key: string; rows: CleanRow[] }): boolean {
-  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous && !rowSpared(r))
+  const clickable = g.rows.filter((r) => r.deletable && !rowSpared(r))
   return clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
 }
 
 function groupSomeChecked(g: { key: string; rows: CleanRow[] }): boolean {
-  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous && !rowSpared(r))
+  const clickable = g.rows.filter((r) => r.deletable && !rowSpared(r))
   return clickable.some((r) => picked.value.has(r.key)) && !groupChecked(g)
 }
 
@@ -209,7 +211,7 @@ function clearPick() {
 }
 
 const allChecked = computed(() => {
-  const clickable = rows.value.filter((r) => r.deletable && !r.dangerous && !rowSpared(r))
+  const clickable = rows.value.filter((r) => r.deletable && !rowSpared(r))
   return clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
 })
 const someChecked = computed(() => picked.value.size > 0 && !allChecked.value)
