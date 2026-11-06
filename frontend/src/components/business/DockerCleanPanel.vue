@@ -150,6 +150,9 @@ function setScopeMode(mode: 'keep' | 'remove') {
   scopeMode.value = mode
   unlocked.value = new Set()
   applyScope()
+  // 列表还没数出来（首次打开就被点卡 / 上一轮扫描失败）时，切卡即补一轮轻量扫描：
+  // 数完 load() 里看到 picked 为空会按新范围卡自动铺一遍勾选，不用再手动点「重新数一次」。
+  if (rows.value.length === 0 && !scanning.value) void load(false)
 }
 
 // 「有按钮可点」的行还要再收一道：危险项只能一行一行自己点。
