@@ -55,6 +55,8 @@ const groups = computed(() => {
 })
 
 const otherCount = computed(() => rows.value.length)
+// 保留模式闸门将排除的总量：扫描行上已按同一套判定算好，这里只求和展示
+const keptTotal = computed(() => rows.value.reduce((n, r) => n + (r.phpoKept ?? 0), 0))
 
 function rowText(r: CleanRow): string {
   if (r.status !== 'ok') return '—'
@@ -146,13 +148,20 @@ function setScopeMode(mode: 'keep' | 'remove') {
   if (rows.value.length === 0 && !scanning.value) void load(false)
 }
 
-// 「有按钮可点」的行还要再收一道：危险项只能一行一行自己点。
+// 「有按钮可点」的行还要再收一道：危险项只能一行一行自己点；
+// 保留模式下「整行在用」的行没东西可清，也不给勾（勾了预览也只会空手而回）。
 function selectable(r: CleanRow): boolean {
-  return r.deletable && !r.dangerous
+  return r.deletable && !r.dangerous && !rowSpared(r)
+}
+
+// rowSpared：保留模式下这一行的对象全部被 phpo 已装服务占用——整行保留，勾不掉也清不了。
+// 判据来自扫描行上的标记：phpoKept>0 而 phpoCleanable 缺席，即「对象有、可清的没有」。
+function rowSpared(r: CleanRow): boolean {
+  return scopeMode.value === 'keep' && !!r.phpoKept && !r.phpoCleanable
 }
 
 function toggleRow(r: CleanRow) {
-  if (!r.deletable) return
+  if (!r.deletable || rowSpared(r)) return
   if (r.dangerous && !picked.value.has(r.key)) {
     modal.open(DangerConfirm, {
       title: t('clean.danger.title', { name: t(`clean.${r.key}.label`) }),
@@ -174,18 +183,18 @@ function flip(key: string, on: boolean) {
 }
 
 function toggleGroupRows(g: { key: string; rows: CleanRow[] }) {
-  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous)
+  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous && !rowSpared(r))
   const allOn = clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
   for (const r of clickable) flip(r.key, !allOn)
 }
 
 function groupChecked(g: { key: string; rows: CleanRow[] }): boolean {
-  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous)
+  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous && !rowSpared(r))
   return clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
 }
 
 function groupSomeChecked(g: { key: string; rows: CleanRow[] }): boolean {
-  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous)
+  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous && !rowSpared(r))
   return clickable.some((r) => picked.value.has(r.key)) && !groupChecked(g)
 }
 
@@ -200,7 +209,7 @@ function clearPick() {
 }
 
 const allChecked = computed(() => {
-  const clickable = rows.value.filter((r) => r.deletable && !r.dangerous)
+  const clickable = rows.value.filter((r) => r.deletable && !r.dangerous && !rowSpared(r))
   return clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
 })
 const someChecked = computed(() => picked.value.size > 0 && !allChecked.value)
@@ -320,7 +329,10 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
                 ? t('clean.ui.scanProgress', { stage: progress.stage, step: progress.step, total: progress.total })
                 : t('clean.ui.loading') }}
             </span>
-            <span v-else>{{ t('clean.ui.phpoCount', { m: otherCount }) }}</span>
+            <span v-else>
+              {{ t('clean.ui.phpoCount', { m: otherCount }) }}
+              <span v-if="scopeMode === 'keep' && keptTotal" class="hi-accent">{{ t('clean.ui.keptTotal', { n: keptTotal }) }}</span>
+            </span>
           </span>
           <span class="banner-actions">
             <button class="btn" @click.stop="bannerDetailOpen = !bannerDetailOpen">
@@ -414,12 +426,12 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
               v-for="r in g.rows"
               :key="r.key"
               class="item-row"
-              :class="{ 'hidden-by-group': groupCollapsed(g.key) }"
+              :class="{ 'hidden-by-group': groupCollapsed(g.key), 'row-spared': rowSpared(r) }"
             >
               <td>
                 <input
                   type="checkbox"
-                  :disabled="!r.deletable"
+                  :disabled="!r.deletable || rowSpared(r)"
                   :checked="picked.has(r.key)"
                   @click.stop="toggleRow(r)"
                 />
@@ -427,6 +439,16 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
               <td class="mono">
                 {{ t('clean.' + r.key + '.label') }}
                 <span v-if="r.dangerous" class="badge badge-danger">{{ t('clean.panel.dangerBadge') }}</span>
+                <span
+                  v-if="rowSpared(r)"
+                  class="badge badge-keep"
+                  :title="t('clean.ui.keptAllTip')"
+                >{{ t('clean.ui.keptAllBadge') }}</span>
+                <span
+                  v-else-if="scopeMode === 'keep' && r.phpoKept"
+                  class="badge badge-keep"
+                  :title="t('clean.ui.keptTip', { n: r.phpoKept })"
+                >{{ t('clean.ui.keptBadge', { n: r.phpoKept }) }}</span>
                 <span v-if="r.tier === 3" class="badge">{{ t('clean.panel.infoBadge') }}</span>
               </td>
               <td>
@@ -560,6 +582,8 @@ tbody td { padding: 8px 10px; font-size: 12.5px; border-bottom: 1px solid var(--
   border: 1px solid var(--border); border-radius: 999px; color: var(--text-mute);
 }
 .badge-danger { color: var(--danger); border-color: var(--danger); }
+.badge-keep { color: var(--accent); border-color: var(--accent); }
+.item-row.row-spared { opacity: .55; }
 
 .status-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; white-space: nowrap; }
 .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }

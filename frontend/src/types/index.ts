@@ -316,6 +316,11 @@ export interface CleanRow {
   hasBytes: boolean
   message?: string
   scannedAt: string
+  /** 保留模式闸门在这行会排除的「phpo 已装服务在用对象」数与体积；0 时不带 */
+  phpoKept?: number
+  phpoKeptBytes?: number
+  /** 同一次判定里这行还剩多少可清对象；phpoKept>0 而它缺席 = 整行在用（保留模式下没东西可清） */
+  phpoCleanable?: number
 }
 
 export interface CleanScanReport {

@@ -55,6 +55,10 @@ func (s *DockerCleanService) Scan(ctx context.Context, deep bool) (model.CleanSc
 	s.mu.Unlock()
 
 	rows := s.buildRows(inv, host, deep)
+	s.mu.Lock()
+	cache := *s.last
+	s.mu.Unlock()
+	s.markKeepSpared(rows, cache)
 	rep := model.CleanScanReport{Rows: rows, ScannedAt: now, DeepScanned: deep}
 	for _, r := range rows {
 		rep.TotalCount += r.Count
@@ -97,6 +101,9 @@ func (s *DockerCleanService) RefreshRow(ctx context.Context, key string) (model.
 		h := s.eng.RescanHostRow(ctx, key, info)
 		if cache != nil {
 			cache.putHostRow(h)
+			rows := []model.CleanRow{cleanDecide(cleanRowFromHost(h))}
+			s.markKeepSpared(rows, *cache)
+			return rows[0], ctx.Err()
 		}
 		return cleanDecide(cleanRowFromHost(h)), ctx.Err()
 	}
@@ -115,8 +122,43 @@ func (s *DockerCleanService) RefreshRow(ctx context.Context, key string) (model.
 	}
 	s.mu.Lock()
 	cache.inv = inv
+	fresh := *cache
 	s.mu.Unlock()
-	return cleanDecide(row), ctx.Err()
+	rows := []model.CleanRow{row}
+	s.markKeepSpared(rows, fresh)
+	return cleanDecide(rows[0]), ctx.Err()
+}
+
+// markKeepSpared 把「保留模式闸门会排除多少在用对象」算好摊到 phpo 相关行上。
+// 闸门本体在预览层（filterKeepInUse），这里是同一套判定的预演：
+// 两档范围卡的差别要在勾选阶段就看得见，而不是等到确认框才揭晓。
+// 只标数得到对象的行（status=ok 且 Count>0）；宿主行没做过详细扫描时 targetsFor 交不出清单，自然不标。
+func (s *DockerCleanService) markKeepSpared(rows []model.CleanRow, cache cleanCache) {
+	usage := s.phpoUsageFor(cache.inv)
+	hostRows := make(map[string]engine.HostRow, len(cache.host.Rows))
+	for _, h := range cache.host.Rows {
+		hostRows[h.Key] = h
+	}
+	installed := s.installedNames()
+	for i := range rows {
+		meta, ok := model.CleanRowMetaOf(rows[i].Key)
+		if !ok || !meta.IsPhpo || rows[i].Status != model.RowOK || rows[i].Count == 0 {
+			continue
+		}
+		list, _ := s.targetsFor(rows[i].Key, cache, hostRows, installed)
+		for _, t := range list {
+			t.ID = cleanTargetID(t.Kind, t.ID)
+			if phpoTargetInUse(t, usage) {
+				rows[i].PhpoKept++
+				if t.Size > 0 {
+					rows[i].PhpoKeptBytes += t.Size
+				}
+			}
+		}
+		if len(list) > 0 {
+			rows[i].PhpoCleanable = len(list) - rows[i].PhpoKept
+		}
+	}
 }
 
 // buildRows 按 model.AllCleanRows 的顺序拼出 60 行：数字来自两份取数结果，静态属性来自名单。

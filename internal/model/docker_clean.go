@@ -195,6 +195,14 @@ type CleanRow struct {
 	HasBytes  bool      `json:"hasBytes"`
 	Message   string    `json:"message,omitempty"`
 	ScannedAt time.Time `json:"scannedAt"`
+	// PhpoKept/PhpoKeptBytes：保留模式闸门在这行里会排除的「phpo 已装服务在用对象」数与体积。
+	// PhpoCleanable：同一次判定里这行还剩多少可清对象。两者都标出来，
+	// 前端才能区分「整行在用（没东西可清）」和「部分在用（照常可清，带保留徽标）」，
+	// 两档范围卡的差别在勾选阶段就看得见，不用等到确认框才揭晓。
+	// 0 值不序列化（不把 0 冒充「算过了」；PhpoKept>0 而 PhpoCleanable 缺席即整行在用）。
+	PhpoKept      int   `json:"phpoKept,omitempty"`
+	PhpoKeptBytes int64 `json:"phpoKeptBytes,omitempty"`
+	PhpoCleanable int   `json:"phpoCleanable,omitempty"`
 }
 
 // NewCleanRow 从静态表起一行，避免调用处漏带档位。

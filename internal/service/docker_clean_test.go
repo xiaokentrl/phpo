@@ -302,6 +302,67 @@ func dcPreviewKeep(t *testing.T, svc *DockerCleanService, rows ...string) (model
 	return svc.Preview(context.Background(), rows, true)
 }
 
+// TestCleanScan_MarksKeepSpared 说的是闸门效果要摊到扫描行上。
+//
+// 保留模式的排除发生在预览层，但两档范围卡的差别不能等到确认框才揭晓——
+// 扫描时就按同一套判定算好：phpo 相关行带 PhpoKept/PhpoKeptBytes，非 phpo 行与没对象的行不标。
+func TestCleanScan_MarksKeepSpared(t *testing.T) {
+	eng := &dcEngine{
+		info: engine.DaemonInfo{OK: true, Rootless: true},
+		invs: []engine.DockerInventory{{
+			Containers: []engine.InvContainer{
+				{ID: "id-phpo-php-8.4", Name: "phpo-php-8.4", Running: true, SizeRw: 10,
+					ImageID: "sha256:base", NamedVolumes: []string{"phpo-php-8.4-data"}},
+				dcContainer("phpo-redis-7.2", false, false, 15),
+				dcContainer("nginx-web", false, false, 20),
+			},
+			Images: []engine.InvImage{
+				{ID: "sha256:base", Refs: []string{"php:8.4-fpm"}, Size: 100},
+				{ID: "sha256:committed", Refs: []string{"phpo/php:8.4"}, Size: 120},
+				{ID: "sha256:old", Refs: []string{"phpo/php:7.2"}, Size: 130},
+			},
+			Volumes: []engine.InvVolume{
+				dcVolume("phpo-php-8.4-data", "/var/lib/docker/volumes/a/_data", 5),
+				dcVolume("phpo-redis-7.2-data", "/var/lib/docker/volumes/b/_data", 6),
+			},
+			Networks: []engine.InvNetwork{{ID: "n2", Name: "phpo-network"}},
+		}},
+	}
+	svc, _, _, _ := dcSvc(t, eng, &dcUninst{})
+
+	rep, err := svc.Scan(context.Background(), false)
+	if err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	cases := map[string]struct {
+		kept      int
+		bytes     int64
+		cleanable int
+	}{
+		"container.all": {1, 10, 2}, // 孤儿 + 外来可清
+		"image.all":     {2, 220, 1}, // 基座 + 固化保留，孤儿固化可清
+		"volume.all":    {1, 5, 1},
+		"network.all":   {1, 0, 0}, // 整行在用：可清数为 0
+	}
+	for key, want := range cases {
+		row := dcRow(rep.Rows, key)
+		if row.PhpoKept != want.kept || row.PhpoKeptBytes != want.bytes {
+			t.Fatalf("%s 应标保留 %d 项 / %d 字节，实得 %d / %d", key, want.kept, want.bytes, row.PhpoKept, row.PhpoKeptBytes)
+		}
+		if row.PhpoCleanable != want.cleanable {
+			t.Fatalf("%s 应标可清 %d 项，实得 %d", key, want.cleanable, row.PhpoCleanable)
+		}
+	}
+	// 非 phpo 行不标：0 值不序列化，也不该有数
+	if row := dcRow(rep.Rows, "build.cache"); row.PhpoKept != 0 {
+		t.Fatalf("build.cache 不是 phpo 行，不该带保留标记：%+v", row)
+	}
+	// 孤儿行（container.orphan）整行都是可清对象，一格都不该标
+	if row := dcRow(rep.Rows, "container.orphan"); row.PhpoKept != 0 {
+		t.Fatalf("孤儿行里没有在用对象，不该标保留：%+v", row)
+	}
+}
+
 // TestCleanPreview_NamesEveryObject 是这一步存在的理由：
 // 界面那一行写的是「3 个容器」，确认框必须摊开成三个名字，谁都不该被含糊地一起带走。
 func TestCleanPreview_NamesEveryObject(t *testing.T) {
