@@ -41,3 +41,11 @@ coverage.out
 /build/.appimage-work.*/
 # 机器翻译断点续传缓存（本机派生态，且是已被人工译文取代的旧机器结果，绝不能入库）
 .mt-progress/
+
+# 新项目「kickoff」的本地工作区（2026-11 起暂放本仓库，不入库）：
+# /guides/        立项资料包（总大纲、专题手册、playground 宿主；node_modules 指向仓库外）
+# /frontend/src/ui/  @kickoff/ui React 组件库（phpo 前端是 Vue，二者互不引用，惰性共存）
+# 隔离约定：两处内容只留在工作区；tsconfig 不含 .tsx、vite 无 import，构建不受影响；
+# pre-push 钩子的未跟踪检查遵守 .gitignore，不会因此拦 push。
+/guides/
+/frontend/src/ui/
