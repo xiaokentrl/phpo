@@ -40,8 +40,10 @@ const offProgress = onEvent(EVENT.DockerCleanup, (payload: unknown) => {
 })
 onBeforeUnmount(() => offProgress())
 
+// 打开面板就深扫（宿主支持时）：浅扫会让宿主那 28 行全部「还没读过」，
+// 用户看到的就是一大片没有勾选框的行——「全选中」必须建立在数全的基础上。
 watch(open, (v) => {
-  if (v && rows.value.length === 0 && !scanning.value) void load(false)
+  if (v && rows.value.length === 0 && !scanning.value) void load(deepReady.value)
 })
 
 const groups = computed(() => {
@@ -134,7 +136,7 @@ function setScopeMode(mode: 'keep' | 'remove') {
   applyScope()
   // 列表还没数出来（首次打开就被点卡 / 上一轮扫描失败）时，切卡即补一轮轻量扫描：
   // 数完 load() 里看到 picked 为空会按新范围卡自动铺一遍勾选，不用再手动点「重新数一次」。
-  if (rows.value.length === 0 && !scanning.value) void load(false)
+  if (rows.value.length === 0 && !scanning.value) void load(deepReady.value)
 }
 
 // 「有按钮可点」的行全部默认勾上（需求拍板：两张范围卡都要全选）。
@@ -245,7 +247,7 @@ async function onClean() {
     // 保留模式把口径交给后端闸门：phpo 已装服务占用的对象在预览层硬性摘除（硬红线 4/5）
     const pv = await previewClean([...picked.value], scopeMode.value === 'keep')
     if (!pv) return
-    modal.open(DockerCleanPreviewModal, { preview: pv, onDone: () => void load(false) })
+    modal.open(DockerCleanPreviewModal, { preview: pv, onDone: () => void load(deepReady.value) })
   } catch (e) {
     toast(backendMsg(String(e)), 'err', 6000)
   }
@@ -329,7 +331,7 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
             <button class="btn" @click.stop="bannerDetailOpen = !bannerDetailOpen">
               {{ bannerDetailOpen ? t('clean.ui.detailClose') : t('clean.ui.detailOpen') }}
             </button>
-            <button class="btn" @click.stop="void load(false)">{{ t('clean.ui.research') }}</button>
+            <button class="btn" @click.stop="void load(deepReady)">{{ t('clean.ui.research') }}</button>
           </span>
         </div>
         <div class="banner-detail" :class="{ open: bannerDetailOpen }" id="bannerDetail">
@@ -354,7 +356,7 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
       <div class="table-toolbar">
         <button class="btn btn-sm" :disabled="scanning" @click.stop="selectAll">{{ t('clean.panel.selectAll') }}</button>
         <button class="btn btn-sm" :disabled="scanning" @click.stop="clearPick">{{ t('clean.panel.clear') }}</button>
-        <button class="btn btn-sm" :disabled="scanning" @click.stop="void load(false)">{{ t('clean.panel.refresh') }}</button>
+        <button class="btn btn-sm" :disabled="scanning" @click.stop="void load(deepReady)">{{ t('clean.panel.refresh') }}</button>
         <button
           class="btn btn-sm"
           :disabled="scanning"
