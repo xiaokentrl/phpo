@@ -188,7 +188,7 @@ func dcPreview(t *testing.T, svc *DockerCleanService, deep bool, rows ...string)
 	if _, err := svc.Scan(context.Background(), deep); err != nil {
 		t.Fatalf("扫描失败: %v", err)
 	}
-	return svc.Preview(context.Background(), rows)
+	return svc.Preview(context.Background(), rows, false)
 }
 
 // dcRoot 是这一条用例自己的宿主根（同一个 TempDir 下拼层级，不碰用户机器上的真实目录）。
@@ -218,6 +218,89 @@ func dcExist(t *testing.T, sub string) string {
 }
 
 // ---- 预览 ----
+
+// TestCleanPreview_KeepSparesInstalledPhp 说的是保留模式的硬闸门。
+//
+// keep=true 时预览必须摘掉 phpo 已装服务占用的对象：已装容器本身、被它占用的数据卷、
+// 它引用的镜像（php 基座是官方名 php:8.4-fpm，不带 phpo- 前缀，只能按引用/ID 认）、
+// phpo 共享网络；孤儿残留（未装版本的容器/卷/镜像）与外来对象照常列出，摘掉多少要写进警告。
+func TestCleanPreview_KeepSparesInstalledPhp(t *testing.T) {
+	eng := &dcEngine{
+		info: engine.DaemonInfo{OK: true, Rootless: true},
+		invs: []engine.DockerInventory{{
+			Containers: []engine.InvContainer{
+				{ID: "id-phpo-php-8.4", Name: "phpo-php-8.4", Running: true, SizeRw: 10,
+					ImageID: "sha256:base", NamedVolumes: []string{"phpo-php-8.4-data"}},
+				dcContainer("phpo-redis-7.2", false, false, 15), // 未装版本的孤儿容器：可清
+				dcContainer("nginx-web", false, false, 20),      // 外来容器：可清
+			},
+			Images: []engine.InvImage{
+				{ID: "sha256:base", Refs: []string{"php:8.4-fpm"}, Size: 100},       // 已装基座：保留
+				{ID: "sha256:committed", Refs: []string{"phpo/php:8.4"}, Size: 120}, // 已装固化镜像：保留
+				{ID: "sha256:old", Refs: []string{"phpo/php:7.2"}, Size: 130},       // 孤儿固化镜像：可清
+				{ID: "sha256:wp", Refs: []string{"local/wp:1"}, Size: 140},          // 外来镜像：可清
+			},
+			Volumes: []engine.InvVolume{
+				dcVolume("phpo-php-8.4-data", "/var/lib/docker/volumes/a/_data", 5),   // 已装服务的数据卷：保留
+				dcVolume("phpo-redis-7.2-data", "/var/lib/docker/volumes/b/_data", 6), // 孤儿卷：可清
+				dcVolume("user-vol", "/var/lib/docker/volumes/c/_data", 7),            // 外来卷：可清
+			},
+			Networks: []engine.InvNetwork{{ID: "n2", Name: "phpo-network"}}, // 共享网络：保守保留
+		}},
+	}
+	svc, _, _, _ := dcSvc(t, eng, &dcUninst{})
+
+	pv, err := dcPreviewKeep(t, svc, "container.all", "image.all", "volume.all", "network.all")
+	if err != nil {
+		t.Fatalf("保留模式预览失败: %v", err)
+	}
+	for _, want := range []string{"phpo-php-8.4", "sha256:base", "phpo/php:8.4", "phpo-php-8.4-data", "phpo-network"} {
+		if dcFindByRef(pv.Targets, want) != nil {
+			t.Fatalf("已装服务占用的 %s 不该出现在保留模式的清单里：%s", want, dcNames(pv.Targets))
+		}
+	}
+	for _, want := range []string{"phpo-redis-7.2", "nginx-web", "phpo/php:7.2", "local/wp:1", "phpo-redis-7.2-data", "user-vol"} {
+		if dcFindByRef(pv.Targets, want) == nil {
+			t.Fatalf("孤儿/外来的 %s 应照常可清，清单里没有：%s", want, dcNames(pv.Targets))
+		}
+	}
+	if len(pv.Installed) != 0 {
+		t.Fatalf("保留模式动不到已装版本，「同时卸载」不该出现：%+v", pv.Installed)
+	}
+	found := false
+	for _, w := range pv.Warnings {
+		if strings.Contains(w, "保留模式已自动排除") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("摘掉了 5 项必须在警告里说出来：%v", pv.Warnings)
+	}
+
+	// 同一批对象走非保留模式：一样都不摘，phpo 在用项全部列出并带出可卸载项（原口径不变）。
+	eng.invs = append(eng.invs, eng.invs[0])
+	pv2, err := dcPreview(t, svc, false, "container.all", "image.all", "volume.all", "network.all")
+	if err != nil {
+		t.Fatalf("预览失败: %v", err)
+	}
+	for _, want := range []string{"phpo-php-8.4", "phpo-php-8.4-data"} {
+		if dcFindByRef(pv2.Targets, want) == nil {
+			t.Fatalf("非保留模式下 %s 应照常列出：%s", want, dcNames(pv2.Targets))
+		}
+	}
+	if len(pv2.Installed) == 0 {
+		t.Fatal("非保留模式动到了已装版本，应带出可卸载项")
+	}
+}
+
+// dcPreviewKeep 保留模式的取材助手：同一套扫描，预览时带上 keep。
+func dcPreviewKeep(t *testing.T, svc *DockerCleanService, rows ...string) (model.CleanPreview, error) {
+	t.Helper()
+	if _, err := svc.Scan(context.Background(), false); err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	return svc.Preview(context.Background(), rows, true)
+}
 
 // TestCleanPreview_NamesEveryObject 是这一步存在的理由：
 // 界面那一行写的是「3 个容器」，确认框必须摊开成三个名字，谁都不该被含糊地一起带走。
@@ -935,7 +1018,7 @@ func TestCleanSwarmConfigRowFailsWhenSecretsUnread(t *testing.T) {
 	if row.Status != model.RowUnavailable {
 		t.Fatalf("密文没读到就不能把这一行画成已数清，实得 %+v", row)
 	}
-	if _, err := svc.Preview(context.Background(), []string{"swarm.config"}); err == nil {
+	if _, err := svc.Preview(context.Background(), []string{"swarm.config"}, false); err == nil {
 		t.Fatal("读不到的那一半不许拿一份残缺清单去删")
 	}
 }

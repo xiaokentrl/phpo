@@ -29,7 +29,6 @@ const progress = ref<{ step: number; total: number; stage: string } | null>(null
 // 勾选手感：保留模式下 phpo 相关项默认灰掉，要先看完后果才算勾上。
 const scopeMode = ref<'keep' | 'remove'>('keep')
 const picked = ref<Set<string>>(new Set())
-const unlocked = ref<Set<string>>(new Set())
 const collapsedGroups = ref<Record<string, boolean>>({})
 const bannerDetailOpen = ref(false)
 
@@ -55,13 +54,7 @@ const groups = computed(() => {
   return out
 })
 
-const phpoCount = computed(() => rows.value.filter((r) => r.isPhpo).length)
-const otherCount = computed(() => rows.value.length - phpoCount.value)
-
-// 保留模式 + 该项属于 phpo + 还没解锁 = 灰掉（.locked-badge 那颗锁）。
-function rowLocked(r: CleanRow): boolean {
-  return scopeMode.value === 'keep' && r.isPhpo && !unlocked.value.has(r.key)
-}
+const otherCount = computed(() => rows.value.length)
 
 function rowText(r: CleanRow): string {
   if (r.status !== 'ok') return '—'
@@ -115,14 +108,13 @@ function setError(msg: string) {
   errText.value = msg
 }
 
-// 照当前范围卡重算选中的那一套：保留模式只选非 phpo 的行（加上这一档里刚知情解锁过的），清理模式全选（危险项除外）。
-// 切范围卡时 unlocked 已经清空，所以这里算出来的就是这一档的默认；
-// 「重新数一次」（load）走这一条时不清 unlocked，避免把用户手工解锁的那一半洗掉。
+// 照当前范围卡重算选中的那一套：两档范围卡的默认勾选是同一套——全部可点行（危险项除外，全选带不走是底线）。
+// 「保留」与「彻底清理」的分界在预览闸门——phpo 已装服务占用的对象由后端硬性摘除（硬红线 4）。
+// 「重新数一次」（load）只在一张都没勾时才照范围卡铺一遍，不洗用户手工勾的那一半。
 function applyScope() {
   const next = new Set<string>()
   for (const r of rows.value) {
     if (!selectable(r)) continue
-    if (scopeMode.value === 'keep' && r.isPhpo && !unlocked.value.has(r.key)) continue
     next.add(r.key)
   }
   picked.value = next
@@ -148,7 +140,6 @@ function prunePicked() {
 // 注意这里和「重新数一次」（load）是两种刻意不同的行为：重数不洗勾选，只有点范围卡才洗。
 function setScopeMode(mode: 'keep' | 'remove') {
   scopeMode.value = mode
-  unlocked.value = new Set()
   applyScope()
   // 列表还没数出来（首次打开就被点卡 / 上一轮扫描失败）时，切卡即补一轮轻量扫描：
   // 数完 load() 里看到 picked 为空会按新范围卡自动铺一遍勾选，不用再手动点「重新数一次」。
@@ -162,21 +153,6 @@ function selectable(r: CleanRow): boolean {
 
 function toggleRow(r: CleanRow) {
   if (!r.deletable) return
-  if (rowLocked(r)) {
-    // 灰掉的 phpo 项：先把后果摆完，点了「确定要选上」才算解锁并勾上。
-    modal.open(DangerConfirm, {
-      title: t('clean.ui.unlockTitle'),
-      description: t('clean.ui.unlockOne', { name: t(`clean.${r.key}.label`) }),
-      checkbox: { label: t('clean.ui.unlockText') },
-      confirmLabel: t('clean.danger.confirm'),
-      onConfirm: () => {
-        unlock([r.key])
-        flip(r.key, true)
-        toast(t('clean.ui.unlockOne', { name: t(`clean.${r.key}.label`) }), 'ok', 3200)
-      },
-    })
-    return
-  }
   if (r.dangerous && !picked.value.has(r.key)) {
     modal.open(DangerConfirm, {
       title: t('clean.danger.title', { name: t(`clean.${r.key}.label`) }),
@@ -197,61 +173,23 @@ function flip(key: string, on: boolean) {
   picked.value = next
 }
 
-function unlock(keys: string[]) {
-  const next = new Set(unlocked.value)
-  for (const k of keys) next.add(k)
-  unlocked.value = next
-}
-
-// 组勾选：这一组里如果有还没解锁的 phpo 项，整组勾选也要先过后果确认（三处入口一致）。
 function toggleGroupRows(g: { key: string; rows: CleanRow[] }) {
   const clickable = g.rows.filter((r) => r.deletable && !r.dangerous)
-  const locked = clickable.filter(rowLocked)
-  if (locked.length) {
-    modal.open(DangerConfirm, {
-      title: t('clean.ui.unlockTitle'),
-      description: t('clean.ui.unlockGroup', { name: t(`clean.group.${g.key}.label`) }),
-      checkbox: { label: t('clean.ui.unlockText') },
-      confirmLabel: t('clean.danger.confirm'),
-      onConfirm: () => {
-        unlock(locked.map((r) => r.key))
-        for (const r of clickable) flip(r.key, true)
-        toast(t('clean.ui.unlockGroup', { name: t(`clean.group.${g.key}.label`) }), 'ok', 3200)
-      },
-    })
-    return
-  }
   const allOn = clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
   for (const r of clickable) flip(r.key, !allOn)
 }
 
 function groupChecked(g: { key: string; rows: CleanRow[] }): boolean {
-  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous && !rowLocked(r))
+  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous)
   return clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
 }
 
 function groupSomeChecked(g: { key: string; rows: CleanRow[] }): boolean {
-  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous && !rowLocked(r))
+  const clickable = g.rows.filter((r) => r.deletable && !r.dangerous)
   return clickable.some((r) => picked.value.has(r.key)) && !groupChecked(g)
 }
 
-// 全选：保留模式下会把 phpo 项一起带走，所以照样要先过后果确认。
 function selectAll() {
-  const locked = rows.value.filter((r) => r.deletable && !r.dangerous && rowLocked(r))
-  if (locked.length) {
-    modal.open(DangerConfirm, {
-      title: t('clean.ui.unlockTitle'),
-      description: t('clean.ui.unlockAll'),
-      checkbox: { label: t('clean.ui.unlockText') },
-      confirmLabel: t('clean.danger.confirm'),
-      onConfirm: () => {
-        unlock(locked.map((r) => r.key))
-        applyScope()
-        toast(t('clean.ui.unlockAll'), 'ok', 3200)
-      },
-    })
-    return
-  }
   const next = new Set(picked.value)
   rows.value.forEach((r) => { if (selectable(r)) next.add(r.key) })
   picked.value = next
@@ -262,21 +200,15 @@ function clearPick() {
 }
 
 const allChecked = computed(() => {
-  const clickable = rows.value.filter((r) => r.deletable && !r.dangerous && !rowLocked(r))
+  const clickable = rows.value.filter((r) => r.deletable && !r.dangerous)
   return clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
 })
 const someChecked = computed(() => picked.value.size > 0 && !allChecked.value)
 
 function onSelectAllClick() {
-  if (picked.value.size > 0 || rowsLockedCount.value === 0) {
-    if (allChecked.value) clearPick()
-    else void selectAll()
-    return
-  }
-  void selectAll()
+  if (allChecked.value) clearPick()
+  else void selectAll()
 }
-
-const rowsLockedCount = computed(() => rows.value.filter((r) => r.deletable && !r.dangerous && rowLocked(r)).length)
 
 async function onRetry(r: CleanRow) {
   if (retrying.value) return
@@ -310,7 +242,8 @@ onMounted(() => void checkDeepReady())
 async function onClean() {
   if (picked.value.size === 0) return
   try {
-    const pv = await previewClean([...picked.value])
+    // 保留模式把口径交给后端闸门：phpo 已装服务占用的对象在预览层硬性摘除（硬红线 4/5）
+    const pv = await previewClean([...picked.value], scopeMode.value === 'keep')
     if (!pv) return
     modal.open(DockerCleanPreviewModal, { preview: pv, onDone: () => void load(false) })
   } catch (e) {
@@ -387,7 +320,7 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
                 ? t('clean.ui.scanProgress', { stage: progress.stage, step: progress.step, total: progress.total })
                 : t('clean.ui.loading') }}
             </span>
-            <span v-else>{{ t('clean.ui.phpoCount', { n: phpoCount, m: otherCount }) }}</span>
+            <span v-else>{{ t('clean.ui.phpoCount', { m: otherCount }) }}</span>
           </span>
           <span class="banner-actions">
             <button class="btn" @click.stop="bannerDetailOpen = !bannerDetailOpen">
@@ -481,7 +414,7 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
               v-for="r in g.rows"
               :key="r.key"
               class="item-row"
-              :class="{ 'hidden-by-group': groupCollapsed(g.key), 'locked-phpo': rowLocked(r) && r.deletable }"
+              :class="{ 'hidden-by-group': groupCollapsed(g.key) }"
             >
               <td>
                 <input
@@ -494,7 +427,6 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
               <td class="mono">
                 {{ t('clean.' + r.key + '.label') }}
                 <span v-if="r.dangerous" class="badge badge-danger">{{ t('clean.panel.dangerBadge') }}</span>
-                <span v-if="rowLocked(r)" class="locked-badge">{{ t('clean.ui.locked') }}</span>
                 <span v-if="r.tier === 3" class="badge">{{ t('clean.panel.infoBadge') }}</span>
               </td>
               <td>
@@ -619,7 +551,6 @@ tbody td { padding: 8px 10px; font-size: 12.5px; border-bottom: 1px solid var(--
 .group-count.selected { border-color: var(--accent); color: var(--accent); }
 
 .item-row.hidden-by-group { display: none; }
-.item-row.locked-phpo td { opacity: .55; }
 .mono { font-variant-numeric: tabular-nums; }
 .amount { font-variant-numeric: tabular-nums; }
 .desc-clip { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; color: var(--text-mute); }
@@ -629,10 +560,6 @@ tbody td { padding: 8px 10px; font-size: 12.5px; border-bottom: 1px solid var(--
   border: 1px solid var(--border); border-radius: 999px; color: var(--text-mute);
 }
 .badge-danger { color: var(--danger); border-color: var(--danger); }
-.locked-badge {
-  display: inline-block; margin-left: 6px; padding: 0 6px; font-size: 11px;
-  border: 1px dashed var(--border-2); border-radius: 999px; color: var(--text-mute);
-}
 
 .status-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; white-space: nowrap; }
 .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }

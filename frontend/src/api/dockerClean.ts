@@ -28,10 +28,11 @@ export async function refreshCleanRow(key: string): Promise<CleanRow | null> {
 }
 
 // previewClean 把勾中的那几行摊成具体对象清单，并发一张一次性凭据。
+// keep = 保留模式：phpo 已装服务占用的对象由后端在预览层硬性摘除（闸门只认权威快照 + Docker 实测）。
 // 后端会拒：一行都没勾、勾到了没有安全删法的行、行名对不上——这些都原样抛给界面。
-export async function previewClean(rows: string[]): Promise<CleanPreview | null> {
+export async function previewClean(rows: string[], keep: boolean): Promise<CleanPreview | null> {
   if (!hasBackend()) return null
-  const r = await app.DockerCleanPreview(rows)
+  const r = await app.DockerCleanPreview(rows, keep)
   return (r ?? null) as unknown as CleanPreview | null
 }
 

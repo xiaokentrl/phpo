@@ -982,11 +982,12 @@ func (a *App) DockerCleanRefreshRow(ctx context.Context, key string) (model.Clea
 }
 
 // DockerCleanPreview 把勾中的那几行摊成具体对象清单，并发一张一次性凭据（点「彻底清空」前先看这一份）。
-func (a *App) DockerCleanPreview(ctx context.Context, rows []string) (model.CleanPreview, error) {
+// keep = 保留模式：phpo 已装服务占用的对象在后端硬性摘除，孤儿残留与外来对象照常列出。
+func (a *App) DockerCleanPreview(ctx context.Context, rows []string, keep bool) (model.CleanPreview, error) {
 	if a.container.DockerCleanService == nil {
 		return model.CleanPreview{}, errNotReady
 	}
-	return a.container.DockerCleanService.Preview(ctx, rows)
+	return a.container.DockerCleanService.Preview(ctx, rows, keep)
 }
 
 // DockerCleanExecute 按一次性凭据删掉勾中的那些东西：一个任务、逐项一行、单颗失败不中断其余。

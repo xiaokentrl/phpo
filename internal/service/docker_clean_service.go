@@ -138,6 +138,74 @@ func (s *DockerCleanService) installedNames() map[string]bool {
 	return set
 }
 
+// phpoUsage 是保留模式（keep）硬闸门的数据面：phpo 已装版本此刻占用着哪些对象。
+// 只认两样权威：快照里的已装清单（硬红线 4）+ Docker 实测的容器挂载/镜像引用。
+// 快照取不到时 unknown=true，phpo 命名空间的对象一律按占用处理——宁可多留，不误删。
+type phpoUsage struct {
+	containers map[string]bool // 已装容器名（跑着或停着都算在用——停着的也是用户装好的服务）
+	volumes    map[string]bool // 被已装容器 bind 着的 phpo 命名卷
+	imageIDs   map[string]bool // 已装容器正引用的镜像 ID（含停着的容器）
+	imageRefs  map[string]bool // 已装 (kind,version) 的基座/固化镜像引用（php 基座不带 phpo- 前缀，只能按引用认）
+	prefixes   []string        // 已装版本的资源名前缀（phpo-{kind}-{version}），宿主路径按分段匹配
+	unknown    bool            // 权威快照没取到
+}
+
+// phpoUsageFor 汇出保留模式的判定数据。inv 容器清单拿不到时卷/镜像 ID 两张表就少一半，
+// 剩下的引用表照常生效——闸门宁可保守，不许放水。
+func (s *DockerCleanService) phpoUsageFor(inv engine.DockerInventory) phpoUsage {
+	u := phpoUsage{
+		containers: map[string]bool{}, volumes: map[string]bool{},
+		imageIDs: map[string]bool{}, imageRefs: map[string]bool{},
+	}
+	snap, err := s.store.BuildSnapshot()
+	if err != nil || snap == nil {
+		// 权威快照没取到：退到 Docker 实测这一层，phpo 命名空间的容器/卷/镜像一律按占用算
+		u.unknown = true
+		for _, c := range inv.Containers {
+			if !rowIsPhpo(c.Name) {
+				continue
+			}
+			u.containers[c.Name] = true
+			if c.ImageID != "" {
+				u.imageIDs[c.ImageID] = true
+			}
+			for _, name := range c.NamedVolumes {
+				if rowIsPhpo(name) {
+					u.volumes[name] = true
+				}
+			}
+		}
+		return u
+	}
+	for kind, vers := range snap.Installed {
+		for _, v := range vers {
+			name := engine.ContainerRef{Kind: kind, Version: v}.Name()
+			u.containers[name] = true
+			u.prefixes = append(u.prefixes, dockerutil.NamespacePrefix+kind+"-"+v)
+			if ref, err := engine.ImageRefFor(kind, v); err == nil {
+				u.imageRefs[ref] = true
+			}
+			if kind == string(model.KindPHP) {
+				u.imageRefs[engine.CommittedPHPRef(v)] = true
+			}
+		}
+	}
+	for _, c := range inv.Containers {
+		if !u.containers[c.Name] {
+			continue
+		}
+		if c.ImageID != "" {
+			u.imageIDs[c.ImageID] = true
+		}
+		for _, name := range c.NamedVolumes {
+			if rowIsPhpo(name) {
+				u.volumes[name] = true
+			}
+		}
+	}
+	return u
+}
+
 // auditOp 落一行审计（JSON Lines）并同步 operations 表；两处写失败都不改变清理结果
 func (s *DockerCleanService) auditOp(op string, args any, status string) {
 	rec := model.Operation{TS: s.now().UTC(), Actor: "ui", Op: op, Args: args, Status: status}

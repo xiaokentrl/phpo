@@ -57,7 +57,11 @@ var dockerBuiltinNetworks = map[string]bool{"host": true, "bridge": true, "null"
 //
 // rows 为空即报错：界面上没勾任何一行却点了清空，那是操作走岔了，不该静默返回一张空单子。
 // 第三档（phpo 没有安全删法）的行同样拒绝——那颗按钮本来就不该渲染出来（需求 ⑬）。
-func (s *DockerCleanService) Preview(ctx context.Context, rows []string) (model.CleanPreview, error) {
+//
+// keep = 保留模式（「仅保留使用中的 phpo 所需服务，其他全部清理」）：phpo 已装版本占用的
+// 容器/卷/网络/镜像/宿主数据目录在这一层硬性摘除，孤儿残留与外来对象照常列出。
+// 这道闸门必须在后端——前端勾了哪行不参与判定，少了这一层确认框里就会出现该保留的对象。
+func (s *DockerCleanService) Preview(ctx context.Context, rows []string, keep bool) (model.CleanPreview, error) {
 	keys, err := s.cleanRowSelection(rows)
 	if err != nil {
 		return model.CleanPreview{}, err
@@ -113,7 +117,20 @@ func (s *DockerCleanService) Preview(ctx context.Context, rows []string) (model.
 	if dup > 0 {
 		warnings = append(warnings, fmt.Sprintf("有 %d 个对象同时属于好几行，这里只列一次——它们只会被删一遍", dup))
 	}
+
+	// 保留模式的硬闸门：phpo 已装服务占用的对象不进清单，摘掉多少照实说
+	excluded := 0
+	if keep {
+		usage := s.phpoUsageFor(cache.inv)
+		targets, excluded = filterKeepInUse(targets, usage)
+		if excluded > 0 {
+			warnings = append(warnings, fmt.Sprintf("保留模式已自动排除 %d 项 phpo 在用服务占用的对象（容器、数据卷、镜像、网络），它们不会被这次清理碰到", excluded))
+		}
+	}
 	if len(targets) == 0 {
+		if keep && excluded > 0 {
+			return model.CleanPreview{}, errors.New("这几行里的对象全部被 phpo 在用服务占用着，保留模式不会清理它们；要连这些一起清，请切到「全部彻底清理」")
+		}
 		return model.CleanPreview{}, errors.New("这几行里没有可以去删的对象（多半是还没点「详细扫描」，或这一行的占用本来就来自别处）")
 	}
 
@@ -130,8 +147,75 @@ func (s *DockerCleanService) Preview(ctx context.Context, rows []string) (model.
 	s.token, s.preview = pv.Token, &pv
 	s.mu.Unlock()
 
-	s.auditOp("clean-preview", map[string]any{"rows": keys, "targets": len(targets)}, "ok")
+	s.auditOp("clean-preview", map[string]any{"rows": keys, "targets": len(targets), "keep": keep, "excluded": excluded}, "ok")
 	return pv, nil
+}
+
+// filterKeepInUse 把 phpo 已装服务占用的对象从预览清单里摘掉，返回留下的清单与摘掉的数量。
+// 逐类判定：容器认名字、卷认「被已装容器 bind 着」、镜像认 ID/引用（php 基座不带 phpo- 前缀）、
+// 宿主路径按资源名前缀分段匹配；phpo 的共享网络与 swarm/compose 组目标保守一律保留。
+func filterKeepInUse(targets []model.CleanTarget, u phpoUsage) ([]model.CleanTarget, int) {
+	kept := make([]model.CleanTarget, 0, len(targets))
+	excluded := 0
+	for _, t := range targets {
+		if phpoTargetInUse(t, u) {
+			excluded++
+			continue
+		}
+		kept = append(kept, t)
+	}
+	return kept, excluded
+}
+
+// phpoTargetInUse 判定一个对象是否被 phpo 已装服务占用（保留模式下要摘掉的那种）。
+func phpoTargetInUse(t model.CleanTarget, u phpoUsage) bool {
+	ref := cleanTargetRef(t.ID)
+	// 镜像跨着 Foreign 线：php 基座（php:8.4-fpm 等官方名）是外来形态，却是已装服务的命根子。
+	// ID 认容器的实测引用；引用认 Name（多标签是「a, b」拼接，逐段比）
+	if t.Kind == engine.DelImage {
+		if u.imageIDs[ref] || u.imageIDs[t.ID] {
+			return true
+		}
+		for _, r := range strings.Split(t.Name, ", ") {
+			if u.imageRefs[strings.TrimSpace(r)] {
+				return true
+			}
+		}
+		return u.unknown && !t.Foreign
+	}
+	if t.Foreign {
+		return false
+	}
+	if u.unknown {
+		return true
+	}
+	switch t.Kind {
+	case engine.DelContainer:
+		return u.containers[ref] || u.containers[t.Name]
+	case engine.DelVolume:
+		return u.volumes[ref] || u.volumes[t.Name]
+	case engine.DelNetwork:
+		// phpo 就一张共享网络（phpo-network），占用极小；被谁挂着不好逐个认，保守一律保留
+		return true
+	case engine.DelHostPath:
+		return hostPathInUse(t.ID, u.prefixes)
+	default:
+		// swarm/compose 组目标等没有逐对象归属可查的形态：保守保留
+		return true
+	}
+}
+
+// hostPathInUse 宿主路径是否落在已装版本的资源名上：任一路径段正好是 phpo-{kind}-{version}
+// 或以它为前缀（卷名 phpo-{kind}-{version}-{purpose} 就长这样）。
+func hostPathInUse(p string, prefixes []string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(p), "/") {
+		for _, pre := range prefixes {
+			if seg == pre || strings.HasPrefix(seg, pre+"-") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // cleanRowSelection 收下界面勾中的行名：去重、保序（界面顺序即清单顺序），并拒掉两类不该来的行。
