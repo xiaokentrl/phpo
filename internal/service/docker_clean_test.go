@@ -339,7 +339,7 @@ func TestCleanScan_MarksKeepSpared(t *testing.T) {
 		bytes     int64
 		cleanable int
 	}{
-		"container.all": {1, 10, 2}, // 孤儿 + 外来可清
+		"container.all": {1, 10, 2},  // 孤儿 + 外来可清
 		"image.all":     {2, 220, 1}, // 基座 + 固化保留，孤儿固化可清
 		"volume.all":    {1, 5, 1},
 		"network.all":   {1, 0, 0}, // 整行在用：可清数为 0
