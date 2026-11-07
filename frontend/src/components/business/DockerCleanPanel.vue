@@ -26,7 +26,7 @@ const retrying = ref('')
 const errText = ref('')
 const progress = ref<{ step: number; total: number; stage: string } | null>(null)
 
-// 勾选手感：保留模式下 phpo 相关项默认灰掉，要先看完后果才算勾上。
+// 勾选手感：两档都是字面全选——凡有复选框的行一律勾上；「整行在用」只作展示提示，不挡勾选。
 const scopeMode = ref<'keep' | 'remove'>('keep')
 const picked = ref<Set<string>>(new Set())
 const collapsedGroups = ref<Record<string, boolean>>({})
@@ -112,9 +112,10 @@ function setError(msg: string) {
   errText.value = msg
 }
 
-// 照当前范围卡重算选中的那一套：两档范围卡的默认勾选是同一套——全部可点行（危险项除外，全选带不走是底线）。
-// 「保留」与「彻底清理」的分界在预览闸门——phpo 已装服务占用的对象由后端硬性摘除（硬红线 4）。
-// 「重新数一次」（load）只在一张都没勾时才照范围卡铺一遍，不洗用户手工勾的那一半。
+// 照当前范围卡重算选中的那一套：两档都是字面全选——凡有复选框的行一律勾上，没有任何例外。
+// 「保留」与「彻底清理」的分界在预览闸门——phpo 已装服务占用的对象由后端硬性摘除（硬红线 4），
+// 勾选阶段不做预演：勾上不代表删得到，预览清单才是事实。
+// 每次扫描完（load）都会照这一套重铺——全选语义的代价是手工取消的勾会被下一轮扫描重铺。
 function applyScope() {
   const next = new Set<string>()
   for (const r of rows.value) {
@@ -124,13 +125,12 @@ function applyScope() {
   picked.value = next
 }
 
-// 点「保留 phpo 服务」/「一起清理 phpo 服务」这两张范围卡时，列表里的勾选永远回到这一档的默认那一套：
-// 保留 = 只勾不属于 phpo 的那些行；清理 = 全勾（危险项、以及「只说清去哪儿删、不给按钮」的那些行除外）。
-// 不管切换前勾了什么：手工勾的、手工取消的、点过「全选」带上来的一律洗掉；
-// 连「我已知情」解锁过的那些 phpo 行也一起洗——换一张范围卡等于换过一次口径，那份知情不再记账。
+// 点「保留 phpo 服务」/「一起清理 phpo 服务」这两张范围卡时，列表里的勾选永远回到字面全选：
+// 凡有复选框的行一律勾上（含 phpo 相关项、含危险项）。两档的差别只在预览闸门，不在勾选。
+// 不管切换前勾了什么：手工勾的、手工取消的、点过「全选」带上来的一律洗掉。
 // 点的是不是当前已经亮着的那张卡也照样重置：否则「全选 → 清空选择 → 再点这张卡」会什么都回不来。
-// 怎么回来：在新这一档里重新点那一行 phpo 项，后果确认会再问一遍，点了「确定要选上」它才又勾上。
-// 注意这里和「重新数一次」（load）是两种刻意不同的行为：重数不洗勾选，只有点范围卡才洗。
+// 怎么回来：不想清哪一行，在新这一档里手工取消那一行；危险项再勾回时后果确认会再问一遍。
+// 「重新数一次」（load）扫完也会重铺一遍，口径与点卡相同：任何情况下都是字面全选。
 function setScopeMode(mode: 'keep' | 'remove') {
   scopeMode.value = mode
   applyScope()
@@ -139,22 +139,23 @@ function setScopeMode(mode: 'keep' | 'remove') {
   if (rows.value.length === 0 && !scanning.value) void load(deepReady.value)
 }
 
-// 「有按钮可点」的行全部默认勾上（需求拍板：两张范围卡都要全选）。
-// 危险项 4 行不再被全选排除——安全网后移到后端：预览清单含危险对象时强制勾「我已知情」才准执行；
-// 手工单独取消再勾回时，行级后果确认照旧。三档说明行（档位③）没有安全删法，仍然勾不上。
-// 保留模式下「整行在用」的行没东西可清，也不给勾（勾了预览也只会空手而回）。
+// 「有按钮可点」的行全部默认勾上，没有任何例外（需求拍板：无论什么情况下都应该全选中）。
+// 危险项 4 行照勾——安全网在后端：预览清单含危险对象时强制勾「我已知情」才准执行；
+// 手工单独取消再勾回时，行级后果确认照旧。三档说明行（档位③）没有安全删法，没有复选框。
+// 「整行在用」的行也照勾：保留模式的保护在预览闸门（后端硬性摘除在用对象），不在勾选阶段。
 function selectable(r: CleanRow): boolean {
-  return r.deletable && !rowSpared(r)
+  return r.deletable
 }
 
-// rowSpared：保留模式下这一行的对象全部被 phpo 已装服务占用——整行保留，勾不掉也清不了。
+// rowSpared：保留模式下这一行的对象全部被 phpo 已装服务占用。只用来画「整行在用」徽标和淡化行，
+// 不再挡勾选——勾上也会被预览闸门摘除，界面不说假话：徽标照旧说明这些对象不会被动到。
 // 判据来自扫描行上的标记：phpoKept>0 而 phpoCleanable 缺席，即「对象有、可清的没有」。
 function rowSpared(r: CleanRow): boolean {
   return scopeMode.value === 'keep' && !!r.phpoKept && !r.phpoCleanable
 }
 
 function toggleRow(r: CleanRow) {
-  if (!r.deletable || rowSpared(r)) return
+  if (!r.deletable) return
   if (r.dangerous && !picked.value.has(r.key)) {
     modal.open(DangerConfirm, {
       title: t('clean.danger.title', { name: t(`clean.${r.key}.label`) }),
@@ -176,18 +177,18 @@ function flip(key: string, on: boolean) {
 }
 
 function toggleGroupRows(g: { key: string; rows: CleanRow[] }) {
-  const clickable = g.rows.filter((r) => r.deletable && !rowSpared(r))
+  const clickable = g.rows.filter(selectable)
   const allOn = clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
   for (const r of clickable) flip(r.key, !allOn)
 }
 
 function groupChecked(g: { key: string; rows: CleanRow[] }): boolean {
-  const clickable = g.rows.filter((r) => r.deletable && !rowSpared(r))
+  const clickable = g.rows.filter(selectable)
   return clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
 }
 
 function groupSomeChecked(g: { key: string; rows: CleanRow[] }): boolean {
-  const clickable = g.rows.filter((r) => r.deletable && !rowSpared(r))
+  const clickable = g.rows.filter(selectable)
   return clickable.some((r) => picked.value.has(r.key)) && !groupChecked(g)
 }
 
@@ -202,7 +203,7 @@ function clearPick() {
 }
 
 const allChecked = computed(() => {
-  const clickable = rows.value.filter((r) => r.deletable && !rowSpared(r))
+  const clickable = rows.value.filter(selectable)
   return clickable.length > 0 && clickable.every((r) => picked.value.has(r.key))
 })
 const someChecked = computed(() => picked.value.size > 0 && !allChecked.value)
@@ -220,6 +221,8 @@ async function onRetry(r: CleanRow) {
     if (!fresh) return
     const i = rows.value.findIndex((x) => x.key === r.key)
     if (i >= 0) rows.value.splice(i, 1, fresh)
+    // 重试数出来的行也需要勾上：否则「任何情况下都全选中」会在这一行破功（新复选框亮着却没勾）。
+    if (selectable(fresh)) flip(fresh.key, true)
     if (fresh.status !== 'ok') toast(t('clean.panel.retryStill', { msg: fresh.message ?? t('clean.panel.unknown') }), 'info', 5200)
   } catch (e) {
     toast(backendMsg(String(e)), 'err', 5200)
@@ -427,7 +430,6 @@ const detailGroups = computed(() => groups.value.filter((g) => bannerDetailRows(
                 <input
                   v-if="r.deletable"
                   type="checkbox"
-                  :disabled="rowSpared(r)"
                   :checked="picked.has(r.key)"
                   @click.stop="toggleRow(r)"
                 />
