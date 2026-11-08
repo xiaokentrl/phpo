@@ -78,8 +78,9 @@ jobs:
             os: ubuntu-24.04
           - target: windows
             os: windows-latest
+          # macos-14 镜像 2026-11-02 退役；macos-15 同为 arm64，替代它（再新还有 macos-26）
           - target: darwin
-            os: macos-14
+            os: macos-15
     steps:
       # 这里刻意不写 fetch-depth: 0（本作业三步内没有任何 git 调用：版本号只由 scripts/version.sh
       # 从 wails.json 里 grep 出来，产物也不落标签）。全量克隆会把 .git（本机实测 81M）在
