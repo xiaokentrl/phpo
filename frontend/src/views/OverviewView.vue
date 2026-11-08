@@ -35,6 +35,12 @@ async function runDiagnose() {
   }
 }
 
+// closeDoctor：右上角 ✕ 收掉诊断卡——report 置空即移除占位，页头按钮回到「开始诊断」；
+// 不动后端任何状态（诊断结果本来就是一次性现查现展示）
+function closeDoctor(): void {
+  report.value = null
+}
+
 async function onFix(id: string) {
   if (fixing.value) return
   fixing.value = id
@@ -113,8 +119,13 @@ function toggleRow(r: Row): void {
     <div v-if="report" class="doctor-card">
       <div class="doctor-head">
         <strong>{{ t('doctor.section') }}</strong>
-        <span v-if="report.errors === 0 && report.warnings === 0" class="doctor-good">{{ t('doctor.allGood') }}</span>
-        <span v-else class="doctor-sum">{{ t('doctor.summary', { ok: report.ok, warnings: report.warnings, errors: report.errors }) }}</span>
+        <div class="doctor-head-right">
+          <span v-if="report.errors === 0 && report.warnings === 0" class="doctor-good">{{ t('doctor.allGood') }}</span>
+          <span v-else class="doctor-sum">{{ t('doctor.summary', { ok: report.ok, warnings: report.warnings, errors: report.errors }) }}</span>
+          <button class="icon-btn" :title="t('common.close')" :aria-label="t('common.close')" @click="closeDoctor">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
       </div>
       <ul class="doctor-list">
         <li v-for="c in report.checks" :key="c.id" class="doctor-row">
@@ -215,6 +226,11 @@ function toggleRow(r: Row): void {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+}
+.doctor-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .doctor-sum {
   font-size: 12.5px;
