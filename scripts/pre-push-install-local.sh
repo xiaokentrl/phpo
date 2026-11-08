@@ -108,7 +108,9 @@ if pgrep -x phpo >/dev/null 2>&1; then
   fi
 fi
 
-sudo -v || fail "administrator authorization is required to replace the installed package"
+# 免密优先：sudoers NOPASSWD 规则放行 root 所有的 /usr/local/bin/phpo-pre-push-install
+# （脚本内部只装本仓库 build/bin 里版本最新的 phpo deb，kentrl 不可写）。
+# 没配规则的环境回退到交互式输密码——路径不变，机器之间行为一致。
 trap 'git restore --source="$head_commit" --worktree -- frontend/dist/index.html' EXIT
 
 printf '%s\n' 'phpo pre-push: building the local Debian package'
@@ -125,7 +127,11 @@ if [[ -d "$config_dir" ]]; then
 fi
 
 printf 'phpo pre-push: replacing Debian package phpo %s in place\n' "$installed_version"
-sudo apt-get install -y --reinstall "$deb"
+if ! sudo -n /usr/local/bin/phpo-pre-push-install; then
+  printf '%s\n' 'phpo pre-push: no passwordless rule found, falling back to interactive sudo'
+  sudo apt-get install -y --reinstall "$deb" \
+    || fail "package replacement failed; configure the NOPASSWD rule (see /etc/sudoers.d/phpo-pre-push) or push from a terminal"
+fi
 [[ "$(dpkg-query -W -f='${Status}' phpo 2>/dev/null || true)" == "install ok installed" ]] \
   || fail "the newly built phpo package is not installed"
 [[ -x /usr/bin/phpo ]] || fail "the installed package did not provide /usr/bin/phpo"
