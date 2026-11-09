@@ -43,8 +43,10 @@ func (c *Client) ImageLoad(ctx context.Context, tarPath string) error {
 	return nil
 }
 
-// ImageSave 将镜像导出为 tar 到 outPath（先写临时再原子重命名，避免半截文件）
+// ImageSave 将镜像导出为 tar 到 outPath（先写临时再原子重命名，避免半截文件）。
+// ref 在这里统一补全成完全限定名：podman 的 CLI 与 compat 套接字对短名解析不保证一致（见 QualifyImageRef）。
 func (c *Client) ImageSave(ctx context.Context, ref, outPath string) error {
+	ref = QualifyImageRef(ref)
 	if c.EngineKind(ctx) == EnginePodman {
 		return c.podmanSave(ctx, ref, outPath)
 	}
@@ -106,9 +108,9 @@ func (c *Client) podmanSave(ctx context.Context, ref, outPath string) error {
 	return os.Rename(tmp, outPath)
 }
 
-// ImagePull 拉取镜像；onProgress 每收到一行 JSON 进度回调一次（nil 则忽略）
+// ImagePull 拉取镜像；ref 补全为完全限定名（与 save/inspect 同名同源），onProgress 每收到一行 JSON 进度回调一次（nil 则忽略）
 func (c *Client) ImagePull(ctx context.Context, ref string, onProgress func(line string)) error {
-	rc, err := c.cli.ImagePull(ctx, ref, image.PullOptions{})
+	rc, err := c.cli.ImagePull(ctx, QualifyImageRef(ref), image.PullOptions{})
 	if err != nil {
 		return fmt.Errorf("docker pull 失败: %w", err)
 	}
@@ -158,4 +160,27 @@ func isNotFound(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such image") || strings.Contains(msg, "no such")
+}
+
+// QualifyImageRef 把镜像引用补全成完全限定形态：单段仓库名（mysql:5.7）补 docker.io/library/，
+// 带一段命名空间的（phpo/php:8.4）补 docker.io/；带主机端口或已是全名的原样返回。
+// 为什么要有它：podman 的 compat 套接字（SDK 走的）与 CLI（save/inspect 走的）对短名的解析
+// 各自跟随所在环境的 registries.conf，不保证一致——短名 pull 成功而 save 找不到的怪失败
+// 就从这里来（0.1.147 期 mysql:5.7 实测）。引擎层统一用完全限定名，名字解析不再是失败面。
+func QualifyImageRef(ref string) string {
+	if ref == "" || strings.Contains(ref, "@") {
+		return ref // digest 引用原样
+	}
+	name := ref
+	suffix := ""
+	if i := strings.LastIndex(ref, ":"); i > 0 && !strings.Contains(ref[i:], "/") {
+		name, suffix = ref[:i], ref[i:] // 冒号后是 tag（端口冒号带斜杠不算）
+	}
+	switch {
+	case strings.Count(name, "/") == 0:
+		return "docker.io/library/" + name + suffix
+	case !strings.ContainsAny(name[:strings.Index(name, "/")], ".:") && name[:strings.Index(name, "/")] != "localhost":
+		return "docker.io/" + name + suffix
+	}
+	return ref
 }
