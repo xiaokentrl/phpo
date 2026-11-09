@@ -2,6 +2,7 @@
 // 总览页底部的「其他 · Docker 全量资源清理」面板。
 // 界面结构照原型：可折叠面板 → 清理范围两张卡 → 状态条 → 工具条 → 分组表 → 底部两颗按钮。
 // 本轮只做界面与勾选手感（三处勾选入口行为必须一致），扫描/预览/清空的真实调用留给后续逻辑轮。
+import { applyScopeKeys, keptTotal as keptTotalOf, rowSpared as rowSparedOf, selectable as selectableOf, type ScopeMode } from './cleanSelection.ts'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { toast } from '@/composables/useToast'
@@ -58,7 +59,7 @@ const groups = computed(() => {
 
 const otherCount = computed(() => rows.value.length)
 // 保留模式闸门将排除的总量：扫描行上已按同一套判定算好，这里只求和展示
-const keptTotal = computed(() => rows.value.reduce((n, r) => n + (r.phpoKept ?? 0), 0))
+const keptTotal = computed(() => keptTotalOf(rows.value))
 
 function rowText(r: CleanRow): string {
   if (r.status !== 'ok') return '—'

@@ -127,7 +127,12 @@ if [[ -d "$config_dir" ]]; then
 fi
 
 printf 'phpo pre-push: replacing Debian package phpo %s in place\n' "$installed_version"
-if ! sudo -n /usr/local/bin/phpo-pre-push-install; then
+# 先用 -l 区分「规则没配」和「规则在但安装失败」：前者才回落交互式输密码，
+# 后者（如 dpkg 锁被别的进程占用）原样把 sudo 的报错摆出来，不再误报免密规则缺失。
+if sudo -n -l /usr/local/bin/phpo-pre-push-install >/dev/null 2>&1; then
+  sudo -n /usr/local/bin/phpo-pre-push-install \
+    || fail "package replacement failed; see the sudo error above (dpkg lock held? retry when the other process finishes)"
+else
   printf '%s\n' 'phpo pre-push: no passwordless rule found, falling back to interactive sudo'
   sudo apt-get install -y --reinstall "$deb" \
     || fail "package replacement failed; configure the NOPASSWD rule (see /etc/sudoers.d/phpo-pre-push) or push from a terminal"

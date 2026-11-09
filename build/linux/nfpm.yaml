@@ -12,8 +12,13 @@ description: |
 homepage: https://github.com/xiaokentrl/phpo
 license: MIT
 vendor: phpo
+# 依赖按 ldd build/bin/phpo 的实际链接写（GTK4 / WebKitGTK-6.0 / libsoup-3 栈）。
+# 旧写法 libwebkit2gtk-4.1-0 是 GTK3 时代的包，装上它程序照样缺 libwebkitgtk-6.0.so.4 起不来。
 depends:
-  - libwebkit2gtk-4.1-0
+  - libgtk-4-1
+  - libwebkitgtk-6.0-4
+  - libjavascriptcoregtk-6.0-1
+  - libsoup-3.0-0
 scripts:
   postinstall: build/linux/postinstall.sh
 contents:
@@ -41,4 +46,5 @@ contents:
 overrides:
   rpm:
     depends:
-      - webkit2gtk4.1
+      - gtk4
+      - webkitgtk6.0  # Fedora 系包名；libsoup3 / javascriptcoregtk6.0 由它连带拉齐
